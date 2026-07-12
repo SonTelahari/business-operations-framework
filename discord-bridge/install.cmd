@@ -1,2 +1,2 @@
 @echo off
-"C:\Users\Bruker\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\pnpm.cmd" install
+"C:\Users\Bruker\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback\pnpm.cmd" install
