@@ -15,6 +15,8 @@ Capture at least one example of each available event:
 
 The ignored local capture journal preserves event order and Discord message IDs for later replay into the sheet. The `CAPTURE` lines from the host logs, journal, or raw text printed by `check-channel.cmd` are the inputs needed to finish the dedicated Still Water parser. Keep `CAPTURE_ONLY=1` until those samples have parser tests. Set `CAPTURE_ONLY=0` only after the tests pass and the receiver is ready.
 
+Discord message IDs are the transaction identity used for deduplication. Storefront `Weapon ID` values are server-side instance metadata and are intentionally not mapped into inventory records.
+
 ## Setup
 
 1. Enable Message Content Intent for the Still Water reader bot.

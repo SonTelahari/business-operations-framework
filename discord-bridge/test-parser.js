@@ -35,7 +35,7 @@ Weapon ID: 593`
       item_name: 'Navy Revolver',
       quantity: 1,
       unit_price: 105,
-      webhook_id: '593'
+      webhook_id: 'still-water-navy-deposit'
     }
   },
   {
@@ -61,7 +61,7 @@ Weapon ID: 597`
       item_name: 'Boltaction Rifle',
       quantity: 1,
       unit_price: 80,
-      webhook_id: '597'
+      webhook_id: 'still-water-boltaction-deposit'
     }
   },
   {
@@ -87,7 +87,7 @@ Weapon ID: 618`
       item_name: 'Pump Shotgun',
       quantity: 1,
       unit_price: 80,
-      webhook_id: '618'
+      webhook_id: 'still-water-pump-shotgun-deposit'
     }
   },
   {
@@ -113,7 +113,7 @@ Weapon ID: 632`
       item_name: 'Semiauto Shotgun',
       quantity: 1,
       unit_price: 105,
-      webhook_id: '632'
+      webhook_id: 'still-water-semiauto-shotgun-deposit'
     }
   },
   {
@@ -139,7 +139,7 @@ Weapon ID: 634`
       item_name: 'Repeating Shotgun',
       quantity: 1,
       unit_price: 55,
-      webhook_id: '634'
+      webhook_id: 'still-water-repeating-shotgun-deposit'
     }
   },
   {
@@ -165,7 +165,7 @@ Weapon ID: 637`
       item_name: 'Doublebarrel Shotgun',
       quantity: 1,
       unit_price: 55,
-      webhook_id: '637'
+      webhook_id: 'still-water-double-barrel-shotgun-deposit'
     }
   },
   {
@@ -191,7 +191,7 @@ Weapon ID: 639`
       item_name: 'Henry Repeater',
       quantity: 1,
       unit_price: 55,
-      webhook_id: '639'
+      webhook_id: 'still-water-henry-repeater-deposit'
     }
   },
   {
@@ -217,7 +217,7 @@ Weapon ID: 641`
       item_name: 'Winchester Repeater',
       quantity: 1,
       unit_price: 55,
-      webhook_id: '641'
+      webhook_id: 'still-water-winchester-repeater-deposit'
     }
   },
   {
@@ -243,7 +243,7 @@ Weapon ID: 643`
       item_name: 'Carbine Repeater',
       quantity: 1,
       unit_price: 45,
-      webhook_id: '643'
+      webhook_id: 'still-water-carbine-repeater-deposit'
     }
   },
   {
@@ -269,7 +269,7 @@ Weapon ID: 645`
       item_name: 'Evans Repeater',
       quantity: 1,
       unit_price: 55,
-      webhook_id: '645'
+      webhook_id: 'still-water-evans-repeater-deposit'
     }
   },
   {
@@ -295,7 +295,7 @@ Weapon ID: 647`
       item_name: 'Navy Crossover Revolver',
       quantity: 1,
       unit_price: 105,
-      webhook_id: '647'
+      webhook_id: 'still-water-navy-crossover-deposit'
     }
   },
   {
@@ -321,7 +321,7 @@ Weapon ID: 649`
       item_name: 'Schofield Revolver',
       quantity: 1,
       unit_price: 55,
-      webhook_id: '649'
+      webhook_id: 'still-water-schofield-deposit'
     }
   },
   {
@@ -347,7 +347,7 @@ Weapon ID: 650`
       item_name: 'Lemat Revolver',
       quantity: 1,
       unit_price: 55,
-      webhook_id: '650'
+      webhook_id: 'still-water-lemat-deposit'
     }
   },
   {
@@ -373,7 +373,7 @@ Weapon ID: 653`
       item_name: 'Rollingblock Rifle',
       quantity: 1,
       unit_price: 105,
-      webhook_id: '653'
+      webhook_id: 'still-water-rolling-block-deposit'
     }
   },
   {
@@ -399,7 +399,7 @@ Weapon ID: 667`
       item_name: 'Bow',
       quantity: 1,
       unit_price: 25,
-      webhook_id: '667'
+      webhook_id: 'still-water-bow-deposit'
     }
   },
   {
@@ -425,7 +425,7 @@ Weapon ID: 673`
       item_name: 'Reinforced Lasso',
       quantity: 1,
       unit_price: 35,
-      webhook_id: '673'
+      webhook_id: 'still-water-reinforced-lasso-deposit'
     }
   },
   {
@@ -571,6 +571,7 @@ for (const testCase of cases) {
   for (const [key, value] of Object.entries(testCase.expected)) {
     assert.deepEqual(result[key], value, `${testCase.name}: ${key}`);
   }
+  assert.equal(result.webhook_id, testCase.input.id, `${testCase.name}: Discord message identity`);
 }
 
 const capture = createCaptureRecord({

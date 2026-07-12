@@ -22,7 +22,6 @@ function parseStillWaterEmbed(message) {
     matchLine(text, 'Purchase Price'),
     matchLine(text, 'Price')
   );
-  const weaponId = matchLine(text, 'Weapon ID');
   const buyOrderId = firstTextValue(
     matchLine(text, 'Buy Order ID'),
     matchLine(text, 'Order ID')
@@ -55,7 +54,7 @@ function parseStillWaterEmbed(message) {
     quantity,
     unit_price: unitPrice,
     buy_order_id: buyOrderId,
-    webhook_id: weaponId || buyOrderId || message.id || '',
+    webhook_id: message.id || buyOrderId || '',
     raw_payload: description
   };
 }
