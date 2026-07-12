@@ -42,3 +42,4 @@ The Still Water bridge is capture-only by default while its real storefront even
 - The local GUI uses port `4273` and separate browser-storage keys to prevent cross-server data mixing.
 
 See `docs/categories.md` for captured category sources and `docs/hosting.md` for deployment details.
+See `docs/pricing.md` for the MSRP midpoint policy, ingredient aliases, and unresolved prices.

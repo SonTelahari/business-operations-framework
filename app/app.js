@@ -6,6 +6,7 @@ const USER_ROLE_KEY = "frontier_still_water_user_role_v1";
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
 const itemCatalog = window.FRONTIER_ITEMS || [];
 const recipeCatalog = window.FRONTIER_RECIPES || {};
+const pricingCatalog = window.FRONTIER_PRICING || { materials: {} };
 const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
 
@@ -566,7 +567,7 @@ function renderDashboardCards(items, emptyText) {
 
 function renderProduction() {
   const production = getProductionPlan(activeOrder);
-  elements.productionMeta.textContent = `${production.buildLines.length} craftable lines / ${production.materials.length} materials`;
+  elements.productionMeta.textContent = `${production.buildLines.length} craftable lines / ${production.materials.length} materials / est. $${formatNumber(production.materialCost)}`;
 
   if (!production.buildLines.length) {
     elements.productionBuildList.innerHTML = `<div class="empty-card">No craftable quote lines yet</div>`;
@@ -585,7 +586,7 @@ function renderProduction() {
     elements.productionMaterialsList.innerHTML = production.materials.map(material => `
       <div class="production-row">
         <strong>${escapeHtml(material.ingredient)}</strong>
-        <span>${formatNumber(material.qty)}</span>
+        <span>${formatNumber(material.qty)} / $${formatNumber(material.cost)}</span>
       </div>
     `).join("");
   }
@@ -676,7 +677,7 @@ function buildProductionSummary(order) {
     ? production.buildLines.map(line => `${formatNumber(line.quantity)}x ${line.name}`).join("\n")
     : "No craftable lines";
   const materials = production.materials.length
-    ? production.materials.map(material => `${formatNumber(material.qty)}x ${material.ingredient}`).join("\n")
+    ? production.materials.map(material => `${formatNumber(material.qty)}x ${material.ingredient} - $${formatNumber(material.cost)}`).join("\n")
     : "No materials needed";
   const missing = production.missing.length
     ? `\nNo recipe attached:\n${production.missing.join("\n")}`
@@ -691,6 +692,7 @@ function buildProductionSummary(order) {
     "",
     "Materials:",
     materials,
+    `Estimated material cost: $${formatNumber(production.materialCost)}`,
     missing
   ].filter(line => line !== "").join("\n");
 }
@@ -1179,8 +1181,16 @@ function getProductionPlan(order) {
       .map(([name, quantity]) => ({ name, quantity }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     materials: [...materialTotals.entries()]
-      .map(([ingredient, qty]) => ({ ingredient, qty }))
+      .map(([ingredient, qty]) => {
+        const unitCost = Number(pricingCatalog.materials[ingredient]?.midpoint || 0);
+        return { ingredient, qty, unitCost, cost: qty * unitCost };
+      })
       .sort((a, b) => a.ingredient.localeCompare(b.ingredient)),
+    materialCost: [...materialTotals.entries()]
+      .reduce((sum, [ingredient, qty]) => {
+        const unitCost = Number(pricingCatalog.materials[ingredient]?.midpoint || 0);
+        return sum + (qty * unitCost);
+      }, 0),
     missing
   };
 }

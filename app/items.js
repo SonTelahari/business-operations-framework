@@ -1,3 +1,7 @@
+const FRONTIER_PRICING_CATALOG = typeof module !== "undefined" && module.exports
+  ? require("./pricing")
+  : (window.FRONTIER_PRICING || { products: {} });
+
 const FRONTIER_CATEGORIES = [
   "Rifles",
   "Bows",
@@ -62,6 +66,14 @@ const FRONTIER_ITEMS = [
   { name: "Hatchet Cleaver Ammo", label: "Hatchet Cleaver Ammo", tag: "", category: "Ammunition", price: 0 },
   { name: "Hatchet Hunter Ammo", label: "Hatchet Hunter Ammo", tag: "", category: "Ammunition", price: 0 }
 ];
+
+FRONTIER_ITEMS.forEach(item => {
+  const msrpEntry = FRONTIER_PRICING_CATALOG.products[item.name];
+  if (!msrpEntry) return;
+  item.price = msrpEntry.midpoint;
+  item.msrpLow = msrpEntry.low;
+  item.msrpHigh = msrpEntry.high;
+});
 
 if (typeof window !== "undefined") {
   window.FRONTIER_CATEGORIES = FRONTIER_CATEGORIES;
