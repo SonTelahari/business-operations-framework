@@ -33,6 +33,15 @@ const repeaterRecipe = [
   ["Bolts", 2]
 ];
 
+const revolverRecipe = [
+  ["Iron", 2],
+  ["Wood", 2],
+  ["Revolver Handle", 1],
+  ["Revolver Barrel", 1],
+  ["Revolver Cylinder", 1],
+  ["Bolts", 2]
+];
+
 window.FRONTIER_RECIPES = {
   "Springfield Rifle": rifleRecipe,
   "Varmint Rifle": rifleRecipe,
@@ -50,6 +59,14 @@ window.FRONTIER_RECIPES = {
   "Winchester Repeater": repeaterRecipe,
   "Evans Repeater": repeaterRecipe,
   "Carbine Repeater": repeaterRecipe,
+  "Double Action Revolver": revolverRecipe,
+  "Lemat Revolver": revolverRecipe,
+  "Double Action Gambler Revolver": revolverRecipe,
+  "Cattleman Mexican Revolver": revolverRecipe,
+  "Cattleman Revolver": revolverRecipe,
+  "Navy Crossover Revolver": revolverRecipe,
+  "Navy Revolver": revolverRecipe,
+  "Schofield Revolver": revolverRecipe,
   "Volcanic Pistol": pistolRecipe,
   "M1899 Pistol": pistolRecipe
 };

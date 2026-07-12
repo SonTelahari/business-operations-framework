@@ -25,6 +25,14 @@ const FRONTIER_ITEMS = [
   { name: "Winchester Repeater", label: "Winchester Repeater", tag: "", category: "Repeaters", price: 0 },
   { name: "Evans Repeater", label: "Evans Repeater", tag: "", category: "Repeaters", price: 0 },
   { name: "Carbine Repeater", label: "Carbine Repeater", tag: "", category: "Repeaters", price: 0 },
+  { name: "Double Action Revolver", label: "Double Action Revolver", tag: "", category: "Revolvers", price: 0 },
+  { name: "Lemat Revolver", label: "Lemat Revolver", tag: "", category: "Revolvers", price: 0 },
+  { name: "Double Action Gambler Revolver", label: "Double Action Gambler Revolver", tag: "", category: "Revolvers", price: 0 },
+  { name: "Cattleman Mexican Revolver", label: "Cattleman Mexican Revolver", tag: "", category: "Revolvers", price: 0 },
+  { name: "Cattleman Revolver", label: "Cattleman Revolver", tag: "", category: "Revolvers", price: 0 },
+  { name: "Navy Crossover Revolver", label: "Navy Crossover Revolver", tag: "", category: "Revolvers", price: 0 },
+  { name: "Navy Revolver", label: "Navy Revolver", tag: "", category: "Revolvers", price: 0 },
+  { name: "Schofield Revolver", label: "Schofield Revolver", tag: "", category: "Revolvers", price: 0 },
   { name: "Volcanic Pistol", label: "Volcanic Pistol", tag: "", category: "Pistols", price: 0 },
   { name: "M1899 Pistol", label: "M1899 Pistol", tag: "", category: "Pistols", price: 0 }
 ];

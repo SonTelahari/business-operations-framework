@@ -125,3 +125,34 @@ Recipe sources:
 - `docs/assets/repeater-winchester.png`
 - `docs/assets/repeater-evans.png`
 - `docs/assets/repeater-carbine.png`
+
+## Revolvers - 8 Products
+
+- Double Action Revolver
+- Lemat Revolver
+- Double Action Gambler Revolver
+- Cattleman Mexican Revolver
+- Cattleman Revolver
+- Navy Crossover Revolver
+- Navy Revolver
+- Schofield Revolver
+
+All eight revolvers use:
+
+- 2 Iron
+- 2 Wood
+- 1 Revolver Handle
+- 1 Revolver Barrel
+- 1 Revolver Cylinder
+- 2 Bolts
+
+Recipe sources:
+
+- `docs/assets/revolver-double-action.png`
+- `docs/assets/revolver-lemat.png`
+- `docs/assets/revolver-double-action-gambler.png`
+- `docs/assets/revolver-cattleman-mexican.png`
+- `docs/assets/revolver-cattleman.png`
+- `docs/assets/revolver-navy-crossover.png`
+- `docs/assets/revolver-navy.png`
+- `docs/assets/revolver-schofield.png`
