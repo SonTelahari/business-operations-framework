@@ -15,7 +15,9 @@ const FRONTIER_ITEMS = [
   { name: "Rollingblock Rifle", label: "Rollingblock Rifle", tag: "", category: "Rifles", price: 0 },
   { name: "Bow", label: "Bow", tag: "", category: "Bows", price: 0 },
   { name: "Lasso", label: "Lasso", tag: "", category: "Misc", price: 0 },
-  { name: "Reinforced Lasso", label: "Reinforced Lasso", tag: "", category: "Misc", price: 0 }
+  { name: "Reinforced Lasso", label: "Reinforced Lasso", tag: "", category: "Misc", price: 0 },
+  { name: "Volcanic Pistol", label: "Volcanic Pistol", tag: "", category: "Pistols", price: 0 },
+  { name: "M1899 Pistol", label: "M1899 Pistol", tag: "", category: "Pistols", price: 0 }
 ];
 
 if (typeof window !== "undefined") {

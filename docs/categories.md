@@ -59,3 +59,22 @@ Source: `docs/assets/misc-lasso.png`
 - 100 Flax
 
 Source: `docs/assets/misc-reinforced-lasso.png`
+
+## Pistols - 2 Products
+
+- Volcanic Pistol
+- M1899 Pistol
+
+Both pistols use:
+
+- 2 Iron
+- 2 Wood
+- 1 Pistol Handle
+- 1 Pistol Barrel
+- 1 Pistol Chamber
+- 2 Bolts
+
+Recipe sources:
+
+- `docs/assets/pistol-volcanic.png`
+- `docs/assets/pistol-m1899.png`

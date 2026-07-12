@@ -7,6 +7,15 @@ const rifleRecipe = [
   ["Bolts", 2]
 ];
 
+const pistolRecipe = [
+  ["Iron", 2],
+  ["Wood", 2],
+  ["Pistol Handle", 1],
+  ["Pistol Barrel", 1],
+  ["Pistol Chamber", 1],
+  ["Bolts", 2]
+];
+
 window.FRONTIER_RECIPES = {
   "Springfield Rifle": rifleRecipe,
   "Varmint Rifle": rifleRecipe,
@@ -14,5 +23,7 @@ window.FRONTIER_RECIPES = {
   "Rollingblock Rifle": rifleRecipe,
   "Bow": [["Hard wood", 10], ["Wood", 4]],
   "Lasso": [["Flax", 30]],
-  "Reinforced Lasso": [["Flax", 100]]
+  "Reinforced Lasso": [["Flax", 100]],
+  "Volcanic Pistol": pistolRecipe,
+  "M1899 Pistol": pistolRecipe
 };
