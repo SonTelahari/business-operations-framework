@@ -78,3 +78,27 @@ Recipe sources:
 
 - `docs/assets/pistol-volcanic.png`
 - `docs/assets/pistol-m1899.png`
+
+## Shotguns - 5 Products
+
+- Doublebarrel Shotgun
+- Repeating Shotgun
+- Exotic Double Barrel Shotgun
+- Semiauto Shotgun
+- Pump Shotgun
+
+All five shotguns use:
+
+- 5 Iron
+- 5 Wood
+- 1 Shotgun Stock
+- 1 Shotgun Barrel
+- 5 Bolts
+
+Recipe sources:
+
+- `docs/assets/shotgun-doublebarrel.png`
+- `docs/assets/shotgun-repeating.png`
+- `docs/assets/shotgun-exotic-double-barrel.png`
+- `docs/assets/shotgun-semiauto.png`
+- `docs/assets/shotgun-pump.png`
