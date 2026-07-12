@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
-const { parseFrontierEmbed } = require('./parser');
+const { createCaptureRecord } = require('./capture');
+const { parseStillWaterEmbed } = require('./parser');
 
 const cases = [
   {
@@ -50,10 +51,30 @@ const cases = [
 ];
 
 for (const testCase of cases) {
-  const result = parseFrontierEmbed(testCase.input);
+  const result = parseStillWaterEmbed(testCase.input);
   for (const [key, value] of Object.entries(testCase.expected)) {
     assert.deepEqual(result[key], value, `${testCase.name}: ${key}`);
   }
 }
 
-console.log(`Parser checks passed: ${cases.length} generic Still Water event formats.`);
+const capture = createCaptureRecord({
+  id: 'message-1',
+  channelId: 'channel-1',
+  webhookId: 'webhook-1',
+  createdAt: new Date('2026-07-12T10:30:00.000Z')
+}, {
+  title: 'Still Water Event',
+  description: 'Raw storefront text'
+});
+
+assert.deepEqual(capture, {
+  parser_profile: 'still-water',
+  discord_message_id: 'message-1',
+  discord_channel_id: 'channel-1',
+  webhook_id: 'webhook-1',
+  timestamp: '2026-07-12T10:30:00.000Z',
+  title: 'Still Water Event',
+  description: 'Raw storefront text'
+});
+
+console.log(`Capture check passed and provisional parser checks passed: ${cases.length} generic event formats.`);

@@ -1,6 +1,6 @@
 const itemCatalog = require('../app/items');
 
-function parseFrontierEmbed(message) {
+function parseStillWaterEmbed(message) {
   const title = message.title || message.embeds?.[0]?.title || '';
   const description = message.description || message.embeds?.[0]?.description || '';
   const text = normalizeText(description);
@@ -138,5 +138,5 @@ const ITEM_LABEL_MAP = itemCatalog.reduce((map, item) => {
 const LABEL_PATTERNS = [];
 
 module.exports = {
-  parseFrontierEmbed
+  parseStillWaterEmbed
 };

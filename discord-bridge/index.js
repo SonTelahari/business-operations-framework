@@ -2,18 +2,20 @@ const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { parseFrontierEmbed } = require('./parser');
+const { createCaptureRecord } = require('./capture');
+const { parseStillWaterEmbed } = require('./parser');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_CHANNEL_ID = normalizeSnowflake(process.env.DISCORD_CHANNEL_ID);
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
+const CAPTURE_ONLY = process.env.CAPTURE_ONLY !== '0';
 const DEBUG_DISCORD = process.env.DEBUG_DISCORD !== '0';
 const PORT = numberValue(process.env.PORT);
 
-if (!DISCORD_TOKEN || !DISCORD_CHANNEL_ID || !APPS_SCRIPT_URL) {
-  console.error('Missing DISCORD_TOKEN, DISCORD_CHANNEL_ID, or APPS_SCRIPT_URL.');
+if (!DISCORD_TOKEN || !DISCORD_CHANNEL_ID || (!CAPTURE_ONLY && !APPS_SCRIPT_URL)) {
+  console.error('Missing DISCORD_TOKEN or DISCORD_CHANNEL_ID. APPS_SCRIPT_URL is also required when CAPTURE_ONLY=0.');
   process.exit(1);
 }
 
@@ -25,6 +27,7 @@ const client = new Client({
 client.once('clientReady', () => {
   logInfo(`Frontier Firearms - Still Water bridge logged in as ${client.user.tag}`);
   logInfo(`Watching Discord channel ID: ${DISCORD_CHANNEL_ID}`);
+  logInfo(`Parser mode: ${CAPTURE_ONLY ? 'capture only' : 'forward to sheet'}`);
   logInfo(`Discord debug logging: ${DEBUG_DISCORD ? 'on' : 'off'}`);
   startHealthServer();
 });
@@ -48,17 +51,26 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  const payloads = message.embeds.length
-    ? message.embeds.map((embed, index) => parseFrontierEmbed({
+  const sources = message.embeds.length
+    ? message.embeds.map((embed, index) => ({
         id: message.embeds.length > 1 ? `${message.id}-${index + 1}` : message.id,
         title: embed.title,
         description: embedToText(embed)
       }))
-    : [parseFrontierEmbed({
+    : [{
         id: message.id,
         title: '',
         description: message.content
-      })];
+      }];
+
+  if (CAPTURE_ONLY) {
+    for (const source of sources) {
+      logInfo(`CAPTURE ${JSON.stringify(createCaptureRecord(message, source))}`);
+    }
+    return;
+  }
+
+  const payloads = sources.map(parseStillWaterEmbed);
 
   for (const payload of payloads) {
     if (!payload.item_name || !payload.quantity) {
@@ -121,6 +133,8 @@ function startHealthServer() {
       response.end(JSON.stringify({
         ok: true,
         service: 'frontier-firearms-still-water-discord-bridge',
+        mode: CAPTURE_ONLY ? 'capture' : 'forward',
+        parser_profile: 'still-water',
         discord_ready: client.isReady(),
         uptime_seconds: Math.round(process.uptime())
       }));

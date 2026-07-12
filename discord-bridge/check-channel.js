@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { parseFrontierEmbed } = require('./parser');
+const { parseStillWaterEmbed } = require('./parser');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -40,19 +40,24 @@ async function main() {
       continue;
     }
 
-    const payloads = message.embeds?.length
-      ? message.embeds.map((embed) => parseFrontierEmbed({
+    const sources = message.embeds?.length
+      ? message.embeds.map((embed) => ({
           id: message.id,
           title: embed.title,
           description: embedToText(embed)
         }))
-      : [parseFrontierEmbed({
+      : [{
           id: message.id,
           title: '',
           description: message.content
-        })];
+        }];
 
-    for (const payload of payloads) {
+    for (const source of sources) {
+      console.log(`Title: ${source.title || '(none)'}`);
+      console.log('Raw text:');
+      console.log(source.description || '(empty)');
+      console.log('Provisional Still Water parse:');
+      const payload = parseStillWaterEmbed(source);
       console.log(JSON.stringify(payload, null, 2));
     }
   }

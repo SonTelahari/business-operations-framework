@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { parseFrontierEmbed } = require('./parser');
+const { parseStillWaterEmbed } = require('./parser');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -11,7 +11,7 @@ if (!APPS_SCRIPT_URL) {
   process.exit(1);
 }
 
-const payload = parseFrontierEmbed({
+const payload = parseStillWaterEmbed({
   id: `still-water-bridge-test-${Date.now()}`,
   title: 'Deposit',
   description: `Shop Info:
