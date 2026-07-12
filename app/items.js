@@ -32,7 +32,7 @@ const FRONTIER_ITEMS = [
   { name: "Cattleman Mexican Revolver", label: "Cattleman Mexican Revolver", tag: "", category: "Revolvers", price: 0 },
   { name: "Cattleman Revolver", label: "Cattleman Revolver", tag: "", category: "Revolvers", price: 0 },
   { name: "Navy Crossover Revolver", label: "Navy Crossover Revolver", tag: "", category: "Revolvers", price: 0 },
-  { name: "Navy Revolver", label: "Navy Revolver", tag: "", category: "Revolvers", price: 0 },
+  { name: "Navy Revolver", label: "Revolver Navy", tag: "WEAPON_REVOLVER_NAVY", category: "Revolvers", price: 105 },
   { name: "Schofield Revolver", label: "Schofield Revolver", tag: "", category: "Revolvers", price: 0 },
   { name: "Volcanic Pistol", label: "Volcanic Pistol", tag: "", category: "Pistols", price: 0 },
   { name: "M1899 Pistol", label: "M1899 Pistol", tag: "", category: "Pistols", price: 0 },

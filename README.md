@@ -28,6 +28,8 @@ For each product, record:
 - Recipe ingredients and quantities
 - Wiki link, when available
 
+The base catalog uses Still Water's native item tag and label. Names, descriptions, engravings, or other labels applied during later customization belong to the individual order or weapon record and do not replace the base product identity.
+
 ## Discord Parser Status
 
 The Still Water bridge is capture-only by default while its real storefront event formats are collected. Capture mode records raw Discord embeds in the host logs and cannot forward transactions to Google Sheets. Once deposit, withdrawal, customer purchase, and customer-sale examples have been converted into parser tests, forwarding can be enabled explicitly with `CAPTURE_ONLY=0`.

@@ -13,6 +13,32 @@ const cases = [
     expected: { event_type: 'Stocking Movement', direction: 'Stock In', item_name: 'Test Rifle', quantity: 2, unit_price: 100 }
   },
   {
+    name: 'real Still Water Navy Revolver deposit',
+    input: {
+      id: 'still-water-navy-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_REVOLVER_NAVY
+Item label: Revolver Navy
+Deposit Amount: 1
+Sell Price: $105
+Weapon ID: 593`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_REVOLVER_NAVY',
+      discord_item_label: 'Revolver Navy',
+      item_name: 'Navy Revolver',
+      quantity: 1,
+      unit_price: 105,
+      webhook_id: '593'
+    }
+  },
+  {
     name: 'withdrawal',
     input: {
       id: 'withdraw-example',
@@ -77,4 +103,4 @@ assert.deepEqual(capture, {
   description: 'Raw storefront text'
 });
 
-console.log(`Capture check passed and provisional parser checks passed: ${cases.length} generic event formats.`);
+console.log(`Capture check passed and parser checks passed: ${cases.length} event formats, including 1 captured Still Water event.`);

@@ -330,9 +330,16 @@ function addItemLine() {
 
 function findCatalogItem(value) {
   const needle = normalize(value);
+  if (!needle) return null;
+
+  const exactMatch = itemCatalog.find(item => [item.name, item.label, item.tag]
+    .map(normalize)
+    .includes(needle));
+  if (exactMatch) return exactMatch;
+
   return itemCatalog.find(item => {
-    const haystack = normalize(`${item.name} ${item.label} ${item.tag} ${item.category}`);
-    return haystack.includes(needle);
+    const fields = [item.name, item.label, item.tag, item.category].map(normalize);
+    return fields.some(field => field.includes(needle));
   });
 }
 
