@@ -4,10 +4,16 @@ const FRONTIER_CATEGORIES = [
   "Misc",
   "Shotguns",
   "Repeaters",
-  "Revolvers"
+  "Revolvers",
+  "Pistols"
 ];
 
-const FRONTIER_ITEMS = [];
+const FRONTIER_ITEMS = [
+  { name: "Springfield Rifle", label: "Springfield Rifle", tag: "", category: "Rifles", price: 0 },
+  { name: "Varmint Rifle", label: "Varmint Rifle", tag: "", category: "Rifles", price: 0 },
+  { name: "Boltaction Rifle", label: "Boltaction Rifle", tag: "", category: "Rifles", price: 0 },
+  { name: "Rollingblock Rifle", label: "Rollingblock Rifle", tag: "", category: "Rifles", price: 0 }
+];
 
 if (typeof window !== "undefined") {
   window.FRONTIER_CATEGORIES = FRONTIER_CATEGORIES;

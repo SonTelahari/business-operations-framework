@@ -2,7 +2,7 @@
 
 Still Water server edition of the Frontier Firearms business system.
 
-This project preserves the order desk, production planning, storefront targets, manual counts, ledger adjustments, employee time clock, payroll, Discord parser, Google Sheets receiver, and hosting setup from the original project. It starts with no products or recipes so Still Water data can be entered without mixing server economies.
+This project preserves the order desk, production planning, storefront targets, manual counts, ledger adjustments, employee time clock, payroll, Discord parser, Google Sheets receiver, and hosting setup from the original project. Its catalog contains Still Water data only, preventing server economies from being mixed.
 
 ## Initial Weapon Categories
 
@@ -12,6 +12,7 @@ This project preserves the order desk, production planning, storefront targets, 
 - Shotguns
 - Repeaters
 - Revolvers
+- Pistols
 
 These are page 1 of 7 from the Still Water crafting menu. Additional categories will be added as screenshots arrive.
 
