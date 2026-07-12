@@ -39,6 +39,32 @@ Weapon ID: 593`
     }
   },
   {
+    name: 'real Still Water BoltAction Rifle deposit',
+    input: {
+      id: 'still-water-boltaction-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_RIFLE_BOLTACTION
+Item label: BoltAction Rifle
+Deposit Amount: 1
+Sell Price: $80
+Weapon ID: 597`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_RIFLE_BOLTACTION',
+      discord_item_label: 'BoltAction Rifle',
+      item_name: 'Boltaction Rifle',
+      quantity: 1,
+      unit_price: 80,
+      webhook_id: '597'
+    }
+  },
+  {
     name: 'withdrawal',
     input: {
       id: 'withdraw-example',
@@ -103,4 +129,4 @@ assert.deepEqual(capture, {
   description: 'Raw storefront text'
 });
 
-console.log(`Capture check passed and parser checks passed: ${cases.length} event formats, including 1 captured Still Water event.`);
+console.log(`Capture check passed and parser checks passed: ${cases.length} event formats, including 2 captured Still Water events.`);
