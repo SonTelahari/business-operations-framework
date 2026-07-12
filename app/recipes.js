@@ -42,6 +42,11 @@ const revolverRecipe = [
   ["Bolts", 2]
 ];
 
+const ammoRecipe = [
+  ["Shell Casing", 10],
+  ["Nitrite", 1]
+];
+
 window.FRONTIER_RECIPES = {
   "Springfield Rifle": rifleRecipe,
   "Varmint Rifle": rifleRecipe,
@@ -68,5 +73,23 @@ window.FRONTIER_RECIPES = {
   "Navy Revolver": revolverRecipe,
   "Schofield Revolver": revolverRecipe,
   "Volcanic Pistol": pistolRecipe,
-  "M1899 Pistol": pistolRecipe
+  "M1899 Pistol": pistolRecipe,
+  "Revolver Ammo Express": ammoRecipe,
+  "Revolver Ammo Normal": ammoRecipe,
+  "Revolver Ammo Splitpoint": ammoRecipe,
+  "Revolver Ammo Velocity": ammoRecipe,
+  "Varmint Tranquilizer Ammo": ammoRecipe,
+  "Varmint Ammo": ammoRecipe,
+  "Repeater Ammo Velocity": ammoRecipe,
+  "Repeater Ammo Express": ammoRecipe,
+  "Repeater Ammo Splitpoint": ammoRecipe,
+  "Repeater Ammo Normal": ammoRecipe,
+  "Arrow Small Game": [["Iron", 1], ["Wood", 2]],
+  "Shotgun Ammo Normal": ammoRecipe,
+  "Shotgun Ammo Slug": ammoRecipe,
+  "Rifle Ammo Express": ammoRecipe,
+  "Rifle Ammo Velocity": ammoRecipe,
+  "Rifle Ammo Splitpoint": ammoRecipe,
+  "Elephant Rifle Ammo": ammoRecipe,
+  "Rifle Ammo Normal": ammoRecipe
 };

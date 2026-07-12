@@ -156,3 +156,72 @@ Recipe sources:
 - `docs/assets/revolver-navy-crossover.png`
 - `docs/assets/revolver-navy.png`
 - `docs/assets/revolver-schofield.png`
+
+## Ammunition - 18 Products
+
+### Revolver Ammunition
+
+- Revolver Ammo Express
+- Revolver Ammo Normal
+- Revolver Ammo Splitpoint
+- Revolver Ammo Velocity
+
+### Varmint Ammunition
+
+- Varmint Tranquilizer Ammo
+- Varmint Ammo
+
+### Repeater Ammunition
+
+- Repeater Ammo Velocity
+- Repeater Ammo Express
+- Repeater Ammo Splitpoint
+- Repeater Ammo Normal
+
+### Arrows
+
+- Arrow Small Game
+
+### Shotgun Ammunition
+
+- Shotgun Ammo Normal
+- Shotgun Ammo Slug
+
+### Rifle Ammunition
+
+- Rifle Ammo Express
+- Rifle Ammo Velocity
+- Rifle Ammo Splitpoint
+- Elephant Rifle Ammo
+- Rifle Ammo Normal
+
+All cartridge and shell ammunition uses:
+
+- 10 Shell Casing
+- 1 Nitrite
+
+Arrow Small Game uses:
+
+- 1 Iron
+- 2 Wood
+
+Recipe sources:
+
+- `docs/assets/ammo-revolver-express.png`
+- `docs/assets/ammo-revolver-normal.png`
+- `docs/assets/ammo-revolver-splitpoint.png`
+- `docs/assets/ammo-revolver-velocity.png`
+- `docs/assets/ammo-varmint-tranquilizer.png`
+- `docs/assets/ammo-varmint.png`
+- `docs/assets/ammo-repeater-velocity.png`
+- `docs/assets/ammo-repeater-express.png`
+- `docs/assets/ammo-repeater-splitpoint.png`
+- `docs/assets/ammo-repeater-normal.png`
+- `docs/assets/arrow-small-game.png`
+- `docs/assets/ammo-shotgun-normal.png`
+- `docs/assets/ammo-shotgun-slug.png`
+- `docs/assets/ammo-rifle-express.png`
+- `docs/assets/ammo-rifle-velocity.png`
+- `docs/assets/ammo-rifle-splitpoint.png`
+- `docs/assets/ammo-elephant-rifle.png`
+- `docs/assets/ammo-rifle-normal.png`

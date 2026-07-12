@@ -5,7 +5,8 @@ const FRONTIER_CATEGORIES = [
   "Shotguns",
   "Repeaters",
   "Revolvers",
-  "Pistols"
+  "Pistols",
+  "Ammunition"
 ];
 
 const FRONTIER_ITEMS = [
@@ -34,7 +35,25 @@ const FRONTIER_ITEMS = [
   { name: "Navy Revolver", label: "Navy Revolver", tag: "", category: "Revolvers", price: 0 },
   { name: "Schofield Revolver", label: "Schofield Revolver", tag: "", category: "Revolvers", price: 0 },
   { name: "Volcanic Pistol", label: "Volcanic Pistol", tag: "", category: "Pistols", price: 0 },
-  { name: "M1899 Pistol", label: "M1899 Pistol", tag: "", category: "Pistols", price: 0 }
+  { name: "M1899 Pistol", label: "M1899 Pistol", tag: "", category: "Pistols", price: 0 },
+  { name: "Revolver Ammo Express", label: "Revolver Ammo Express", tag: "", category: "Ammunition", price: 0 },
+  { name: "Revolver Ammo Normal", label: "Revolver Ammo Normal", tag: "", category: "Ammunition", price: 0 },
+  { name: "Revolver Ammo Splitpoint", label: "Revolver Ammo Splitpoint", tag: "", category: "Ammunition", price: 0 },
+  { name: "Revolver Ammo Velocity", label: "Revolver Ammo Velocity", tag: "", category: "Ammunition", price: 0 },
+  { name: "Varmint Tranquilizer Ammo", label: "Varmint Tranquilizer Ammo", tag: "", category: "Ammunition", price: 0 },
+  { name: "Varmint Ammo", label: "Varmint Ammo", tag: "", category: "Ammunition", price: 0 },
+  { name: "Repeater Ammo Velocity", label: "Repeater Ammo Velocity", tag: "", category: "Ammunition", price: 0 },
+  { name: "Repeater Ammo Express", label: "Repeater Ammo Express", tag: "", category: "Ammunition", price: 0 },
+  { name: "Repeater Ammo Splitpoint", label: "Repeater Ammo Splitpoint", tag: "", category: "Ammunition", price: 0 },
+  { name: "Repeater Ammo Normal", label: "Repeater Ammo Normal", tag: "", category: "Ammunition", price: 0 },
+  { name: "Arrow Small Game", label: "Arrow Small Game", tag: "", category: "Ammunition", price: 0 },
+  { name: "Shotgun Ammo Normal", label: "Shotgun Ammo Normal", tag: "", category: "Ammunition", price: 0 },
+  { name: "Shotgun Ammo Slug", label: "Shotgun Ammo Slug", tag: "", category: "Ammunition", price: 0 },
+  { name: "Rifle Ammo Express", label: "Rifle Ammo Express", tag: "", category: "Ammunition", price: 0 },
+  { name: "Rifle Ammo Velocity", label: "Rifle Ammo Velocity", tag: "", category: "Ammunition", price: 0 },
+  { name: "Rifle Ammo Splitpoint", label: "Rifle Ammo Splitpoint", tag: "", category: "Ammunition", price: 0 },
+  { name: "Elephant Rifle Ammo", label: "Elephant Rifle Ammo", tag: "", category: "Ammunition", price: 0 },
+  { name: "Rifle Ammo Normal", label: "Rifle Ammo Normal", tag: "", category: "Ammunition", price: 0 }
 ];
 
 if (typeof window !== "undefined") {
