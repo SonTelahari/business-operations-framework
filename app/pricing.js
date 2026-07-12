@@ -29,7 +29,7 @@ const FRONTIER_PRICING = Object.freeze({
     "Varmint Rifle": msrp(25, 35, "Gunsmith MSRPs", "Varmint Rifle"),
     "Boltaction Rifle": msrp(75, 85, "Gunsmith MSRPs", "Bolt-action rifle", "alias", true),
     "Rollingblock Rifle": msrp(100, 110, "Master", "Rolling Block", "alias"),
-    "Bow": msrp(25, 35, "Gunsmith MSRPs", "Improved Bow", "alias"),
+    "Bow": msrp(25, 25, "Storefront Capture", "Bow", "captured", true),
     "Doublebarrel Shotgun": msrp(50, 60, "Gunsmith MSRPs", "Doubler Barrell Shotgun", "alias"),
     "Repeating Shotgun": msrp(50, 60, "Gunsmith MSRPs", "Repeating Shotgun"),
     "Exotic Double Barrel Shotgun": msrp(100, 110, "Gunsmith MSRPs", "Doubler Barrell Exotic Shotgun", "alias"),

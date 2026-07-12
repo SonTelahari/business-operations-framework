@@ -65,6 +65,344 @@ Weapon ID: 597`
     }
   },
   {
+    name: 'real Still Water Pump Shotgun deposit',
+    input: {
+      id: 'still-water-pump-shotgun-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_SHOTGUN_PUMP
+Item label: Pump Shotgun
+Deposit Amount: 1
+Sell Price: $80
+Weapon ID: 618`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_SHOTGUN_PUMP',
+      discord_item_label: 'Pump Shotgun',
+      item_name: 'Pump Shotgun',
+      quantity: 1,
+      unit_price: 80,
+      webhook_id: '618'
+    }
+  },
+  {
+    name: 'real Still Water Semi-Auto Shotgun deposit',
+    input: {
+      id: 'still-water-semiauto-shotgun-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_SHOTGUN_SEMIAUTO
+Item label: Semi-Auto Shotgun
+Deposit Amount: 1
+Sell Price: $105
+Weapon ID: 632`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_SHOTGUN_SEMIAUTO',
+      discord_item_label: 'Semi-Auto Shotgun',
+      item_name: 'Semiauto Shotgun',
+      quantity: 1,
+      unit_price: 105,
+      webhook_id: '632'
+    }
+  },
+  {
+    name: 'real Still Water Repeating Shotgun deposit',
+    input: {
+      id: 'still-water-repeating-shotgun-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_SHOTGUN_REPEATING
+Item label: Repeating Shotgun
+Deposit Amount: 1
+Sell Price: $55
+Weapon ID: 634`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_SHOTGUN_REPEATING',
+      discord_item_label: 'Repeating Shotgun',
+      item_name: 'Repeating Shotgun',
+      quantity: 1,
+      unit_price: 55,
+      webhook_id: '634'
+    }
+  },
+  {
+    name: 'real Still Water Double Barrel Shotgun deposit',
+    input: {
+      id: 'still-water-double-barrel-shotgun-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_SHOTGUN_DOUBLEBARREL
+Item label: Double Barrel Shotgun
+Deposit Amount: 1
+Sell Price: $55
+Weapon ID: 637`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_SHOTGUN_DOUBLEBARREL',
+      discord_item_label: 'Double Barrel Shotgun',
+      item_name: 'Doublebarrel Shotgun',
+      quantity: 1,
+      unit_price: 55,
+      webhook_id: '637'
+    }
+  },
+  {
+    name: 'real Still Water Henry Repeater deposit',
+    input: {
+      id: 'still-water-henry-repeater-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_REPEATER_HENRY
+Item label: Henry Reapeater
+Deposit Amount: 1
+Sell Price: $55
+Weapon ID: 639`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_REPEATER_HENRY',
+      discord_item_label: 'Henry Reapeater',
+      item_name: 'Henry Repeater',
+      quantity: 1,
+      unit_price: 55,
+      webhook_id: '639'
+    }
+  },
+  {
+    name: 'real Still Water Winchester Repeater deposit',
+    input: {
+      id: 'still-water-winchester-repeater-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_REPEATER_WINCHESTER
+Item label: Winchester Repeater
+Deposit Amount: 1
+Sell Price: $55
+Weapon ID: 641`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_REPEATER_WINCHESTER',
+      discord_item_label: 'Winchester Repeater',
+      item_name: 'Winchester Repeater',
+      quantity: 1,
+      unit_price: 55,
+      webhook_id: '641'
+    }
+  },
+  {
+    name: 'real Still Water Carbine Repeater deposit',
+    input: {
+      id: 'still-water-carbine-repeater-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_REPEATER_CARBINE
+Item label: Carabine Reapeater
+Deposit Amount: 1
+Sell Price: $45
+Weapon ID: 643`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_REPEATER_CARBINE',
+      discord_item_label: 'Carabine Reapeater',
+      item_name: 'Carbine Repeater',
+      quantity: 1,
+      unit_price: 45,
+      webhook_id: '643'
+    }
+  },
+  {
+    name: 'real Still Water Evans Repeater deposit',
+    input: {
+      id: 'still-water-evans-repeater-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_REPEATER_EVANS
+Item label: Evans Repeater
+Deposit Amount: 1
+Sell Price: $55
+Weapon ID: 645`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_REPEATER_EVANS',
+      discord_item_label: 'Evans Repeater',
+      item_name: 'Evans Repeater',
+      quantity: 1,
+      unit_price: 55,
+      webhook_id: '645'
+    }
+  },
+  {
+    name: 'real Still Water Navy Crossover Revolver deposit',
+    input: {
+      id: 'still-water-navy-crossover-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_REVOLVER_NAVY_CROSSOVER
+Item label: Revolver Navy Crossover
+Deposit Amount: 1
+Sell Price: $105
+Weapon ID: 647`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_REVOLVER_NAVY_CROSSOVER',
+      discord_item_label: 'Revolver Navy Crossover',
+      item_name: 'Navy Crossover Revolver',
+      quantity: 1,
+      unit_price: 105,
+      webhook_id: '647'
+    }
+  },
+  {
+    name: 'real Still Water Schofield Revolver deposit',
+    input: {
+      id: 'still-water-schofield-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_REVOLVER_SCHOFIELD
+Item label: Revolver Schofield
+Deposit Amount: 1
+Sell Price: $55
+Weapon ID: 649`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_REVOLVER_SCHOFIELD',
+      discord_item_label: 'Revolver Schofield',
+      item_name: 'Schofield Revolver',
+      quantity: 1,
+      unit_price: 55,
+      webhook_id: '649'
+    }
+  },
+  {
+    name: 'real Still Water Lemat Revolver deposit',
+    input: {
+      id: 'still-water-lemat-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_REVOLVER_LEMAT
+Item label: Revolver Lemat
+Deposit Amount: 1
+Sell Price: $55
+Weapon ID: 650`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_REVOLVER_LEMAT',
+      discord_item_label: 'Revolver Lemat',
+      item_name: 'Lemat Revolver',
+      quantity: 1,
+      unit_price: 55,
+      webhook_id: '650'
+    }
+  },
+  {
+    name: 'real Still Water Rolling Block Rifle deposit',
+    input: {
+      id: 'still-water-rolling-block-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_SNIPERRIFLE_ROLLINGBLOCK
+Item label: Rolling Block Rifle
+Deposit Amount: 1
+Sell Price: $105
+Weapon ID: 653`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_SNIPERRIFLE_ROLLINGBLOCK',
+      discord_item_label: 'Rolling Block Rifle',
+      item_name: 'Rollingblock Rifle',
+      quantity: 1,
+      unit_price: 105,
+      webhook_id: '653'
+    }
+  },
+  {
+    name: 'real Still Water Bow deposit',
+    input: {
+      id: 'still-water-bow-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_BOW
+Item label: Bow
+Deposit Amount: 1
+Sell Price: $25
+Weapon ID: 667`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_BOW',
+      discord_item_label: 'Bow',
+      item_name: 'Bow',
+      quantity: 1,
+      unit_price: 25,
+      webhook_id: '667'
+    }
+  },
+  {
     name: 'withdrawal',
     input: {
       id: 'withdraw-example',
@@ -129,4 +467,4 @@ assert.deepEqual(capture, {
   description: 'Raw storefront text'
 });
 
-console.log(`Capture check passed and parser checks passed: ${cases.length} event formats, including 2 captured Still Water events.`);
+console.log(`Capture check passed and parser checks passed: ${cases.length} event formats, including 15 captured Still Water events.`);

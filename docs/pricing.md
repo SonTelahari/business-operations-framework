@@ -11,6 +11,8 @@ Source: [Still Water MSRPs](https://docs.google.com/spreadsheets/d/1OUepyU_8ohSr
 
 The first captures confirm this policy: Bolt-action is `$75-$85` and stocked at `$80`; Navy is `$100-$110` and stocked at `$105`.
 
+Base Bow is stocked at its captured `$25` price. The workbook's `$25-$35` `Improved Bow` range is not treated as the base Bow's range.
+
 ## Material Aliases
 
 - `Wood` uses the Carpenter `Soft Wood` range.
