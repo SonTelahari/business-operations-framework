@@ -53,7 +53,14 @@ const FRONTIER_ITEMS = [
   { name: "Rifle Ammo Velocity", label: "Rifle Ammo Velocity", tag: "", category: "Ammunition", price: 0 },
   { name: "Rifle Ammo Splitpoint", label: "Rifle Ammo Splitpoint", tag: "", category: "Ammunition", price: 0 },
   { name: "Elephant Rifle Ammo", label: "Elephant Rifle Ammo", tag: "", category: "Ammunition", price: 0 },
-  { name: "Rifle Ammo Normal", label: "Rifle Ammo Normal", tag: "", category: "Ammunition", price: 0 }
+  { name: "Rifle Ammo Normal", label: "Rifle Ammo Normal", tag: "", category: "Ammunition", price: 0 },
+  { name: "Pistol Ammo Velocity", label: "Pistol Ammo Velocity", tag: "", category: "Ammunition", price: 0 },
+  { name: "Pistol Ammo Splitpoint", label: "Pistol Ammo Splitpoint", tag: "", category: "Ammunition", price: 0 },
+  { name: "Pistol Ammo Express", label: "Pistol Ammo Express", tag: "", category: "Ammunition", price: 0 },
+  { name: "Pistol Ammo Normal", label: "Pistol Ammo Normal", tag: "", category: "Ammunition", price: 0 },
+  { name: "Hatchet Ammo", label: "Hatchet Ammo", tag: "", category: "Ammunition", price: 0 },
+  { name: "Hatchet Cleaver Ammo", label: "Hatchet Cleaver Ammo", tag: "", category: "Ammunition", price: 0 },
+  { name: "Hatchet Hunter Ammo", label: "Hatchet Hunter Ammo", tag: "", category: "Ammunition", price: 0 }
 ];
 
 if (typeof window !== "undefined") {

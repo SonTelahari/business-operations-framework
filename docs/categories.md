@@ -157,7 +157,7 @@ Recipe sources:
 - `docs/assets/revolver-navy.png`
 - `docs/assets/revolver-schofield.png`
 
-## Ammunition - 18 Products
+## Ammunition - 25 Products
 
 ### Revolver Ammunition
 
@@ -195,6 +195,19 @@ Recipe sources:
 - Elephant Rifle Ammo
 - Rifle Ammo Normal
 
+### Pistol Ammunition
+
+- Pistol Ammo Velocity
+- Pistol Ammo Splitpoint
+- Pistol Ammo Express
+- Pistol Ammo Normal
+
+### Hatchet Ammunition
+
+- Hatchet Ammo
+- Hatchet Cleaver Ammo
+- Hatchet Hunter Ammo
+
 All cartridge and shell ammunition uses:
 
 - 10 Shell Casing
@@ -204,6 +217,10 @@ Arrow Small Game uses:
 
 - 1 Iron
 - 2 Wood
+
+Each hatchet ammunition product uses:
+
+- 1 Iron
 
 Recipe sources:
 
@@ -225,3 +242,10 @@ Recipe sources:
 - `docs/assets/ammo-rifle-splitpoint.png`
 - `docs/assets/ammo-elephant-rifle.png`
 - `docs/assets/ammo-rifle-normal.png`
+- `docs/assets/ammo-pistol-velocity.png`
+- `docs/assets/ammo-pistol-splitpoint.png`
+- `docs/assets/ammo-pistol-express.png`
+- `docs/assets/ammo-pistol-normal.png`
+- `docs/assets/ammo-hatchet.png`
+- `docs/assets/ammo-hatchet-cleaver.png`
+- `docs/assets/ammo-hatchet-hunter.png`

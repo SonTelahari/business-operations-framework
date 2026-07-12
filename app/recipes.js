@@ -47,6 +47,8 @@ const ammoRecipe = [
   ["Nitrite", 1]
 ];
 
+const hatchetAmmoRecipe = [["Iron", 1]];
+
 window.FRONTIER_RECIPES = {
   "Springfield Rifle": rifleRecipe,
   "Varmint Rifle": rifleRecipe,
@@ -91,5 +93,12 @@ window.FRONTIER_RECIPES = {
   "Rifle Ammo Velocity": ammoRecipe,
   "Rifle Ammo Splitpoint": ammoRecipe,
   "Elephant Rifle Ammo": ammoRecipe,
-  "Rifle Ammo Normal": ammoRecipe
+  "Rifle Ammo Normal": ammoRecipe,
+  "Pistol Ammo Velocity": ammoRecipe,
+  "Pistol Ammo Splitpoint": ammoRecipe,
+  "Pistol Ammo Express": ammoRecipe,
+  "Pistol Ammo Normal": ammoRecipe,
+  "Hatchet Ammo": hatchetAmmoRecipe,
+  "Hatchet Cleaver Ammo": hatchetAmmoRecipe,
+  "Hatchet Hunter Ammo": hatchetAmmoRecipe
 };
