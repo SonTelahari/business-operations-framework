@@ -12,7 +12,10 @@ const FRONTIER_ITEMS = [
   { name: "Springfield Rifle", label: "Springfield Rifle", tag: "", category: "Rifles", price: 0 },
   { name: "Varmint Rifle", label: "Varmint Rifle", tag: "", category: "Rifles", price: 0 },
   { name: "Boltaction Rifle", label: "Boltaction Rifle", tag: "", category: "Rifles", price: 0 },
-  { name: "Rollingblock Rifle", label: "Rollingblock Rifle", tag: "", category: "Rifles", price: 0 }
+  { name: "Rollingblock Rifle", label: "Rollingblock Rifle", tag: "", category: "Rifles", price: 0 },
+  { name: "Bow", label: "Bow", tag: "", category: "Bows", price: 0 },
+  { name: "Lasso", label: "Lasso", tag: "", category: "Misc", price: 0 },
+  { name: "Reinforced Lasso", label: "Reinforced Lasso", tag: "", category: "Misc", price: 0 }
 ];
 
 if (typeof window !== "undefined") {

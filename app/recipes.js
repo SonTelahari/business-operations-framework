@@ -11,5 +11,8 @@ window.FRONTIER_RECIPES = {
   "Springfield Rifle": rifleRecipe,
   "Varmint Rifle": rifleRecipe,
   "Boltaction Rifle": rifleRecipe,
-  "Rollingblock Rifle": rifleRecipe
+  "Rollingblock Rifle": rifleRecipe,
+  "Bow": [["Hard wood", 10], ["Wood", 4]],
+  "Lasso": [["Flax", 30]],
+  "Reinforced Lasso": [["Flax", 100]]
 };

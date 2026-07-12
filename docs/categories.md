@@ -36,3 +36,26 @@ Recipe sources:
 - `docs/assets/rifle-varmint.png`
 - `docs/assets/rifle-boltaction.png`
 - `docs/assets/rifle-rollingblock.png`
+
+## Bows - 1 Product
+
+### Bow
+
+- 10 Hard wood
+- 4 Wood
+
+Source: `docs/assets/bow.png`
+
+## Misc - 2 Products
+
+### Lasso
+
+- 30 Flax
+
+Source: `docs/assets/misc-lasso.png`
+
+### Reinforced Lasso
+
+- 100 Flax
+
+Source: `docs/assets/misc-reinforced-lasso.png`
