@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Frontier Firearms - Still Water</title>
+    <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <img class="brand-logo" src="assets/frontier-firearms-logo.png" alt="Frontier Firearms">
+          <div>
+            <p class="eyebrow">Frontier Firearms</p>
+            <h1>Still Water Desk</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <label class="role-picker">
+            Access
+            <select id="roleSelect">
+              <option value="admin">Admin</option>
+              <option value="employee">Employee</option>
+            </select>
+          </label>
+          <button class="ghost-button" id="newOrderButton" type="button">New</button>
+          <button class="primary-button" id="saveOrderButton" type="button">Save</button>
+        </div>
+      </header>
+
+      <nav class="section-tabs" aria-label="Main sections">
+        <button class="section-button active" data-section="dashboard" type="button">Dashboard</button>
+        <button class="section-button" data-section="restock" type="button">Restock</button>
+        <button class="section-button" data-section="workbench" type="button">Workbench</button>
+        <button class="section-button" data-section="operations" type="button">Operations</button>
+      </nav>
+
+      <main class="dashboard workspace-section" id="dashboardSection">
+        <section class="panel dashboard-hero">
+          <div>
+            <p class="eyebrow">Today</p>
+            <h2>Orders and Time Clock</h2>
+          </div>
+          <div class="dashboard-stats">
+            <div>
+              <span>Due Today</span>
+              <strong id="dueTodayCount">0</strong>
+            </div>
+            <div>
+              <span>Overdue</span>
+              <strong id="overdueCount">0</strong>
+            </div>
+            <div>
+              <span>Expedited</span>
+              <strong id="expeditedCount">0</strong>
+            </div>
+            <div>
+              <span>Paused</span>
+              <strong id="pausedCount">0</strong>
+            </div>
+            <div>
+              <span>In-Store</span>
+              <strong id="inStoreCount">0</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel dashboard-hero restock-summary-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Storefront</p>
+              <h2>Restock Planning</h2>
+            </div>
+          </div>
+          <div class="dashboard-stats">
+            <div class="priority-stat">
+              <span>Missing Stock</span>
+              <strong id="missingStockCount">0</strong>
+            </div>
+            <div class="priority-stat">
+              <span>Material Shorts</span>
+              <strong id="materialShortageCount">0</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel dashboard-list-panel clock-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Time Clock</h2>
+              <p>Clock in when arriving and out when leaving</p>
+            </div>
+          </div>
+          <div class="clock-controls">
+            <label>
+              Employee
+              <input id="clockEmployeeInput" type="text" placeholder="Name">
+            </label>
+            <button class="primary-button" id="clockToggleButton" type="button">Clock In</button>
+          </div>
+          <div class="clock-status" id="clockStatus">Clocked out</div>
+          <div class="dashboard-list" id="timeClockList"></div>
+        </section>
+
+        <section class="panel dashboard-list-panel">
+          <div class="panel-header">
+            <div>
+              <h2>In-Store Orders</h2>
+              <p>Active orders without a delivery date</p>
+            </div>
+          </div>
+          <div class="dashboard-list" id="inStoreList"></div>
+        </section>
+
+        <section class="panel dashboard-list-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Due Today</h2>
+              <p>Active work with today as delivery date</p>
+            </div>
+          </div>
+          <div class="dashboard-list" id="dueTodayList"></div>
+        </section>
+
+        <section class="panel dashboard-list-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Overdue</h2>
+              <p>Still active past delivery date</p>
+            </div>
+          </div>
+          <div class="dashboard-list" id="overdueList"></div>
+        </section>
+
+        <section class="panel dashboard-list-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Attention</h2>
+              <p>Expedited and paused orders</p>
+            </div>
+          </div>
+          <div class="dashboard-list" id="attentionList"></div>
+        </section>
+
+      </main>
+
+      <main class="restock workspace-section hidden" id="restockSection">
+        <section class="panel dashboard-list-panel replenishment-panel priority-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Storefront Replenishment</h2>
+              <p id="replenishmentMeta">Set admin stock targets to generate a standing order</p>
+            </div>
+          </div>
+          <div class="replenishment-grid compact-replenishment">
+            <div>
+              <h3>Missing From Store</h3>
+              <div class="dashboard-list" id="replenishmentList"></div>
+            </div>
+            <div>
+              <h3>Materials Needed</h3>
+              <div class="dashboard-list" id="replenishmentMaterialsList"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel dashboard-list-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Stock Alerts</h2>
+              <p id="dataStatusText">Ready for sheet-connected warnings</p>
+            </div>
+          </div>
+          <div class="dashboard-list" id="stockAlertList">
+            <div class="empty-card">Stock alerts will appear here once the app reads stock levels from the sheet.</div>
+          </div>
+        </section>
+      </main>
+
+      <main class="workspace workspace-section hidden" id="workbenchSection">
+        <section class="panel active-order" aria-label="Active work order">
+          <div class="panel-header">
+            <div>
+              <h2>Fast Quote</h2>
+              <p id="orderMeta">Draft</p>
+            </div>
+            <select id="statusSelect" aria-label="Status">
+              <option value="Draft">Draft</option>
+              <option value="Paused">Paused</option>
+              <option value="Expedited">Expedited</option>
+              <option value="Reserved">Reserved</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          <div class="view-tabs" role="tablist" aria-label="Active order views">
+            <button class="tab-button active" id="quoteTabButton" type="button" data-view="quote">Quote</button>
+            <button class="tab-button" id="productionTabButton" type="button" data-view="production">Production</button>
+          </div>
+
+          <div class="view-panel" id="quoteView">
+            <div class="form-grid">
+              <label>
+                Customer
+                <input id="customerInput" type="text" autocomplete="off" placeholder="Customer name">
+              </label>
+              <label>
+                Handler
+                <input id="handlerInput" type="text" autocomplete="off" placeholder="Employee">
+              </label>
+              <label>
+                Deposit Paid
+                <input id="depositInput" type="number" min="0" step="0.01" value="0">
+              </label>
+              <label>
+                Priority
+                <select id="prioritySelect">
+                  <option value="Normal">Normal</option>
+                  <option value="Expedite">Expedite</option>
+                </select>
+              </label>
+              <label>
+                Delivery Date
+                <input id="deliveryDateInput" type="date">
+              </label>
+            </div>
+
+            <div class="add-line">
+              <label class="search-box">
+                Item
+                <input id="itemSearchInput" list="itemOptions" autocomplete="off" placeholder="Search label, item, tag">
+                <datalist id="itemOptions"></datalist>
+              </label>
+              <label>
+                Qty
+                <input id="quantityInput" type="number" min="1" step="1" value="1">
+              </label>
+              <label>
+                Price
+                <input id="priceInput" type="number" min="0" step="0.01">
+              </label>
+              <button class="primary-button" id="addItemButton" type="button">Add</button>
+            </div>
+
+            <div class="quick-custom">
+              <button class="chip-button" data-custom="Custom engraving" data-price="25" type="button">Engraving</button>
+              <button class="chip-button" data-custom="Gunsmith fitting" data-price="40" type="button">Fitting</button>
+              <button class="chip-button" data-custom="Rush work" data-price="50" type="button">Rush</button>
+              <button class="chip-button" data-custom="Custom label and description" data-price="0" type="button">Label</button>
+            </div>
+
+            <div class="line-table-wrap">
+              <table class="line-table">
+                <thead>
+                  <tr>
+                    <th>Line</th>
+                    <th>Qty</th>
+                    <th>Each</th>
+                    <th>Total</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="lineItemsBody"></tbody>
+              </table>
+            </div>
+
+            <div class="notes-grid">
+              <label>
+                Custom Label / Details
+                <textarea id="labelInput" rows="3" placeholder="Real-life label, cosmetic work, serial details"></textarea>
+              </label>
+              <label>
+                Notes
+                <textarea id="notesInput" rows="3" placeholder="P2P delivery, parts held, payment terms"></textarea>
+              </label>
+            </div>
+          </div>
+
+          <div class="view-panel hidden" id="productionView">
+            <div class="production-header">
+              <div>
+                <h3>Production</h3>
+                <p id="productionMeta">No craftable lines yet</p>
+              </div>
+              <button class="ghost-button" id="copyProductionButton" type="button">Copy Materials</button>
+            </div>
+            <div class="production-grid">
+              <div class="production-card">
+                <h4>Build List</h4>
+                <div id="productionBuildList" class="production-list"></div>
+              </div>
+              <div class="production-card">
+                <h4>Materials Needed</h4>
+                <div id="productionMaterialsList" class="production-list"></div>
+              </div>
+            </div>
+            <div class="missing-recipes" id="missingRecipes"></div>
+          </div>
+        </section>
+
+        <aside class="panel summary-panel" aria-label="Quote summary">
+          <div class="total-block">
+            <span>Subtotal</span>
+            <strong id="subtotalValue">$0</strong>
+          </div>
+          <div class="total-row">
+            <span>Deposit</span>
+            <strong id="depositValue">$0</strong>
+          </div>
+          <div class="balance-row">
+            <span>Balance</span>
+            <strong id="balanceValue">$0</strong>
+          </div>
+
+          <div class="action-grid">
+            <button id="copySummaryButton" class="primary-button" type="button">Copy Summary</button>
+            <button id="pauseButton" class="ghost-button" type="button">Pause</button>
+            <button id="expediteButton" class="ghost-button" type="button">Expedite</button>
+            <button id="reserveButton" class="ghost-button" type="button">Reserve</button>
+            <button id="completeButton" class="ghost-button" type="button">Complete</button>
+            <button id="deleteOrderButton" class="danger-button" type="button">Remove</button>
+          </div>
+
+          <div class="summary-preview" id="summaryPreview"></div>
+        </aside>
+
+        <section class="panel saved-panel" aria-label="Saved work orders">
+          <div class="panel-header">
+            <div>
+              <h2>Work Orders</h2>
+              <p id="savedCount">0 active</p>
+            </div>
+            <select id="filterSelect" aria-label="Filter orders">
+              <option value="Active">Active</option>
+              <option value="All">All</option>
+              <option value="Draft">Draft</option>
+              <option value="Paused">Paused</option>
+              <option value="Expedited">Expedited</option>
+              <option value="Reserved">Reserved</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div class="orders-list" id="ordersList"></div>
+        </section>
+      </main>
+
+      <main class="operations workspace-section hidden" id="operationsSection">
+        <section class="panel operations-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Manual Counts</h2>
+              <p>Use this when storefront or storage has been counted by hand</p>
+            </div>
+          </div>
+          <div class="operation-form">
+            <label>
+              Location
+              <select id="countLocationInput">
+                <option value="Storefront">Storefront</option>
+                <option value="Storage">Storage</option>
+              </select>
+            </label>
+            <label class="search-box">
+              Item
+              <input id="countItemInput" list="stockOptions" autocomplete="off" placeholder="Search item or material">
+            </label>
+            <label>
+              Counted Qty
+              <input id="countQuantityInput" type="number" min="0" step="1" value="0">
+            </label>
+            <label>
+              Counted By
+              <input id="countEmployeeInput" type="text" autocomplete="off" placeholder="Employee">
+            </label>
+            <button class="primary-button" id="saveCountButton" type="button">Save Count</button>
+          </div>
+        </section>
+
+        <section class="panel operations-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Manual Movement</h2>
+              <p>P2P sales, P2P purchases, production use, and stock transfers</p>
+            </div>
+          </div>
+          <div class="operation-form movement-form">
+            <label>
+              Type
+              <select id="movementTypeInput">
+                <option value="P2P Sale">P2P Sale</option>
+                <option value="P2P Purchase">P2P Purchase</option>
+                <option value="Production Use">Production Use</option>
+                <option value="Storefront Transfer">Move to Storefront</option>
+                <option value="Storage Transfer">Move to Storage</option>
+                <option value="Correction In">Stock Correction In</option>
+                <option value="Correction Out">Stock Correction Out</option>
+              </select>
+            </label>
+            <label class="search-box">
+              Item
+              <input id="movementItemInput" list="stockOptions" autocomplete="off" placeholder="Search item or material">
+            </label>
+            <label>
+              Qty
+              <input id="movementQuantityInput" type="number" min="1" step="1" value="1">
+            </label>
+            <label>
+              Money
+              <input id="movementAmountInput" type="number" step="0.01" value="0">
+            </label>
+            <label>
+              Handled By
+              <input id="movementEmployeeInput" type="text" autocomplete="off" placeholder="Employee">
+            </label>
+            <label class="wide-field">
+              Note
+              <input id="movementNoteInput" type="text" autocomplete="off" placeholder="Customer, reason, or storage note">
+            </label>
+            <button class="primary-button" id="saveMovementButton" type="button">Save Movement</button>
+          </div>
+        </section>
+
+        <section class="panel operations-panel admin-only">
+          <div class="panel-header">
+            <div>
+              <h2>Storefront Targets</h2>
+              <p>Admin-only target counts used to generate continuous restock orders</p>
+            </div>
+          </div>
+          <div class="operation-form">
+            <label class="search-box">
+              Item
+              <input id="targetItemInput" list="itemOptions" autocomplete="off" placeholder="Sellable item">
+            </label>
+            <label>
+              Store Target
+              <input id="targetQuantityInput" type="number" min="0" step="1" value="0">
+            </label>
+            <button class="primary-button" id="saveTargetButton" type="button">Save Target</button>
+          </div>
+          <div class="target-list" id="targetList"></div>
+        </section>
+
+        <section class="panel operations-panel admin-only">
+          <div class="panel-header">
+            <div>
+              <h2>Ledger Adjustment</h2>
+              <p>Use this after counting cash or recording off-store payments</p>
+            </div>
+          </div>
+          <div class="operation-form">
+            <label>
+              Type
+              <select id="ledgerTypeInput">
+                <option value="Ledger Count">Ledger Count</option>
+                <option value="Cash In">Cash In</option>
+                <option value="Cash Out">Cash Out</option>
+                <option value="Correction">Correction</option>
+              </select>
+            </label>
+            <label>
+              Amount
+              <input id="ledgerAmountInput" type="number" step="0.01" value="0">
+            </label>
+            <label>
+              Handled By
+              <input id="ledgerEmployeeInput" type="text" autocomplete="off" placeholder="Employee">
+            </label>
+            <label class="wide-field">
+              Note
+              <input id="ledgerNoteInput" type="text" autocomplete="off" placeholder="Reason or payout details">
+            </label>
+            <button class="primary-button" id="saveLedgerButton" type="button">Save Ledger</button>
+          </div>
+        </section>
+
+        <section class="panel operations-panel admin-only">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Admin</p>
+              <h2>Payroll Payment</h2>
+              <p>Record full or partial payouts against an employee pay period</p>
+            </div>
+          </div>
+          <div class="operation-form movement-form">
+            <label>
+              Employee
+              <input id="payrollEmployeeInput" type="text" autocomplete="off" placeholder="Employee being paid">
+            </label>
+            <label>
+              Period Start
+              <input id="payrollPeriodStartInput" type="date">
+            </label>
+            <label>
+              Period End
+              <input id="payrollPeriodEndInput" type="date">
+            </label>
+            <label>
+              Amount
+              <input id="payrollAmountInput" type="number" min="0" step="0.01" value="0">
+            </label>
+            <label>
+              Method
+              <select id="payrollMethodInput">
+                <option value="Ledger">Ledger</option>
+                <option value="Cash">Cash</option>
+                <option value="Bank">Bank</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label>
+              Reference
+              <input id="payrollReferenceInput" type="text" autocomplete="off" placeholder="Receipt or reference">
+            </label>
+            <label>
+              Entered By
+              <input id="payrollEnteredByInput" type="text" autocomplete="off" placeholder="Admin">
+            </label>
+            <label class="wide-field">
+              Note
+              <input id="payrollNoteInput" type="text" autocomplete="off" placeholder="Partial payment or payout note">
+            </label>
+            <button class="primary-button" id="savePayrollButton" type="button">Save Payroll Payment</button>
+          </div>
+        </section>
+
+        <section class="panel operations-panel activity-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Manual Activity</h2>
+              <p id="operationCountText">0 entries waiting for sheet sync</p>
+            </div>
+          </div>
+          <div class="operation-list" id="operationList"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="items.js"></script>
+    <script src="recipes.js"></script>
+    <datalist id="stockOptions"></datalist>
+    <script src="app.js"></script>
+  </body>
+</html>

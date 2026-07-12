@@ -1,0 +1,1 @@
+window.FRONTIER_RECIPES = {};
