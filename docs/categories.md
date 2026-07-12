@@ -102,3 +102,26 @@ Recipe sources:
 - `docs/assets/shotgun-exotic-double-barrel.png`
 - `docs/assets/shotgun-semiauto.png`
 - `docs/assets/shotgun-pump.png`
+
+## Repeaters - 4 Products
+
+- Henry Repeater
+- Winchester Repeater
+- Evans Repeater
+- Carbine Repeater
+
+All four repeaters use:
+
+- 5 Iron
+- 5 Wood
+- 1 Repeater Stock
+- 1 Repeater Barrel
+- 1 Repeater Receiver
+- 2 Bolts
+
+Recipe sources:
+
+- `docs/assets/repeater-henry.png`
+- `docs/assets/repeater-winchester.png`
+- `docs/assets/repeater-evans.png`
+- `docs/assets/repeater-carbine.png`

@@ -24,6 +24,15 @@ const shotgunRecipe = [
   ["Bolts", 5]
 ];
 
+const repeaterRecipe = [
+  ["Iron", 5],
+  ["Wood", 5],
+  ["Repeater Stock", 1],
+  ["Repeater Barrel", 1],
+  ["Repeater Receiver", 1],
+  ["Bolts", 2]
+];
+
 window.FRONTIER_RECIPES = {
   "Springfield Rifle": rifleRecipe,
   "Varmint Rifle": rifleRecipe,
@@ -37,6 +46,10 @@ window.FRONTIER_RECIPES = {
   "Exotic Double Barrel Shotgun": shotgunRecipe,
   "Semiauto Shotgun": shotgunRecipe,
   "Pump Shotgun": shotgunRecipe,
+  "Henry Repeater": repeaterRecipe,
+  "Winchester Repeater": repeaterRecipe,
+  "Evans Repeater": repeaterRecipe,
+  "Carbine Repeater": repeaterRecipe,
   "Volcanic Pistol": pistolRecipe,
   "M1899 Pistol": pistolRecipe
 };

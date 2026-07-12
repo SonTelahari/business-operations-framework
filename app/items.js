@@ -21,6 +21,10 @@ const FRONTIER_ITEMS = [
   { name: "Exotic Double Barrel Shotgun", label: "Exotic Double Barrel Shotgun", tag: "", category: "Shotguns", price: 0 },
   { name: "Semiauto Shotgun", label: "Semiauto Shotgun", tag: "", category: "Shotguns", price: 0 },
   { name: "Pump Shotgun", label: "Pump Shotgun", tag: "", category: "Shotguns", price: 0 },
+  { name: "Henry Repeater", label: "Henry Repeater", tag: "", category: "Repeaters", price: 0 },
+  { name: "Winchester Repeater", label: "Winchester Repeater", tag: "", category: "Repeaters", price: 0 },
+  { name: "Evans Repeater", label: "Evans Repeater", tag: "", category: "Repeaters", price: 0 },
+  { name: "Carbine Repeater", label: "Carbine Repeater", tag: "", category: "Repeaters", price: 0 },
   { name: "Volcanic Pistol", label: "Volcanic Pistol", tag: "", category: "Pistols", price: 0 },
   { name: "M1899 Pistol", label: "M1899 Pistol", tag: "", category: "Pistols", price: 0 }
 ];
