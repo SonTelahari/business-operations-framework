@@ -4,7 +4,7 @@ The Still Water storefront posts its embeds to Discord. This bridge reads that d
 
 ## Parser Intake Mode
 
-Still Water message formats must be learned from real storefront events. The bridge therefore defaults to `CAPTURE_ONLY=1`. In this mode it watches the configured channel and prints one single-line `CAPTURE` record for every message, but does not send anything to Google Sheets.
+Still Water message formats must be learned from real storefront events. The bridge therefore defaults to `CAPTURE_ONLY=1`. In this mode it watches the configured channel, prints one single-line `CAPTURE` record for every message, and appends the same JSON record to `captures/events.jsonl`, but does not send anything to Google Sheets.
 
 Capture at least one example of each available event:
 
@@ -13,7 +13,7 @@ Capture at least one example of each available event:
 - Customer purchase
 - Customer sale to the store or buy-order fill
 
-The `CAPTURE` lines from the host logs, or the raw text printed by `check-channel.cmd`, are the inputs needed to finish the dedicated Still Water parser. Keep `CAPTURE_ONLY=1` until those samples have parser tests. Set `CAPTURE_ONLY=0` only after the tests pass and the receiver is ready.
+The ignored local capture journal preserves event order and Discord message IDs for later replay into the sheet. The `CAPTURE` lines from the host logs, journal, or raw text printed by `check-channel.cmd` are the inputs needed to finish the dedicated Still Water parser. Keep `CAPTURE_ONLY=1` until those samples have parser tests. Set `CAPTURE_ONLY=0` only after the tests pass and the receiver is ready.
 
 ## Setup
 

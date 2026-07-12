@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { createCaptureRecord } = require('./capture');
+const { createCaptureRecord, serializeCaptureRecord } = require('./capture');
 const { parseStillWaterEmbed } = require('./parser');
 
 const cases = [
@@ -403,6 +403,132 @@ Weapon ID: 667`
     }
   },
   {
+    name: 'real Still Water Reinforced Lasso deposit',
+    input: {
+      id: 'still-water-reinforced-lasso-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: WEAPON_LASSO_REINFORCED
+Item label: Reinforced Lasso
+Deposit Amount: 1
+Sell Price: $35
+Weapon ID: 673`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'WEAPON_LASSO_REINFORCED',
+      discord_item_label: 'Reinforced Lasso',
+      item_name: 'Reinforced Lasso',
+      quantity: 1,
+      unit_price: 35,
+      webhook_id: '673'
+    }
+  },
+  {
+    name: 'real Still Water Revolver Ammo Normal deposit',
+    input: {
+      id: 'still-water-revolver-ammo-normal-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: ammorevolvernormal
+Item label: Revolver Ammo Normal
+Deposit Amount: 10
+Sell Price: $2.0`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'ammorevolvernormal',
+      discord_item_label: 'Revolver Ammo Normal',
+      item_name: 'Revolver Ammo Normal',
+      quantity: 10,
+      unit_price: 2,
+      webhook_id: 'still-water-revolver-ammo-normal-deposit'
+    }
+  },
+  {
+    name: 'real Still Water Rifle Ammo Express deposit',
+    input: {
+      id: 'still-water-rifle-ammo-express-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: ammorifleexpress
+Item label: Rifle Ammo Express
+Deposit Amount: 10
+Sell Price: $2.25`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'ammorifleexpress',
+      discord_item_label: 'Rifle Ammo Express',
+      item_name: 'Rifle Ammo Express',
+      quantity: 10,
+      unit_price: 2.25,
+      webhook_id: 'still-water-rifle-ammo-express-deposit'
+    }
+  },
+  {
+    name: 'real Still Water Shotgun Ammo Normal deposit',
+    input: {
+      id: 'still-water-shotgun-ammo-normal-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: ammoshotgunnormal
+Item label: Shotgun Ammo Normal
+Deposit Amount: 10
+Sell Price: $2.0`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'ammoshotgunnormal',
+      discord_item_label: 'Shotgun Ammo Normal',
+      item_name: 'Shotgun Ammo Normal',
+      quantity: 10,
+      unit_price: 2,
+      webhook_id: 'still-water-shotgun-ammo-normal-deposit'
+    }
+  },
+  {
+    name: 'real Still Water Repeater Ammo Express deposit',
+    input: {
+      id: 'still-water-repeater-ammo-express-deposit',
+      title: '',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: ammorepeaterexpress
+Item label: Repeater Ammo Express
+Deposit Amount: 10
+Sell Price: $2.25`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'ammorepeaterexpress',
+      discord_item_label: 'Repeater Ammo Express',
+      item_name: 'Repeater Ammo Express',
+      quantity: 10,
+      unit_price: 2.25,
+      webhook_id: 'still-water-repeater-ammo-express-deposit'
+    }
+  },
+  {
     name: 'withdrawal',
     input: {
       id: 'withdraw-example',
@@ -466,5 +592,6 @@ assert.deepEqual(capture, {
   title: 'Still Water Event',
   description: 'Raw storefront text'
 });
+assert.deepEqual(JSON.parse(serializeCaptureRecord(capture)), capture);
 
-console.log(`Capture check passed and parser checks passed: ${cases.length} event formats, including 15 captured Still Water events.`);
+console.log(`Capture check passed and parser checks passed: ${cases.length} event formats, including 20 captured Still Water events.`);

@@ -13,6 +13,8 @@ The first captures confirm this policy: Bolt-action is `$75-$85` and stocked at 
 
 Base Bow is stocked at its captured `$25` price. The workbook's `$25-$35` `Improved Bow` range is not treated as the base Bow's range.
 
+Captured storefront overrides also set Reinforced Lasso to `$35`, Revolver Ammo Normal to `$2.00`, Rifle Ammo Express to `$2.25`, Shotgun Ammo Normal to `$2.00`, and Repeater Ammo Express to `$2.25`.
+
 ## Material Aliases
 
 - `Wood` uses the Carpenter `Soft Wood` range.
@@ -36,7 +38,6 @@ Base Bow is stocked at its captured `$25` price. The workbook's `$25-$35` `Impro
 ## Awaiting Confirmation
 
 - Lasso
-- Reinforced Lasso
 - Double Action Gambler Revolver
 - Volcanic Pistol
 - M1899 Pistol

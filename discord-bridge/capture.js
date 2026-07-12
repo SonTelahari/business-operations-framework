@@ -1,3 +1,6 @@
+const fs = require('fs');
+const path = require('path');
+
 function createCaptureRecord(message, source) {
   return {
     parser_profile: 'still-water',
@@ -10,6 +13,15 @@ function createCaptureRecord(message, source) {
   };
 }
 
+function serializeCaptureRecord(record) {
+  return JSON.stringify(record);
+}
+
+function appendCaptureRecord(filePath, record) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.appendFileSync(filePath, `${serializeCaptureRecord(record)}\n`, 'utf8');
+}
+
 function toIsoTimestamp(value) {
   if (value instanceof Date && !Number.isNaN(value.valueOf())) return value.toISOString();
   const parsed = new Date(value || 0);
@@ -17,5 +29,7 @@ function toIsoTimestamp(value) {
 }
 
 module.exports = {
-  createCaptureRecord
+  appendCaptureRecord,
+  createCaptureRecord,
+  serializeCaptureRecord
 };

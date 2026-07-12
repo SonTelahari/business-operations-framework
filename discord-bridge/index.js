@@ -2,7 +2,7 @@ const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { createCaptureRecord } = require('./capture');
+const { appendCaptureRecord, createCaptureRecord, serializeCaptureRecord } = require('./capture');
 const { parseStillWaterEmbed } = require('./parser');
 
 loadEnvFile(path.join(__dirname, '.env'));
@@ -13,6 +13,7 @@ const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 const CAPTURE_ONLY = process.env.CAPTURE_ONLY !== '0';
 const DEBUG_DISCORD = process.env.DEBUG_DISCORD !== '0';
 const PORT = numberValue(process.env.PORT);
+const CAPTURE_FILE = path.join(__dirname, 'captures', 'events.jsonl');
 
 if (!DISCORD_TOKEN || !DISCORD_CHANNEL_ID || (!CAPTURE_ONLY && !APPS_SCRIPT_URL)) {
   console.error('Missing DISCORD_TOKEN or DISCORD_CHANNEL_ID. APPS_SCRIPT_URL is also required when CAPTURE_ONLY=0.');
@@ -65,7 +66,9 @@ client.on('messageCreate', async (message) => {
 
   if (CAPTURE_ONLY) {
     for (const source of sources) {
-      logInfo(`CAPTURE ${JSON.stringify(createCaptureRecord(message, source))}`);
+      const record = createCaptureRecord(message, source);
+      appendCaptureRecord(CAPTURE_FILE, record);
+      logInfo(`CAPTURE ${serializeCaptureRecord(record)}`);
     }
     return;
   }
@@ -135,6 +138,7 @@ function startHealthServer() {
         service: 'frontier-firearms-still-water-discord-bridge',
         mode: CAPTURE_ONLY ? 'capture' : 'forward',
         parser_profile: 'still-water',
+        capture_journal: CAPTURE_ONLY,
         discord_ready: client.isReady(),
         uptime_seconds: Math.round(process.uptime())
       }));
