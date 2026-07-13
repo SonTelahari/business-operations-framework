@@ -8,9 +8,13 @@ const path = require("node:path");
 const port = 4283;
 const receiverPort = 4282;
 const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "still-water-auth-"));
-const mockReceiver = http.createServer((request, response) => {
-  response.writeHead(200, { "content-type": "application/json" });
+const receiverPayloads = [];
+const receiverOperationIds = new Set();
+const storageCounts = new Map([["iron", 12]]);
+let failNextReceiverWrite = false;
+const mockReceiver = http.createServer(async (request, response) => {
   if (request.method === "GET") {
+    response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       ok: true,
       generatedAt: "2026-07-13T03:30:00.000Z",
@@ -20,11 +24,30 @@ const mockReceiver = http.createServer((request, response) => {
           { itemName: "Navy Revolver", itemLabel: "Navy Revolver", target: 5, currentStock: 1 },
           { itemName: "Boltaction Rifle", itemLabel: "BoltAction Rifle", target: 5, currentStock: 3 }
         ],
-        materials: [{ ingredient: "Iron", storageCount: 12 }]
+        materials: [...storageCounts.entries()].map(([key, storageCount]) => ({
+          ingredient: key === "softwood" ? "Softwood" : key.replace(/^./, character => character.toUpperCase()),
+          storageCount
+        }))
       }
     }));
     return;
   }
+  const payload = await readRequestJson(request);
+  receiverPayloads.push(payload);
+  if (failNextReceiverWrite) {
+    failNextReceiverWrite = false;
+    response.writeHead(500, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: false, error: "Simulated Sheet failure" }));
+    return;
+  }
+  const entry = payload.entry;
+  if (payload.action === "manual_operation" && entry?.kind === "Stock Count" && entry.location === "Storage") {
+    if (!receiverOperationIds.has(entry.id)) {
+      storageCounts.set(mockInventoryKey(entry.itemName || entry.itemLabel), Number(entry.quantity || 0));
+      receiverOperationIds.add(entry.id);
+    }
+  }
+  response.writeHead(200, { "content-type": "application/json" });
   response.end(JSON.stringify({ ok: true }));
 });
 mockReceiver.listen(receiverPort, "127.0.0.1");
@@ -63,7 +86,7 @@ async function run() {
 
   const health = await fetch(`${baseUrl}/health`);
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json().then(result => [result.authMode, result.persistentAccountStore]), ["accounts", true]);
+  assert.deepEqual(await health.json().then(result => [result.authMode, result.persistentAccountStore, result.supplyReceipts]), ["accounts", true, true]);
 
   const loginPage = await fetch(`${baseUrl}/login.html`);
   assert.equal(loginPage.status, 200);
@@ -198,8 +221,59 @@ async function run() {
   assert.equal(savedSupplyOrder.response.status, 200);
   assert.equal(savedSupplyOrder.body.order.requestedBy, "Ada Employee");
   assert.equal(savedSupplyOrder.body.order.lines[0].quantity, 20);
+  assert.equal(savedSupplyOrder.body.order.lines[0].receivedQuantity, 0);
   const sharedSupplyOrders = await getJson(`${baseUrl}/api/supply-orders`, ownerCookie);
   assert.equal(sharedSupplyOrders.body.orders[0].producer, "Van Horn Foundry");
+
+  const partialReceipt = await post(`${baseUrl}/api/supply-orders/supply-order-1/receive`, {
+    receipts: [{ lineId: "iron-line", quantity: 7 }]
+  }, managerCookie);
+  assert.equal(partialReceipt.response.status, 200);
+  assert.equal(partialReceipt.body.order.status, "Partially Received");
+  assert.equal(partialReceipt.body.order.lines[0].receivedQuantity, 7);
+  assert.equal(storageCounts.get("iron"), 19);
+  assert.equal(partialReceipt.body.receipts[0].storageCount, 19);
+  assert.equal(receiverPayloads.at(-1).entry.kind, "Stock Count");
+  assert.equal(receiverPayloads.at(-1).entry.location, "Storage");
+  assert.equal(receiverPayloads.at(-1).entry.quantity, 19);
+
+  const ownerPartialView = await getJson(`${baseUrl}/api/supply-orders`, ownerCookie);
+  assert.equal(ownerPartialView.body.orders[0].status, "Partially Received");
+  const completeReceipt = await post(`${baseUrl}/api/supply-orders/supply-order-1/receive`, {
+    receipts: [{ lineId: "iron-line", quantity: 13 }]
+  }, managerCookie);
+  assert.equal(completeReceipt.response.status, 200);
+  assert.equal(completeReceipt.body.order.status, "Received");
+  assert.equal(completeReceipt.body.order.lines[0].receivedQuantity, 20);
+  assert.equal(storageCounts.get("iron"), 32);
+
+  const writesBeforeRepeat = receiverPayloads.length;
+  const repeatedReceipt = await post(`${baseUrl}/api/supply-orders/supply-order-1/receive`, {
+    receipts: [{ lineId: "iron-line", quantity: 1 }]
+  }, managerCookie);
+  assert.equal(repeatedReceipt.response.status, 409);
+  assert.equal(repeatedReceipt.body.code, "order_not_receivable");
+  assert.equal(receiverPayloads.length, writesBeforeRepeat);
+  assert.equal(storageCounts.get("iron"), 32);
+
+  const failedOrder = await post(`${baseUrl}/api/supply-orders`, {
+    id: "supply-order-failed",
+    producer: "Van Horn Foundry",
+    status: "Ordered",
+    lines: [{ id: "failed-iron-line", name: "Iron", label: "Iron", quantity: 5, unitPrice: 1.5 }]
+  }, managerCookie);
+  assert.equal(failedOrder.response.status, 200);
+  failNextReceiverWrite = true;
+  const failedReceipt = await post(`${baseUrl}/api/supply-orders/supply-order-failed/receive`, {
+    receipts: [{ lineId: "failed-iron-line", quantity: 2 }]
+  }, managerCookie);
+  assert.equal(failedReceipt.response.status, 502);
+  assert.equal(failedReceipt.body.code, "supply_receipt_sync_failed");
+  const failedOrderAfterReceipt = (await getJson(`${baseUrl}/api/supply-orders`, managerCookie)).body.orders
+    .find(order => order.id === "supply-order-failed");
+  assert.equal(failedOrderAfterReceipt.status, "Ordered");
+  assert.equal(failedOrderAfterReceipt.lines[0].receivedQuantity, 0);
+  assert.equal(storageCounts.get("iron"), 32);
 
   const workerRegistration = await post(`${baseUrl}/api/auth/register`, {
     fullName: "Grace Worker",
@@ -259,11 +333,14 @@ async function run() {
   assert(managerAudit.body.events.some(event => event.action === "account.role_changed"));
   assert(managerAudit.body.events.some(event => event.action === "operation.recorded" && event.actorName === "Ada Employee"));
   assert(managerAudit.body.events.some(event => event.action === "supply_order.saved" && event.subjectName === "Van Horn Foundry"));
+  assert(managerAudit.body.events.some(event => event.action === "supply_order.received" && event.details.quantity === 7));
   assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
 
   const removedSupplyOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-1`, managerCookie);
   assert.equal(removedSupplyOrder.response.status, 200);
-  assert.deepEqual(removedSupplyOrder.body.orders, []);
+  const removedFailedOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-failed`, managerCookie);
+  assert.equal(removedFailedOrder.response.status, 200);
+  assert.deepEqual(removedFailedOrder.body.orders, []);
 
   const demoted = await post(`${baseUrl}/api/admin/users/${pendingUser.id}/demote`, {}, ownerCookie);
   assert.equal(demoted.response.status, 200);
@@ -335,6 +412,17 @@ async function post(url, payload, cookie = "") {
     body: JSON.stringify(payload)
   });
   return { response, body: await response.json() };
+}
+
+async function readRequestJson(request) {
+  let body = "";
+  for await (const chunk of request) body += chunk;
+  return JSON.parse(body || "{}");
+}
+
+function mockInventoryKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return key === "wood" || key === "soft wood" || key === "softwood" ? "softwood" : key;
 }
 
 async function getJson(url, cookie = "") {

@@ -2,7 +2,7 @@ const STORAGE_KEY = "frontier_still_water_work_orders_v1";
 const TIME_CLOCK_KEY = "frontier_still_water_time_clock_v1";
 const OPERATIONS_KEY = "frontier_still_water_manual_operations_v1";
 const TARGETS_KEY = "frontier_still_water_storefront_targets_v1";
-const SUPPLY_ACTIVE_STATUSES = new Set(["Draft", "Ordered"]);
+const SUPPLY_ACTIVE_STATUSES = new Set(["Draft", "Ordered", "Partially Received"]);
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
@@ -25,6 +25,7 @@ let backendSnapshot = null;
 let backendRefreshTimer = null;
 let backendRefreshPromise = null;
 let lastBackendRefreshAt = 0;
+let supplyReceiptPending = false;
 let activeOrder = newOrder();
 let activeSupplyOrder = newSupplyOrder();
 let activeView = "quote";
@@ -83,6 +84,7 @@ const elements = {
   supplySavedCount: document.querySelector("#supplySavedCount"),
   supplyDataStatus: document.querySelector("#supplyDataStatus"),
   supplyOrdersList: document.querySelector("#supplyOrdersList"),
+  receiveSupply: document.querySelector("#receiveSupplyButton"),
   producerOptions: document.querySelector("#producerOptions"),
   newDocument: document.querySelector("#newOrderButton"),
   saveDocument: document.querySelector("#saveOrderButton"),
@@ -302,7 +304,7 @@ function wireEvents() {
   document.querySelector("#addMissingSupplyButton").addEventListener("click", addMissingSupplyLines);
   document.querySelector("#copySupplyOrderButton").addEventListener("click", copySupplyOrder);
   document.querySelector("#orderSupplyButton").addEventListener("click", () => setSupplyStatus("Ordered"));
-  document.querySelector("#receiveSupplyButton").addEventListener("click", () => setSupplyStatus("Received"));
+  elements.receiveSupply.addEventListener("click", receiveSupplyOrder);
   document.querySelector("#deleteSupplyOrderButton").addEventListener("click", removeActiveSupplyOrder);
 
   document.querySelectorAll(".chip-button").forEach(button => {
@@ -664,6 +666,50 @@ function setSupplyStatus(status) {
   saveSupplyOrder();
 }
 
+async function receiveSupplyOrder() {
+  if (activeSupplyOrder.status !== "Ordered" && activeSupplyOrder.status !== "Partially Received") {
+    elements.supplyDataStatus.textContent = "Mark the supply order as Ordered before receiving it";
+    return;
+  }
+  const receipts = [...elements.supplyLines.querySelectorAll("[data-receive-supply-line]")]
+    .map(input => ({ lineId: input.dataset.receiveSupplyLine, quantity: Number(input.value || 0) }))
+    .filter(receipt => receipt.quantity > 0);
+  if (!receipts.length) {
+    elements.supplyDataStatus.textContent = "Enter at least one quantity in Receive Now";
+    return;
+  }
+
+  const orderId = activeSupplyOrder.id;
+  supplyReceiptPending = true;
+  elements.receiveSupply.disabled = true;
+  elements.supplyDataStatus.textContent = "Posting received items to Storage";
+  try {
+    const response = await fetch(`/api/supply-orders/${encodeURIComponent(orderId)}/receive`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ receipts })
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    activeSupplyOrder = structuredClone(result.order);
+    supplyOrders = result.orders || [];
+    renderSupplyWorkspace();
+    await loadBackendSnapshot({ silent: true });
+    const receivedUnits = (result.receipts || []).reduce((sum, receipt) => sum + Number(receipt.quantity || 0), 0);
+    elements.supplyDataStatus.textContent = `${formatNumber(receivedUnits)} units added to Storage / ${activeSupplyOrder.status}`;
+  } catch (error) {
+    await loadSupplyOrders({ silent: true });
+    const latest = supplyOrders.find(order => order.id === orderId);
+    if (latest) activeSupplyOrder = structuredClone(latest);
+    await loadBackendSnapshot({ silent: true });
+    renderSupplyWorkspace();
+    elements.supplyDataStatus.textContent = `Receipt failed: ${error.message}`;
+  } finally {
+    supplyReceiptPending = false;
+    renderSupplyWorkspace();
+  }
+}
+
 async function copySupplyOrder() {
   updateSupplyFromInputs();
   const summary = buildSupplyOrderSummary(activeSupplyOrder);
@@ -736,6 +782,8 @@ function renderSupplyWorkspace() {
   elements.supplyStatus.value = activeSupplyOrder.status;
   elements.supplyNotes.value = activeSupplyOrder.notes;
   elements.supplyOrderMeta.textContent = `${activeSupplyOrder.status} / ${activeSupplyOrder.producer || "Producer not selected"} / ${formatDate(activeSupplyOrder.updatedAt)}`;
+  const hasRemaining = activeSupplyOrder.lines.some(line => Number(line.quantity || 0) > Number(line.receivedQuantity || 0));
+  elements.receiveSupply.disabled = supplyReceiptPending || !hasRemaining || !new Set(["Ordered", "Partially Received"]).has(activeSupplyOrder.status);
   renderSupplyLines();
   renderSupplySummary();
   renderSupplyOrdersList();
@@ -744,12 +792,15 @@ function renderSupplyWorkspace() {
 
 function renderSupplyLines() {
   if (!activeSupplyOrder.lines.length) {
-    elements.supplyLines.innerHTML = `<tr><td colspan="9" class="empty-line">No parts or materials added</td></tr>`;
+    elements.supplyLines.innerHTML = `<tr><td colspan="12" class="empty-line">No parts or materials added</td></tr>`;
     return;
   }
   elements.supplyLines.innerHTML = activeSupplyOrder.lines.map(line => {
     const metrics = getSupplyLineMetrics(line.name, activeSupplyOrder.id);
     const total = Number(line.quantity || 0) * Number(line.unitPrice || 0);
+    const received = Math.max(0, Number(line.receivedQuantity || 0));
+    const remaining = Math.max(0, Number(line.quantity || 0) - received);
+    const receivable = remaining > 0 && new Set(["Ordered", "Partially Received"]).has(activeSupplyOrder.status);
     return `
       <tr>
         <td><strong>${escapeHtml(line.label || line.name)}</strong><span>${escapeHtml(line.category || "Recipe Ingredient")}</span></td>
@@ -758,9 +809,12 @@ function renderSupplyLines() {
         <td>${formatNumber(metrics.ordered)}</td>
         <td class="${metrics.missing > 0 ? "metric-short" : ""}">${formatNumber(metrics.missing)}</td>
         <td>${formatNumber(line.quantity)}</td>
+        <td>${formatNumber(received)}</td>
+        <td>${formatNumber(remaining)}</td>
+        <td><input class="supply-receive-input" data-receive-supply-line="${line.id}" type="number" min="0" max="${remaining}" step="1" value="${receivable ? remaining : 0}" aria-label="Receive ${escapeHtml(line.label || line.name)} now" ${receivable ? "" : "disabled"}></td>
         <td>$${formatNumber(line.unitPrice)}</td>
         <td>$${formatNumber(total)}</td>
-        <td><button class="icon-button" type="button" data-remove-supply-line="${line.id}" title="Remove line">x</button></td>
+        <td><button class="icon-button" type="button" data-remove-supply-line="${line.id}" title="${received > 0 ? "Received lines cannot be removed" : "Remove line"}" ${received > 0 ? "disabled" : ""}>x</button></td>
       </tr>
     `;
   }).join("");
@@ -774,7 +828,8 @@ function renderSupplySummary() {
   const activeQuantities = new Map();
   activeSupplyOrder.lines.forEach(line => {
     const key = normalize(line.name);
-    activeQuantities.set(key, (activeQuantities.get(key) || 0) + Number(line.quantity || 0));
+    const remaining = Math.max(0, Number(line.quantity || 0) - Number(line.receivedQuantity || 0));
+    activeQuantities.set(key, (activeQuantities.get(key) || 0) + remaining);
   });
   const uncovered = getMaterialPurchasePlan(activeSupplyOrder.id)
     .reduce((sum, line) => sum + Math.max(0, line.missing - (activeQuantities.get(normalize(line.ingredient)) || 0)), 0);
@@ -812,9 +867,9 @@ function renderSupplyOrdersList() {
       <div class="orders-list">
         ${producerOrders.map(order => `
           <button class="order-card ${order.id === activeSupplyOrder.id ? "selected" : ""}" type="button" data-supply-order-id="${order.id}">
-            <span class="status-pill ${normalize(order.status)}">${escapeHtml(order.status)}</span>
+            <span class="status-pill ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
             <strong>${order.expectedDate ? formatDelivery(order.expectedDate) : "No expected date"}</strong>
-            <span>${order.lines.length} lines / $${formatNumber(getSupplyOrderTotal(order))}</span>
+            <span>${order.lines.length} lines / ${formatNumber(getSupplyReceivedUnits(order))} of ${formatNumber(getSupplyOrderedUnits(order))} received / $${formatNumber(getSupplyOrderTotal(order))}</span>
             <small>Updated ${formatDate(order.updatedAt)} by ${escapeHtml(order.updatedBy || order.requestedBy)}</small>
           </button>
         `).join("")}
@@ -837,7 +892,9 @@ function buildSupplyOrderSummary(order) {
     ? order.lines.map(line => {
       const metrics = getSupplyLineMetrics(line.name, order.id);
       const total = Number(line.quantity || 0) * Number(line.unitPrice || 0);
-      return `${formatNumber(line.quantity)}x ${line.label || line.name} - $${formatNumber(line.unitPrice)} each = $${formatNumber(total)} / ${formatNumber(metrics.missing)} currently missing`;
+      const received = Number(line.receivedQuantity || 0);
+      const remaining = Math.max(0, Number(line.quantity || 0) - received);
+      return `${formatNumber(line.quantity)}x ${line.label || line.name} / ${formatNumber(received)} received / ${formatNumber(remaining)} remaining - $${formatNumber(line.unitPrice)} each = $${formatNumber(total)} / ${formatNumber(metrics.missing)} currently missing`;
     }).join("\n")
     : "No parts or materials added";
   return [
@@ -856,6 +913,14 @@ function buildSupplyOrderSummary(order) {
 
 function getSupplyOrderTotal(order) {
   return order.lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0);
+}
+
+function getSupplyOrderedUnits(order) {
+  return order.lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+}
+
+function getSupplyReceivedUnits(order) {
+  return order.lines.reduce((sum, line) => sum + Number(line.receivedQuantity || 0), 0);
 }
 
 function renderTotals() {
@@ -1962,10 +2027,11 @@ function getMaterialPurchasePlan(excludeSupplyOrderId = "") {
 function getCommittedSupplyQuantities(excludeSupplyOrderId = "") {
   const committed = new Map();
   supplyOrders
-    .filter(order => order.status === "Ordered" && order.id !== excludeSupplyOrderId)
+    .filter(order => new Set(["Ordered", "Partially Received"]).has(order.status) && order.id !== excludeSupplyOrderId)
     .forEach(order => order.lines.forEach(line => {
       const key = normalize(line.name);
-      committed.set(key, (committed.get(key) || 0) + Number(line.quantity || 0));
+      const remaining = Math.max(0, Number(line.quantity || 0) - Number(line.receivedQuantity || 0));
+      committed.set(key, (committed.get(key) || 0) + remaining);
     }));
   return committed;
 }
@@ -2113,6 +2179,10 @@ function formatNumber(value) {
 
 function normalize(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function statusClass(value) {
+  return normalize(value).replace(/\s+/g, "-");
 }
 
 function getRecipeIngredients() {

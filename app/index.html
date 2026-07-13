@@ -359,7 +359,8 @@
             <select id="supplyStatusSelect" aria-label="Supply order status">
               <option value="Draft">Draft</option>
               <option value="Ordered">Ordered</option>
-              <option value="Received">Received</option>
+              <option value="Partially Received" disabled>Partially Received</option>
+              <option value="Received" disabled>Received</option>
               <option value="Cancelled">Cancelled</option>
             </select>
           </div>
@@ -407,6 +408,9 @@
                   <th>Already Ordered</th>
                   <th>Still Missing</th>
                   <th>Order Qty</th>
+                  <th>Received</th>
+                  <th>Remaining</th>
+                  <th>Receive Now</th>
                   <th>Each</th>
                   <th>Total</th>
                   <th></th>
@@ -441,7 +445,7 @@
           <div class="action-grid">
             <button id="copySupplyOrderButton" class="primary-button" type="button">Copy Order</button>
             <button id="orderSupplyButton" class="ghost-button" type="button">Mark Ordered</button>
-            <button id="receiveSupplyButton" class="ghost-button" type="button">Mark Received</button>
+            <button id="receiveSupplyButton" class="ghost-button" type="button">Receive Items</button>
             <button id="deleteSupplyOrderButton" class="danger-button" type="button">Remove</button>
           </div>
 
@@ -459,6 +463,7 @@
               <option value="All">All</option>
               <option value="Draft">Draft</option>
               <option value="Ordered">Ordered</option>
+              <option value="Partially Received">Partially Received</option>
               <option value="Received">Received</option>
               <option value="Cancelled">Cancelled</option>
             </select>

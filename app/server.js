@@ -21,6 +21,7 @@ const accountStore = accountAuthEnabled
   : null;
 const businessStore = new BusinessStore({ filePath: path.join(accountDataDirectory, "business.json") });
 const loginAttempts = new Map();
+let supplyReceiptQueue = Promise.resolve();
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -54,6 +55,7 @@ const server = http.createServer(async (request, response) => {
         authMode: accountAuthEnabled ? "accounts" : authPassword ? "legacy-basic" : "none",
         persistentAccountStore: accountAuthEnabled && Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
         persistentBusinessStore: Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
+        supplyReceipts: true,
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -276,6 +278,15 @@ async function handleSupplyOrderRoute(request, response, url, user) {
       sendJson(response, { ok: true, order, orders: businessStore.listSupplyOrders() });
       return true;
     }
+    const receiptRoute = url.pathname.match(/^\/api\/supply-orders\/([^/]+)\/receive$/);
+    if (receiptRoute && request.method === "POST") {
+      const orderId = decodeURIComponent(receiptRoute[1]);
+      const payload = await readJsonBody(request);
+      const operation = supplyReceiptQueue.then(() => receiveSupplyOrder(orderId, payload, user));
+      supplyReceiptQueue = operation.catch(() => {});
+      sendJson(response, await operation);
+      return true;
+    }
     if (request.method === "DELETE" && url.pathname.startsWith("/api/supply-orders/")) {
       const orderId = decodeURIComponent(url.pathname.slice("/api/supply-orders/".length));
       const order = await businessStore.removeSupplyOrder(orderId);
@@ -294,6 +305,128 @@ async function handleSupplyOrderRoute(request, response, url, user) {
   return true;
 }
 
+async function receiveSupplyOrder(orderId, payload, user) {
+  const requestedReceipts = Array.isArray(payload.receipts) ? payload.receipts.slice(0, 100) : [];
+  if (!requestedReceipts.length) {
+    throw supplyOrderError("Enter at least one quantity to receive", 400, "receipts_required");
+  }
+
+  const order = businessStore.getSupplyOrder(orderId);
+  if (!order) throw supplyOrderError("Supply order not found", 404, "not_found");
+  if (order.status !== "Ordered" && order.status !== "Partially Received") {
+    throw supplyOrderError("Only ordered supplies can be received", 409, "order_not_receivable");
+  }
+
+  const seenLineIds = new Set();
+  requestedReceipts.forEach(receipt => {
+    const lineId = String(receipt.lineId || "").trim();
+    const line = order.lines.find(candidate => candidate.id === lineId);
+    const quantity = Number(receipt.quantity);
+    if (!line) throw supplyOrderError("Supply order line not found", 404, "line_not_found");
+    if (seenLineIds.has(lineId)) {
+      throw supplyOrderError("Each material can only appear once in a receipt", 400, "duplicate_receipt_line");
+    }
+    const remaining = Math.max(0, Number(line.quantity || 0) - Number(line.receivedQuantity || 0));
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > remaining) {
+      throw supplyOrderError(`Receipt for ${line.label || line.name} must be between 1 and ${remaining}`, 400, "invalid_receipt_quantity");
+    }
+    seenLineIds.add(lineId);
+  });
+
+  const sheetSnapshot = await readSheetSnapshot();
+  if (!sheetSnapshot?.ok || !Array.isArray(sheetSnapshot.inventory?.materials)) {
+    throw supplyOrderError(
+      `Storage could not be read from the Sheet${sheetSnapshot?.error ? `: ${sheetSnapshot.error}` : ""}`,
+      502,
+      "storage_snapshot_unavailable"
+    );
+  }
+  const storage = materialStorageCounts(sheetSnapshot.inventory.materials);
+  const processed = [];
+  let updatedOrder = order;
+
+  for (const requested of requestedReceipts) {
+    const currentOrder = businessStore.getSupplyOrder(orderId);
+    const line = currentOrder.lines.find(candidate => candidate.id === String(requested.lineId || "").trim());
+    const quantity = Number(requested.quantity);
+    const previouslyReceived = Number(line.receivedQuantity || 0);
+    const cumulativeReceived = previouslyReceived + quantity;
+    const key = inventoryKey(line.name || line.label);
+    const currentStorage = storage.get(key) || { quantity: 0, name: canonicalInventoryName(line.name || line.label) };
+    const absoluteCount = Number(currentStorage.quantity || 0) + quantity;
+    const operationId = `supply-receipt:${orderId}:${line.id}:${cumulativeReceived}`;
+    const itemName = currentStorage.name || canonicalInventoryName(line.name || line.label);
+    const syncResult = await syncGuiPayload({
+      action: "manual_operation",
+      entry: {
+        id: operationId,
+        createdAt: new Date().toISOString(),
+        kind: "Stock Count",
+        location: "Storage",
+        itemName,
+        itemLabel: itemName,
+        itemTag: "",
+        quantity: absoluteCount,
+        employee: user.fullName,
+        amount: "",
+        note: `Received ${quantity} from ${currentOrder.producer} / supply order ${currentOrder.id}`
+      }
+    });
+    if (!syncResult?.ok) {
+      throw supplyOrderError(
+        `Storage update failed for ${line.label || line.name}: ${syncResult?.error || "Sheet rejected the receipt"}`,
+        502,
+        "supply_receipt_sync_failed"
+      );
+    }
+
+    updatedOrder = await businessStore.receiveSupplyLine(orderId, line.id, quantity, user);
+    storage.set(key, { quantity: absoluteCount, name: itemName });
+    const receipt = {
+      id: operationId,
+      lineId: line.id,
+      itemName,
+      quantity,
+      receivedQuantity: cumulativeReceived,
+      storageCount: absoluteCount
+    };
+    processed.push(receipt);
+    await recordSupplyReceiptAudit(updatedOrder, line, receipt, user);
+  }
+
+  return { ok: true, order: updatedOrder, orders: businessStore.listSupplyOrders(), receipts: processed };
+}
+
+function materialStorageCounts(materials) {
+  const counts = new Map();
+  materials.forEach(material => {
+    const name = material.ingredient || material.itemName || material.itemLabel || material.name;
+    const key = inventoryKey(name);
+    if (!key) return;
+    counts.set(key, {
+      quantity: Number.isFinite(Number(material.storageCount)) ? Number(material.storageCount) : 0,
+      name: canonicalInventoryName(name)
+    });
+  });
+  return counts;
+}
+
+function inventoryKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return key === "wood" || key === "soft wood" || key === "softwood" ? "softwood" : key;
+}
+
+function canonicalInventoryName(value) {
+  return inventoryKey(value) === "softwood" ? "Softwood" : String(value || "").trim();
+}
+
+function supplyOrderError(message, status, code) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  return error;
+}
+
 async function recordSupplyOrderAudit(action, order, user) {
   if (!accountStore) return;
   await accountStore.recordAudit({
@@ -309,6 +442,27 @@ async function recordSupplyOrderAudit(action, order, user) {
       status: order.status,
       lineCount: order.lines.length,
       total: order.lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0)
+    }
+  });
+}
+
+async function recordSupplyReceiptAudit(order, line, receipt, user) {
+  if (!accountStore) return;
+  await accountStore.recordAudit({
+    category: "procurement",
+    action: "supply_order.received",
+    actorId: user.id,
+    actorName: user.fullName,
+    subjectId: order.id,
+    subjectName: order.producer,
+    fingerprint: receipt.id,
+    details: {
+      producer: order.producer,
+      status: order.status,
+      item: line.label || line.name,
+      quantity: receipt.quantity,
+      receivedQuantity: receipt.receivedQuantity,
+      storageCount: receipt.storageCount
     }
   });
 }
