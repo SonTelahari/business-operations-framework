@@ -1471,25 +1471,11 @@ function getReplenishmentPlan() {
 }
 
 function getLatestCounts(location) {
-  const counts = new Map();
-  const inventory = backendSnapshot?.sheet?.inventory;
-  if (location === "Storefront" && Array.isArray(inventory?.products)) {
-    inventory.products.forEach(product => {
-      counts.set(stockKey(product), Number(product.currentStock || 0));
-    });
-  }
-  if (location === "Storage" && Array.isArray(inventory?.materials)) {
-    inventory.materials.forEach(material => {
-      counts.set(stockKey(material), Number(material.storageCount || 0));
-    });
-  }
-  operations
-    .filter(entry => entry.kind === "Stock Count" && entry.location === location)
-    .forEach(entry => {
-      const key = stockKey(entry);
-      if (!counts.has(key)) counts.set(key, Number(entry.quantity || 0));
-    });
-  return counts;
+  return window.FRONTIER_INVENTORY_COUNTS.selectLatestCounts({
+    location,
+    inventory: backendSnapshot?.sheet?.inventory || {},
+    operations
+  });
 }
 
 function stockKey(entry) {

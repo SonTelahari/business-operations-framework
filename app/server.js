@@ -36,6 +36,7 @@ const publicFiles = new Set([
   "/pricing.js",
   "/items.js",
   "/recipes.js",
+  "/inventory-counts.js",
   "/assets/frontier-firearms-logo.png"
 ]);
 

@@ -93,6 +93,10 @@ async function run() {
   assert.match(authenticatedHtml, /Employee Accounts/);
   assert.match(authenticatedHtml, /Employee Audit/);
 
+  const inventoryResolver = await fetch(`${baseUrl}/inventory-counts.js`, { headers: { cookie: ownerCookie } });
+  assert.equal(inventoryResolver.status, 200);
+  assert.match(await inventoryResolver.text(), /selectLatestCounts/);
+
   const accountStoreLeak = await fetch(`${baseUrl}/.data/users.json`, { headers: { cookie: ownerCookie } });
   assert.equal(accountStoreLeak.status, 404);
   const serverSourceLeak = await fetch(`${baseUrl}/server.js`, { headers: { cookie: ownerCookie } });

@@ -443,6 +443,7 @@ function readWorkbookSnapshot() {
 function readInventorySnapshot(spreadsheet) {
   const productsSheet = requireSheet(spreadsheet, PRODUCTS_SHEET);
   const materialsSheet = requireSheet(spreadsheet, 'Materials');
+  const latestStorageCounts = readLatestStockCounts(spreadsheet, 'Storage');
   const productRowCount = Math.max(0, productsSheet.getLastRow() - 1);
   const materialRowCount = Math.max(0, materialsSheet.getLastRow() - 1);
   const productRows = productRowCount
@@ -463,11 +464,41 @@ function readInventorySnapshot(spreadsheet) {
       })),
     materials: materialRows
       .filter(row => row[0])
-      .map(row => ({
-        ingredient: String(row[0]),
-        storageCount: numberOrZero(row[2])
-      }))
+      .map(row => {
+        const latestCount = latestStorageCounts[inventoryKey(row[0])];
+        return {
+          ingredient: String(row[0]),
+          storageCount: latestCount ? latestCount.quantity : numberOrZero(row[2]),
+          countedAt: latestCount ? latestCount.countedAt : ''
+        };
+      })
   };
+}
+
+function readLatestStockCounts(spreadsheet, location) {
+  const sheet = requireSheet(spreadsheet, STOCK_COUNTS_SHEET);
+  const rowCount = Math.max(0, sheet.getLastRow() - 1);
+  if (!rowCount) return {};
+
+  const wantedLocation = inventoryKey(location);
+  const latest = {};
+  sheet.getRange(2, 1, rowCount, 4).getValues().forEach(row => {
+    if (!row[2] || inventoryKey(row[1]) !== wantedLocation) return;
+    const key = inventoryKey(row[2]);
+    const countedDate = row[0] instanceof Date ? row[0] : new Date(row[0]);
+    const sortTime = isNaN(countedDate.getTime()) ? 0 : countedDate.getTime();
+    if (latest[key] && latest[key].sortTime > sortTime) return;
+    latest[key] = {
+      quantity: numberOrZero(row[3]),
+      countedAt: sortTime ? countedDate.toISOString() : '',
+      sortTime
+    };
+  });
+  return latest;
+}
+
+function inventoryKey(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function jsonResponse(data) {
