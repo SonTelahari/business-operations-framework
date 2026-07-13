@@ -2,6 +2,8 @@ const STORAGE_KEY = "frontier_still_water_work_orders_v1";
 const TIME_CLOCK_KEY = "frontier_still_water_time_clock_v1";
 const OPERATIONS_KEY = "frontier_still_water_manual_operations_v1";
 const TARGETS_KEY = "frontier_still_water_storefront_targets_v1";
+const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
+const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
 const itemCatalog = window.FRONTIER_ITEMS || [];
 const recipeCatalog = window.FRONTIER_RECIPES || {};
@@ -18,6 +20,9 @@ let currentRole = "employee";
 let employeeUsers = [];
 let auditEvents = [];
 let backendSnapshot = null;
+let backendRefreshTimer = null;
+let backendRefreshPromise = null;
+let lastBackendRefreshAt = 0;
 let activeOrder = newOrder();
 let activeView = "quote";
 let activeSection = "dashboard";
@@ -1059,6 +1064,7 @@ async function loadSessionAndData() {
     applyIdentityDefaults();
     render();
     await loadBackendSnapshot();
+    startBackendRefreshLoop();
     if (isManagement()) await loadStaffData();
   } catch {
     window.location.replace("/login.html");
@@ -1350,7 +1356,34 @@ async function syncToBackend(action, payload) {
   }
 }
 
-async function loadBackendSnapshot() {
+function startBackendRefreshLoop() {
+  if (backendRefreshTimer) return;
+  backendRefreshTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") loadBackendSnapshot({ silent: true });
+  }, BACKEND_REFRESH_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshBackendIfStale();
+  });
+  window.addEventListener("focus", refreshBackendIfStale);
+}
+
+function refreshBackendIfStale() {
+  if (!currentUser || Date.now() - lastBackendRefreshAt < FOCUS_REFRESH_STALE_MS) return;
+  loadBackendSnapshot({ silent: true });
+}
+
+async function loadBackendSnapshot(options = {}) {
+  if (backendRefreshPromise) return backendRefreshPromise;
+  backendRefreshPromise = performBackendRefresh(options);
+  try {
+    return await backendRefreshPromise;
+  } finally {
+    backendRefreshPromise = null;
+  }
+}
+
+async function performBackendRefresh({ silent = false } = {}) {
+  const previousSnapshot = backendSnapshot;
   try {
     const response = await fetch("/api/bootstrap", { headers: { Accept: "application/json" } });
     if (response.status === 401) {
@@ -1358,23 +1391,34 @@ async function loadBackendSnapshot() {
       return;
     }
     if (!response.ok) throw new Error(`API ${response.status}`);
-    backendSnapshot = await response.json();
-    const sheetReady = backendSnapshot.sheet?.ok && Array.isArray(backendSnapshot.sheet.sheets);
+    const nextSnapshot = await response.json();
+    const sheetReady = nextSnapshot.sheet?.ok && Array.isArray(nextSnapshot.sheet.sheets);
+    if (!sheetReady && previousSnapshot?.sheet?.ok) {
+      elements.dataStatus.textContent = `Sheet refresh delayed / last synced ${formatDateTime(lastBackendRefreshAt)}`;
+      return;
+    }
+    backendSnapshot = nextSnapshot;
+    lastBackendRefreshAt = Date.now();
     const sheetText = sheetReady
-      ? ` / sheet tabs: ${backendSnapshot.sheet.sheets.length}`
+      ? ` / ${backendSnapshot.sheet.sheets.length} sheet tabs`
       : backendSnapshot.sheetConfigured
         ? " / sheet snapshot unavailable"
         : " / sheet not configured";
-    elements.dataStatus.textContent = `API ready: ${backendSnapshot.items.length} items and ${backendSnapshot.recipeCount} recipes${sheetText}`;
+    elements.dataStatus.textContent = `Sheet synced ${formatDateTime(lastBackendRefreshAt)} / ${backendSnapshot.items.length} items${sheetText}`;
     if (sheetReady) {
       hydrateSheetInventory();
       renderDashboard();
       renderOperations();
-      retryPendingSyncs();
+      if (!silent) retryPendingSyncs();
     }
   } catch {
-    backendSnapshot = null;
-    elements.dataStatus.textContent = "Local mode: orders and manual entries are stored in this browser";
+    if (previousSnapshot) {
+      backendSnapshot = previousSnapshot;
+      elements.dataStatus.textContent = `Sheet refresh delayed / last synced ${formatDateTime(lastBackendRefreshAt)}`;
+    } else {
+      backendSnapshot = null;
+      elements.dataStatus.textContent = "Local mode: orders and manual entries are stored in this browser";
+    }
   }
 }
 
