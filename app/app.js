@@ -40,6 +40,7 @@ const elements = {
   itemSearch: document.querySelector("#itemSearchInput"),
   itemOptions: document.querySelector("#itemOptions"),
   stockOptions: document.querySelector("#stockOptions"),
+  countStockOptions: document.querySelector("#countStockOptions"),
   quantity: document.querySelector("#quantityInput"),
   price: document.querySelector("#priceInput"),
   lines: document.querySelector("#lineItemsBody"),
@@ -210,7 +211,19 @@ function seedDatalist() {
   elements.itemOptions.innerHTML = itemCatalog
     .map(item => `<option value="${escapeHtml(item.label)}">${escapeHtml(item.name)} - $${formatNumber(item.price)}</option>`)
     .join("");
-  elements.stockOptions.innerHTML = stockCatalog
+  elements.stockOptions.innerHTML = stockOptionMarkup(stockCatalog);
+  seedCountDatalist();
+}
+
+function seedCountDatalist() {
+  const orderedCatalog = elements.countLocation.value === "Storage"
+    ? [...ingredientCatalog, ...itemCatalog]
+    : [...itemCatalog, ...ingredientCatalog];
+  elements.countStockOptions.innerHTML = stockOptionMarkup(orderedCatalog);
+}
+
+function stockOptionMarkup(catalog) {
+  return catalog
     .map(item => `<option value="${escapeHtml(item.label || item.name)}">${escapeHtml(item.name)}${item.category ? ` - ${escapeHtml(item.category)}` : ""}</option>`)
     .join("");
 }
@@ -234,6 +247,7 @@ function wireEvents() {
   elements.auditSearch.addEventListener("input", renderAudit);
   elements.refreshAudit.addEventListener("click", loadAuditEvents);
   elements.clockToggle.addEventListener("click", toggleTimeClock);
+  elements.countLocation.addEventListener("change", seedCountDatalist);
   elements.saveCount.addEventListener("click", saveManualCount);
   elements.saveMovement.addEventListener("click", saveManualMovement);
   elements.saveLedger.addEventListener("click", saveLedgerAdjustment);
