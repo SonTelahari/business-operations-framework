@@ -1,4 +1,5 @@
 const http = require("http");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -6,6 +7,8 @@ const vm = require("vm");
 const root = __dirname;
 loadEnvFile(path.join(root, "..", "discord-bridge", ".env"));
 const port = Number(process.env.PORT || 4273);
+const authUser = process.env.APP_AUTH_USER || "frontier";
+const authPassword = process.env.APP_AUTH_PASSWORD || "";
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -22,8 +25,18 @@ const server = http.createServer(async (request, response) => {
       ok: true,
       service: "frontier-firearms-still-water-app",
       sheetConfigured: Boolean(process.env.APPS_SCRIPT_URL),
+      authConfigured: Boolean(authPassword),
       uptimeSeconds: Math.round(process.uptime())
     });
+    return;
+  }
+  if (authPassword && !isAuthorized(request)) {
+    response.writeHead(401, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "WWW-Authenticate": 'Basic realm="Frontier Firearms - Still Water", charset="UTF-8"'
+    });
+    response.end("Authentication required");
     return;
   }
   if (url.pathname === "/api/bootstrap") {
@@ -57,6 +70,29 @@ const server = http.createServer(async (request, response) => {
     response.end(data);
   });
 });
+
+function isAuthorized(request) {
+  const header = String(request.headers.authorization || "");
+  const match = header.match(/^Basic\s+(.+)$/i);
+  if (!match) return false;
+
+  try {
+    const decoded = Buffer.from(match[1], "base64").toString("utf8");
+    const separator = decoded.indexOf(":");
+    if (separator === -1) return false;
+    return safeEqual(decoded.slice(0, separator), authUser)
+      && safeEqual(decoded.slice(separator + 1), authPassword);
+  } catch {
+    return false;
+  }
+}
+
+function safeEqual(actual, expected) {
+  const actualBuffer = Buffer.from(String(actual));
+  const expectedBuffer = Buffer.from(String(expected));
+  return actualBuffer.length === expectedBuffer.length
+    && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
 
 server.listen(port, () => {
   console.log(`Frontier Firearms - Still Water app running at http://localhost:${port}`);

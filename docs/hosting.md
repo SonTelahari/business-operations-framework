@@ -1,29 +1,42 @@
 # Hosting - Still Water
 
-Host the Discord bridge as an always-on Node.js service. Leave the repository root directory blank so the deployment includes both `discord-bridge` and the shared catalog in `app/items.js`.
+Deploy one private GitHub repository as two persistent Railway services. Both services use the repository root and the shared `railway.json` health and restart policy.
 
-## Commands
+## Service 1: Discord Bridge
 
-```text
-npm install
-npm start
-```
+- Service name: `still-water-bridge`
+- Start command: `npm start`
+- Health check: `/health`
+- Public domain: not required
+- Replicas: exactly one
 
-Health check path:
-
-```text
-/health
-```
-
-## Required Environment Variables
+Variables:
 
 ```text
-DISCORD_TOKEN=Still Water bot token
-DISCORD_CHANNEL_ID=Still Water storefront log channel ID
-APPS_SCRIPT_URL=Still Water Apps Script /exec URL
+DISCORD_TOKEN=<Still Water bot token>
+DISCORD_CHANNEL_ID=1510695972798201967
+APPS_SCRIPT_URL=https://script.google.com/macros/s/AKfycbxUltse2dYLlqIyfX2JgQdMJEFRcWNM2OAlQa5ZKP630HVigsBhUwhIaYrg7eJFq855yg/exec
+CAPTURE_ONLY=0
 DEBUG_DISCORD=0
+NODE_ENV=production
 ```
 
-Use a new Discord bot or clearly separated Still Water channel configuration. Never reuse the original project's `.env` file.
+## Service 2: GUI
 
-Only one Still Water bridge instance should run at a time.
+- Service name: `still-water-gui`
+- Start command: `npm run start:app`
+- Health check: `/health`
+- Generate a public Railway domain after deployment
+
+Variables:
+
+```text
+APPS_SCRIPT_URL=https://script.google.com/macros/s/AKfycbxUltse2dYLlqIyfX2JgQdMJEFRcWNM2OAlQa5ZKP630HVigsBhUwhIaYrg7eJFq855yg/exec
+APP_AUTH_USER=<shared login name>
+APP_AUTH_PASSWORD=<long unique password>
+NODE_ENV=production
+```
+
+The GUI health endpoint remains public for Railway. Every other GUI and API route requires HTTP Basic Auth when `APP_AUTH_PASSWORD` is configured. Railway serves the generated domain over HTTPS.
+
+Do not copy `.env` into Git or Railway. Enter each variable in its service's Variables tab. Railway injects `PORT` automatically.
