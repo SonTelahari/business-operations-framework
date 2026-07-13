@@ -1,16 +1,38 @@
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
+const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
 const port = 4283;
+const receiverPort = 4282;
 const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "still-water-auth-"));
+const mockReceiver = http.createServer((request, response) => {
+  response.writeHead(200, { "content-type": "application/json" });
+  if (request.method === "GET") {
+    response.end(JSON.stringify({
+      ok: true,
+      generatedAt: "2026-07-13T03:30:00.000Z",
+      sheets: [{ name: "Products", lastRow: 3 }],
+      inventory: {
+        products: [
+          { itemName: "Navy Revolver", itemLabel: "Navy Revolver", target: 5, currentStock: 1 },
+          { itemName: "Boltaction Rifle", itemLabel: "BoltAction Rifle", target: 5, currentStock: 3 }
+        ],
+        materials: [{ ingredient: "Iron", storageCount: 12 }]
+      }
+    }));
+    return;
+  }
+  response.end(JSON.stringify({ ok: true }));
+});
+mockReceiver.listen(receiverPort, "127.0.0.1");
 const server = spawn(process.execPath, [path.join(__dirname, "server.js")], {
   env: {
     ...process.env,
     PORT: String(port),
-    APPS_SCRIPT_URL: "",
+    APPS_SCRIPT_URL: `http://127.0.0.1:${receiverPort}/exec`,
     APP_AUTH_USER: "",
     APP_AUTH_PASSWORD: "",
     AUTH_DATA_DIR: dataDirectory,
@@ -31,6 +53,7 @@ run().catch(error => {
   process.exitCode = 1;
 }).finally(async () => {
   server.kill();
+  mockReceiver.close();
   await fs.promises.rm(dataDirectory, { recursive: true, force: true });
 });
 
@@ -69,6 +92,12 @@ async function run() {
   assert.equal(accountStoreLeak.status, 404);
   const serverSourceLeak = await fetch(`${baseUrl}/server.js`, { headers: { cookie: ownerCookie } });
   assert.equal(serverSourceLeak.status, 404);
+
+  const bootstrap = await getJson(`${baseUrl}/api/bootstrap`, ownerCookie);
+  assert.equal(bootstrap.response.status, 200);
+  assert.equal(bootstrap.body.sheet.inventory.products[0].currentStock, 1);
+  assert.equal(bootstrap.body.sheet.inventory.products[1].target, 5);
+  assert.equal(bootstrap.body.sheet.inventory.materials[0].storageCount, 12);
 
   const registration = await post(`${baseUrl}/api/auth/register`, {
     fullName: "Ada Employee",

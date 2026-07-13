@@ -62,6 +62,7 @@ const elements = {
   pendingUserList: document.querySelector("#pendingUserList"),
   employeeUserList: document.querySelector("#employeeUserList"),
   dataStatus: document.querySelector("#dataStatusText"),
+  stockAlertList: document.querySelector("#stockAlertList"),
   missingStockCount: document.querySelector("#missingStockCount"),
   materialShortageCount: document.querySelector("#materialShortageCount"),
   dueTodayCount: document.querySelector("#dueTodayCount"),
@@ -542,6 +543,15 @@ function renderReplenishment() {
   elements.replenishmentMaterialsList.innerHTML = materialRows || missingRecipeRows
     ? materialRows + missingRecipeRows
     : `<div class="empty-card">No materials needed from current targets</div>`;
+
+  elements.stockAlertList.innerHTML = plan.missing.length
+    ? plan.missing.map(line => `
+      <div class="replenishment-row short">
+        <strong>${escapeHtml(line.label)}</strong>
+        <span>${formatNumber(line.current)} in store / ${formatNumber(line.missing)} needed</span>
+      </div>
+    `).join("")
+    : `<div class="empty-card">${stockTargets.length ? "All storefront targets are filled" : "No storefront targets set yet"}</div>`;
 }
 
 function renderTimeClock() {
@@ -1213,11 +1223,43 @@ async function loadBackendSnapshot() {
         ? " / sheet snapshot unavailable"
         : " / sheet not configured";
     elements.dataStatus.textContent = `API ready: ${backendSnapshot.items.length} items and ${backendSnapshot.recipeCount} recipes${sheetText}`;
-    if (sheetReady) retryPendingSyncs();
+    if (sheetReady) {
+      hydrateSheetInventory();
+      renderDashboard();
+      renderOperations();
+      retryPendingSyncs();
+    }
   } catch {
     backendSnapshot = null;
     elements.dataStatus.textContent = "Local mode: orders and manual entries are stored in this browser";
   }
+}
+
+function hydrateSheetInventory() {
+  const products = backendSnapshot?.sheet?.inventory?.products;
+  if (!Array.isArray(products)) return;
+
+  const mergedTargets = new Map();
+  products
+    .filter(product => Number(product.target || 0) > 0)
+    .forEach(product => {
+      const target = {
+        itemName: product.itemName,
+        itemLabel: product.itemLabel || product.itemName,
+        target: Number(product.target || 0),
+        updatedAt: backendSnapshot.sheet.generatedAt || backendSnapshot.generatedAt,
+        syncStatus: "Synced"
+      };
+      mergedTargets.set(stockKey(target), target);
+    });
+
+  stockTargets
+    .filter(target => target.syncStatus !== "Synced" || target.deleting)
+    .forEach(target => mergedTargets.set(stockKey(target), target));
+
+  stockTargets = [...mergedTargets.values()]
+    .sort((a, b) => (a.itemLabel || a.itemName).localeCompare(b.itemLabel || b.itemName));
+  persistStockTargets();
 }
 
 async function retryPendingSyncs() {
@@ -1287,6 +1329,17 @@ function getReplenishmentPlan() {
 
 function getLatestCounts(location) {
   const counts = new Map();
+  const inventory = backendSnapshot?.sheet?.inventory;
+  if (location === "Storefront" && Array.isArray(inventory?.products)) {
+    inventory.products.forEach(product => {
+      counts.set(stockKey(product), Number(product.currentStock || 0));
+    });
+  }
+  if (location === "Storage" && Array.isArray(inventory?.materials)) {
+    inventory.materials.forEach(material => {
+      counts.set(stockKey(material), Number(material.storageCount || 0));
+    });
+  }
   operations
     .filter(entry => entry.kind === "Stock Count" && entry.location === location)
     .forEach(entry => {

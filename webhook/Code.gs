@@ -434,7 +434,39 @@ function readWorkbookSnapshot() {
     ok: true,
     spreadsheetId: SPREADSHEET_ID,
     generatedAt: new Date().toISOString(),
-    sheets
+    sheets,
+    inventory: readInventorySnapshot(spreadsheet)
+  };
+}
+
+// Exposes operational stock totals only; transaction and payroll rows stay private.
+function readInventorySnapshot(spreadsheet) {
+  const productsSheet = requireSheet(spreadsheet, PRODUCTS_SHEET);
+  const materialsSheet = requireSheet(spreadsheet, 'Materials');
+  const productRowCount = Math.max(0, productsSheet.getLastRow() - 1);
+  const materialRowCount = Math.max(0, materialsSheet.getLastRow() - 1);
+  const productRows = productRowCount
+    ? productsSheet.getRange(2, 1, productRowCount, 8).getValues()
+    : [];
+  const materialRows = materialRowCount
+    ? materialsSheet.getRange(2, 1, materialRowCount, 3).getValues()
+    : [];
+
+  return {
+    products: productRows
+      .filter(row => row[0])
+      .map(row => ({
+        itemName: String(row[0]),
+        itemLabel: String(row[1] || row[0]),
+        target: numberOrZero(row[5]),
+        currentStock: numberOrZero(row[6])
+      })),
+    materials: materialRows
+      .filter(row => row[0])
+      .map(row => ({
+        ingredient: String(row[0]),
+        storageCount: numberOrZero(row[2])
+      }))
   };
 }
 
