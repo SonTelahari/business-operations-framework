@@ -80,8 +80,16 @@ const server = http.createServer(async (request, response) => {
           sendJson(response, { ok: false, error: "Admin access required", code: "admin_required" }, 403);
           return;
         }
+        if (requiresManagement(payload) && !isManagementRole(user)) {
+          sendJson(response, { ok: false, error: "Manager access required", code: "manager_required" }, 403);
+          return;
+        }
         stampEmployee(payload, user);
-        sendJson(response, await syncGuiPayload(payload));
+        const syncResult = await syncGuiPayload(payload);
+        await auditGuiPayload(payload, user, syncResult).catch(error => {
+          console.error("Unable to write GUI audit event:", error.message);
+        });
+        sendJson(response, syncResult);
         return;
       }
     } else {
@@ -161,26 +169,44 @@ async function handleAccountRoute(request, response, url, user) {
     });
   }
   if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+    if (user) {
+      await accountStore.recordAudit({
+        category: "authentication",
+        action: "auth.logout",
+        actorId: user.id,
+        actorName: user.fullName,
+        subjectId: user.id,
+        subjectName: user.fullName
+      }).catch(error => console.error("Unable to write logout audit event:", error.message));
+    }
     clearSessionCookie(response, request);
     sendJson(response, { ok: true });
     return true;
   }
   if (url.pathname === "/api/admin/users" && request.method === "GET") {
-    if (!requireAdmin(response, user)) return true;
+    if (!requireManagement(response, user)) return true;
     sendJson(response, { ok: true, users: accountStore.listUsers() });
     return true;
   }
+  if (url.pathname === "/api/admin/audit" && request.method === "GET") {
+    if (!requireManagement(response, user)) return true;
+    sendJson(response, { ok: true, events: accountStore.listAudit(url.searchParams.get("limit")) });
+    return true;
+  }
 
-  const userAction = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/(approve|disable|reject)$/);
+  const userAction = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/(approve|disable|reject|promote|demote)$/);
   if (userAction && request.method === "POST") {
-    if (!requireAdmin(response, user)) return true;
+    const [, userId, action] = userAction;
+    if ((action === "promote" || action === "demote") && !requireAdmin(response, user)) return true;
+    if (action !== "promote" && action !== "demote" && !requireManagement(response, user)) return true;
     return handleAccountAction(response, async () => {
-      const [, userId, action] = userAction;
       const result = action === "approve"
         ? await accountStore.approve(userId, user)
         : action === "disable"
           ? await accountStore.disable(userId, user)
-          : await accountStore.reject(userId);
+          : action === "reject"
+            ? await accountStore.reject(userId, user)
+            : await accountStore.setRole(userId, action === "promote" ? "manager" : "employee", user);
       sendJson(response, { ok: true, user: result });
     });
   }
@@ -212,16 +238,94 @@ function requireAdmin(response, user) {
   return true;
 }
 
+function requireManagement(response, user) {
+  if (!user) {
+    sendJson(response, { ok: false, error: "Authentication required", code: "authentication_required" }, 401);
+    return false;
+  }
+  if (!isManagementRole(user)) {
+    sendJson(response, { ok: false, error: "Manager access required", code: "manager_required" }, 403);
+    return false;
+  }
+  return true;
+}
+
+function isManagementRole(user) {
+  return user?.role === "admin" || user?.role === "manager";
+}
+
 function requiresAdmin(payload) {
-  if (payload.action === "stock_target") return true;
   if (payload.action !== "manual_operation") return false;
-  const adminKinds = new Set(["Ledger Count", "Cash In", "Cash Out", "Correction", "Payroll Payment"]);
-  return adminKinds.has(payload.entry?.kind);
+  return payload.entry?.kind === "Payroll Payment";
+}
+
+function requiresManagement(payload) {
+  return payload.action === "stock_target" || payload.action === "manual_operation";
 }
 
 function stampEmployee(payload, user) {
   if ((payload.action === "manual_operation" || payload.action === "time_clock") && payload.entry) {
     payload.entry.employee = user.fullName;
+  }
+}
+
+async function auditGuiPayload(payload, user, syncResult) {
+  if (payload.action === "time_clock" && payload.entry) {
+    const clockedOut = Boolean(payload.entry.clockOut);
+    await accountStore.recordAudit({
+      category: "time_clock",
+      action: clockedOut ? "clock.out" : "clock.in",
+      actorId: user.id,
+      actorName: user.fullName,
+      subjectId: user.id,
+      subjectName: user.fullName,
+      fingerprint: `clock:${payload.entry.id}:${clockedOut ? "out" : "in"}`,
+      details: {
+        clockIn: payload.entry.clockIn,
+        clockOut: payload.entry.clockOut,
+        durationMinutes: payload.entry.durationMinutes,
+        sheetSync: Boolean(syncResult?.ok)
+      }
+    });
+    return;
+  }
+  if (payload.action === "manual_operation" && payload.entry) {
+    await accountStore.recordAudit({
+      category: "operations",
+      action: "operation.recorded",
+      actorId: user.id,
+      actorName: user.fullName,
+      subjectId: user.id,
+      subjectName: user.fullName,
+      fingerprint: `operation:${payload.entry.id}`,
+      details: {
+        kind: payload.entry.kind,
+        location: payload.entry.location,
+        item: payload.entry.itemLabel || payload.entry.itemName,
+        quantity: payload.entry.quantity,
+        amount: payload.entry.amount,
+        note: payload.entry.note,
+        sheetSync: Boolean(syncResult?.ok)
+      }
+    });
+    return;
+  }
+  if (payload.action === "stock_target" && payload.target) {
+    const removed = Boolean(payload.target.deleting) || Number(payload.target.target) === 0;
+    await accountStore.recordAudit({
+      category: "operations",
+      action: removed ? "target.removed" : "target.updated",
+      actorId: user.id,
+      actorName: user.fullName,
+      subjectId: user.id,
+      subjectName: user.fullName,
+      fingerprint: `target:${payload.target.itemTag || payload.target.itemName || payload.target.itemLabel}:${payload.target.updatedAt || ""}:${removed}`,
+      details: {
+        item: payload.target.itemLabel || payload.target.itemName,
+        target: payload.target.target,
+        sheetSync: Boolean(syncResult?.ok)
+      }
+    });
   }
 }
 

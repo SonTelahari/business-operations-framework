@@ -89,7 +89,9 @@ async function run() {
 
   const authenticatedPage = await fetch(baseUrl, { headers: { cookie: ownerCookie } });
   assert.equal(authenticatedPage.status, 200);
-  assert.match(await authenticatedPage.text(), /Employee Accounts/);
+  const authenticatedHtml = await authenticatedPage.text();
+  assert.match(authenticatedHtml, /Employee Accounts/);
+  assert.match(authenticatedHtml, /Employee Audit/);
 
   const accountStoreLeak = await fetch(`${baseUrl}/.data/users.json`, { headers: { cookie: ownerCookie } });
   assert.equal(accountStoreLeak.status, 404);
@@ -143,6 +145,8 @@ async function run() {
 
   const employeeAdminAttempt = await getJson(`${baseUrl}/api/admin/users`, employeeCookie);
   assert.equal(employeeAdminAttempt.response.status, 403);
+  const employeeAuditAttempt = await getJson(`${baseUrl}/api/admin/audit`, employeeCookie);
+  assert.equal(employeeAuditAttempt.response.status, 403);
 
   const protectedSync = await post(`${baseUrl}/api/sync`, {
     action: "stock_target",
@@ -150,13 +154,101 @@ async function run() {
   }, employeeCookie);
   assert.equal(protectedSync.response.status, 403);
 
+  const employeeOperationAttempt = await post(`${baseUrl}/api/sync`, {
+    action: "manual_operation",
+    entry: { id: "employee-count", kind: "Stock Count", itemLabel: "Iron", quantity: 10 }
+  }, employeeCookie);
+  assert.equal(employeeOperationAttempt.response.status, 403);
+
+  const promoted = await post(`${baseUrl}/api/admin/users/${pendingUser.id}/promote`, {}, ownerCookie);
+  assert.equal(promoted.response.status, 200);
+  assert.equal(promoted.body.user.role, "manager");
+  const invalidatedEmployeeSession = await getJson(`${baseUrl}/api/auth/session`, employeeCookie);
+  assert.equal(invalidatedEmployeeSession.body.user, null);
+
+  const managerLogin = await post(`${baseUrl}/api/auth/login`, {
+    fullName: "Ada Employee",
+    password: "EmployeePassword123!"
+  });
+  assert.equal(managerLogin.response.status, 200);
+  assert.equal(managerLogin.body.user.role, "manager");
+  const managerCookie = cookieFrom(managerLogin.response);
+
+  const managerUsers = await getJson(`${baseUrl}/api/admin/users`, managerCookie);
+  assert.equal(managerUsers.response.status, 200);
+
+  const workerRegistration = await post(`${baseUrl}/api/auth/register`, {
+    fullName: "Grace Worker",
+    password: "WorkerPassword123!"
+  });
+  assert.equal(workerRegistration.response.status, 201);
+  const worker = (await getJson(`${baseUrl}/api/admin/users`, managerCookie)).body.users
+    .find(user => user.fullName === "Grace Worker");
+  const managerApproval = await post(`${baseUrl}/api/admin/users/${worker.id}/approve`, {}, managerCookie);
+  assert.equal(managerApproval.response.status, 200);
+
+  const managerTarget = await post(`${baseUrl}/api/sync`, {
+    action: "stock_target",
+    target: { itemName: "Navy Revolver", itemLabel: "Navy Revolver", target: 2, updatedAt: "2026-07-13T10:00:00.000Z" }
+  }, managerCookie);
+  assert.equal(managerTarget.response.status, 200);
+
+  const managerAdjustment = await post(`${baseUrl}/api/sync`, {
+    action: "manual_operation",
+    entry: { id: "manager-ledger", kind: "Ledger Count", location: "Ledger", amount: 250, note: "Opening count" }
+  }, managerCookie);
+  assert.equal(managerAdjustment.response.status, 200);
+
+  const managerPayrollAttempt = await post(`${baseUrl}/api/sync`, {
+    action: "manual_operation",
+    entry: { id: "manager-payroll", kind: "Payroll Payment", location: "Payroll", amount: 25 }
+  }, managerCookie);
+  assert.equal(managerPayrollAttempt.response.status, 403);
+  assert.equal(managerPayrollAttempt.body.code, "admin_required");
+
+  const managerPromotionAttempt = await post(`${baseUrl}/api/admin/users/${worker.id}/promote`, {}, managerCookie);
+  assert.equal(managerPromotionAttempt.response.status, 403);
+  const ownerAccount = managerUsers.body.users.find(user => user.role === "admin");
+  const managerOwnerAttempt = await post(`${baseUrl}/api/admin/users/${ownerAccount.id}/disable`, {}, managerCookie);
+  assert.equal(managerOwnerAttempt.response.status, 403);
+
+  const workerLogin = await post(`${baseUrl}/api/auth/login`, {
+    fullName: "Grace Worker",
+    password: "WorkerPassword123!"
+  });
+  const workerCookie = cookieFrom(workerLogin.response);
+  const clockPayload = {
+    action: "time_clock",
+    entry: { id: "grace-shift", clockIn: "2026-07-13T10:30:00.000Z", clockOut: "", durationMinutes: "" }
+  };
+  assert.equal((await post(`${baseUrl}/api/sync`, clockPayload, workerCookie)).response.status, 200);
+  assert.equal((await post(`${baseUrl}/api/sync`, clockPayload, workerCookie)).response.status, 200);
+
+  const managerDisabledWorker = await post(`${baseUrl}/api/admin/users/${worker.id}/disable`, {}, managerCookie);
+  assert.equal(managerDisabledWorker.response.status, 200);
+  assert.equal((await getJson(`${baseUrl}/api/auth/session`, workerCookie)).body.user, null);
+  const managerReactivatedWorker = await post(`${baseUrl}/api/admin/users/${worker.id}/approve`, {}, managerCookie);
+  assert.equal(managerReactivatedWorker.response.status, 200);
+
+  const managerAudit = await getJson(`${baseUrl}/api/admin/audit?limit=1000`, managerCookie);
+  assert.equal(managerAudit.response.status, 200);
+  assert(managerAudit.body.events.some(event => event.action === "account.role_changed"));
+  assert(managerAudit.body.events.some(event => event.action === "operation.recorded" && event.actorName === "Ada Employee"));
+  assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
+
+  const demoted = await post(`${baseUrl}/api/admin/users/${pendingUser.id}/demote`, {}, ownerCookie);
+  assert.equal(demoted.response.status, 200);
+  assert.equal(demoted.body.user.role, "employee");
+  const invalidatedManagerSession = await getJson(`${baseUrl}/api/auth/session`, managerCookie);
+  assert.equal(invalidatedManagerSession.body.user, null);
+
   const disabled = await post(`${baseUrl}/api/admin/users/${pendingUser.id}/disable`, {}, ownerCookie);
   assert.equal(disabled.response.status, 200);
   const disabledSession = await getJson(`${baseUrl}/api/auth/session`, employeeCookie);
   assert.equal(disabledSession.body.user, null);
 
   const accountFile = await fs.promises.readFile(path.join(dataDirectory, "users.json"), "utf8");
-  assert.doesNotMatch(accountFile, /OwnerPassword123|EmployeePassword123/);
+  assert.doesNotMatch(accountFile, /OwnerPassword123|EmployeePassword123|WorkerPassword123/);
   assert.match(accountFile, /"algorithm": "scrypt"/);
 
   const logout = await post(`${baseUrl}/api/auth/logout`, {}, ownerCookie);
@@ -165,7 +257,7 @@ async function run() {
 
   await testLegacyFallback();
 
-  console.log("Personal accounts and safe shared-login migration checks passed.");
+  console.log("Personal accounts, manager permissions, and audit checks passed.");
 }
 
 async function testLegacyFallback() {

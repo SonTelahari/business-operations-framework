@@ -16,6 +16,7 @@ let stockTargets = loadStockTargets();
 let currentUser = null;
 let currentRole = "employee";
 let employeeUsers = [];
+let auditEvents = [];
 let backendSnapshot = null;
 let activeOrder = newOrder();
 let activeView = "quote";
@@ -61,6 +62,12 @@ const elements = {
   pendingUserCount: document.querySelector("#pendingUserCount"),
   pendingUserList: document.querySelector("#pendingUserList"),
   employeeUserList: document.querySelector("#employeeUserList"),
+  auditEmployeeFilter: document.querySelector("#auditEmployeeFilter"),
+  auditCategoryFilter: document.querySelector("#auditCategoryFilter"),
+  auditSearch: document.querySelector("#auditSearchInput"),
+  auditMeta: document.querySelector("#auditMetaText"),
+  auditList: document.querySelector("#auditList"),
+  refreshAudit: document.querySelector("#refreshAuditButton"),
   dataStatus: document.querySelector("#dataStatusText"),
   stockAlertList: document.querySelector("#stockAlertList"),
   missingStockCount: document.querySelector("#missingStockCount"),
@@ -217,6 +224,10 @@ function wireEvents() {
   elements.logout.addEventListener("click", logout);
   elements.pendingUserList.addEventListener("click", handleEmployeeAction);
   elements.employeeUserList.addEventListener("click", handleEmployeeAction);
+  elements.auditEmployeeFilter.addEventListener("change", renderAudit);
+  elements.auditCategoryFilter.addEventListener("change", renderAudit);
+  elements.auditSearch.addEventListener("input", renderAudit);
+  elements.refreshAudit.addEventListener("click", loadAuditEvents);
   elements.clockToggle.addEventListener("click", toggleTimeClock);
   elements.saveCount.addEventListener("click", saveManualCount);
   elements.saveMovement.addEventListener("click", saveManualMovement);
@@ -260,7 +271,7 @@ function wireEvents() {
     button.addEventListener("click", () => {
       activeSection = button.dataset.section;
       renderSection();
-      if (activeSection === "employees" && currentRole === "admin") loadEmployeeUsers();
+      if (activeSection === "employees" && isManagement()) loadStaffData();
     });
   });
 
@@ -501,14 +512,23 @@ function renderDashboard() {
 
 function renderRole() {
   document.body.classList.toggle("employee-view", currentRole === "employee");
+  document.body.classList.toggle("manager-view", currentRole === "manager");
   document.body.classList.toggle("admin-view", currentRole === "admin");
   document.body.classList.toggle("accounts-disabled", !currentUser?.accountManagement);
   elements.currentUserName.textContent = currentUser?.fullName || "Loading account";
-  elements.currentUserRole.textContent = currentRole === "admin" ? "Admin" : "Employee";
-  if ((currentRole !== "admin" || !currentUser?.accountManagement) && activeSection === "employees") {
+  elements.currentUserRole.textContent = ({ admin: "Admin", manager: "Manager", employee: "Employee" })[currentRole] || "Employee";
+  if ((!isManagement() || !currentUser?.accountManagement) && activeSection === "employees") {
     activeSection = "dashboard";
     renderSection();
   }
+  if (!isManagement() && activeSection === "operations") {
+    activeSection = "dashboard";
+    renderSection();
+  }
+}
+
+function isManagement() {
+  return currentRole === "admin" || currentRole === "manager";
 }
 
 function renderReplenishment() {
@@ -923,7 +943,9 @@ function addOperation(entry) {
 function renderOperations() {
   const visibleOperations = currentRole === "admin"
     ? operations
-    : operations.filter(entry => entry.location !== "Ledger" && entry.location !== "Payroll");
+    : currentRole === "manager"
+      ? operations.filter(entry => entry.location !== "Payroll")
+      : [];
   const pendingCount = visibleOperations.filter(entry => entry.syncStatus !== "Synced").length;
   elements.operationCount.textContent = `${pendingCount} entries waiting for sheet sync`;
   renderTargets();
@@ -1037,7 +1059,7 @@ async function loadSessionAndData() {
     applyIdentityDefaults();
     render();
     await loadBackendSnapshot();
-    if (currentRole === "admin") await loadEmployeeUsers();
+    if (isManagement()) await loadStaffData();
   } catch {
     window.location.replace("/login.html");
   }
@@ -1093,8 +1115,36 @@ async function loadEmployeeUsers() {
   }
 }
 
+async function loadAuditEvents() {
+  if (!isManagement() || !currentUser?.accountManagement) return;
+  elements.refreshAudit.disabled = true;
+  try {
+    const response = await fetch("/api/admin/audit?limit=1000", { headers: { accept: "application/json" } });
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to load audit ledger");
+    auditEvents = result.events || [];
+    renderAuditFilters();
+    renderAudit();
+  } catch (error) {
+    elements.auditMeta.textContent = error.message;
+    elements.auditList.innerHTML = `<div class="empty-card">Audit ledger is unavailable</div>`;
+  } finally {
+    elements.refreshAudit.disabled = false;
+  }
+}
+
+async function loadStaffData() {
+  await Promise.all([loadEmployeeUsers(), loadAuditEvents()]);
+  renderAuditFilters();
+  renderAudit();
+}
+
 function renderEmployees() {
-  if (!elements.pendingUserList || currentRole !== "admin") return;
+  if (!elements.pendingUserList || !isManagement()) return;
   const pending = employeeUsers.filter(user => user.status === "pending");
   const established = employeeUsers.filter(user => user.status !== "pending");
   elements.pendingUserCount.textContent = `${pending.length} pending`;
@@ -1108,19 +1158,29 @@ function renderEmployees() {
 
 function employeeCard(user, pending) {
   const isSelf = user.id === currentUser?.id;
+  const canManageAccount = currentRole === "admin" || user.role === "employee";
   const actions = pending
-    ? `<button class="primary-button" type="button" data-user-action="approve" data-user-id="${user.id}">Approve</button>
-       <button class="danger-button" type="button" data-user-action="reject" data-user-id="${user.id}">Reject</button>`
+    ? canManageAccount
+      ? `<button class="primary-button" type="button" data-user-action="approve" data-user-id="${user.id}">Approve</button>
+         <button class="danger-button" type="button" data-user-action="reject" data-user-id="${user.id}">Reject</button>`
+      : ""
     : user.status === "disabled"
-      ? `<button class="ghost-button" type="button" data-user-action="approve" data-user-id="${user.id}">Reactivate</button>`
-      : isSelf
+      ? canManageAccount
+        ? `<button class="ghost-button" type="button" data-user-action="approve" data-user-id="${user.id}">Reactivate</button>`
+        : ""
+      : isSelf || !canManageAccount
         ? ""
-        : `<button class="danger-button" type="button" data-user-action="disable" data-user-id="${user.id}">Disable</button>`;
+        : `${currentRole === "admin" && user.role === "employee"
+            ? `<button class="ghost-button" type="button" data-user-action="promote" data-user-id="${user.id}">Make Manager</button>`
+            : currentRole === "admin" && user.role === "manager"
+              ? `<button class="ghost-button" type="button" data-user-action="demote" data-user-id="${user.id}">Make Employee</button>`
+              : ""}
+           <button class="danger-button" type="button" data-user-action="disable" data-user-id="${user.id}">Disable</button>`;
   return `
     <div class="employee-row">
       <div class="employee-identity">
         <strong>${escapeHtml(user.fullName)}</strong>
-        <span>${escapeHtml(user.role === "admin" ? "Admin" : "Employee")} / ${escapeHtml(user.status)}</span>
+        <span>${escapeHtml(({ admin: "Admin", manager: "Manager", employee: "Employee" })[user.role] || user.role)} / ${escapeHtml(user.status)}</span>
         <small>${pending ? `Requested ${formatDateTime(user.createdAt)}` : user.lastLoginAt ? `Last signed in ${formatDateTime(user.lastLoginAt)}` : "Has not signed in yet"}</small>
       </div>
       <div class="employee-actions">${actions}</div>
@@ -1134,7 +1194,13 @@ async function handleEmployeeAction(event) {
   const user = employeeUsers.find(candidate => candidate.id === button.dataset.userId);
   if (!user) return;
   const action = button.dataset.userAction;
-  if ((action === "disable" || action === "reject") && !window.confirm(`${action === "reject" ? "Reject" : "Disable"} ${user.fullName}?`)) return;
+  const confirmations = {
+    disable: `Disable ${user.fullName}?`,
+    reject: `Reject ${user.fullName}'s access request?`,
+    promote: `Grant manager access to ${user.fullName}?`,
+    demote: `Return ${user.fullName} to employee access?`
+  };
+  if (confirmations[action] && !window.confirm(confirmations[action])) return;
 
   button.disabled = true;
   try {
@@ -1144,11 +1210,88 @@ async function handleEmployeeAction(event) {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to update account");
-    await loadEmployeeUsers();
+    await loadStaffData();
   } catch (error) {
     window.alert(error.message);
     button.disabled = false;
   }
+}
+
+function renderAuditFilters() {
+  const selected = elements.auditEmployeeFilter.value;
+  const names = [...new Set([
+    ...employeeUsers.map(user => user.fullName),
+    ...auditEvents.flatMap(event => [event.subjectName, event.actorName])
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  elements.auditEmployeeFilter.innerHTML = `<option value="">All employees</option>${names
+    .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join("")}`;
+  if (names.includes(selected)) elements.auditEmployeeFilter.value = selected;
+}
+
+function renderAudit() {
+  if (!elements.auditList || !isManagement()) return;
+  const employee = normalize(elements.auditEmployeeFilter.value);
+  const category = elements.auditCategoryFilter.value;
+  const search = normalize(elements.auditSearch.value);
+  const filtered = auditEvents.filter(event => {
+    if (employee && normalize(event.subjectName) !== employee && normalize(event.actorName) !== employee) return false;
+    if (category && event.category !== category) return false;
+    if (search && !normalize(`${event.action} ${event.actorName} ${event.subjectName} ${JSON.stringify(event.details || {})}`).includes(search)) return false;
+    return true;
+  });
+  elements.auditMeta.textContent = `${filtered.length} of ${auditEvents.length} recorded events`;
+  elements.auditList.innerHTML = filtered.length
+    ? filtered.map(auditEventRow).join("")
+    : `<div class="empty-card">No audit events match these filters</div>`;
+}
+
+function auditEventRow(event) {
+  const label = ({
+    "account.admin_created": "Admin account created",
+    "account.requested": "Access requested",
+    "account.approved": "Employee approved",
+    "account.reactivated": "Account reactivated",
+    "account.disabled": "Account disabled",
+    "account.rejected": "Access request rejected",
+    "account.role_changed": "Staff role changed",
+    "auth.login": "Signed in",
+    "auth.logout": "Signed out",
+    "clock.in": "Clocked in",
+    "clock.out": "Clocked out",
+    "operation.recorded": "Operation recorded",
+    "target.updated": "Storefront target updated",
+    "target.removed": "Storefront target removed"
+  })[event.action] || event.action;
+  const subject = event.subjectName || event.actorName || "Unknown employee";
+  const actor = event.actorName && event.actorName !== subject ? ` / by ${event.actorName}` : "";
+  const details = formatAuditDetails(event);
+  return `
+    <div class="audit-entry">
+      <div class="audit-entry-header">
+        <strong>${escapeHtml(label)}</strong>
+        <time datetime="${escapeHtml(event.createdAt)}">${formatDateTime(event.createdAt)}</time>
+      </div>
+      <span>${escapeHtml(subject + actor)}</span>
+      ${details ? `<small>${escapeHtml(details)}</small>` : ""}
+    </div>
+  `;
+}
+
+function formatAuditDetails(event) {
+  const details = event.details || {};
+  if (event.action === "clock.in") return `Started ${formatDateTime(details.clockIn)}`;
+  if (event.action === "clock.out") return `${formatDuration(details.durationMinutes)} / ${formatDateTime(details.clockIn)} to ${formatDateTime(details.clockOut)}`;
+  if (event.action === "operation.recorded") {
+    return [details.kind, details.item, details.location, details.quantity !== "" ? `Qty ${details.quantity}` : "", details.amount !== "" ? `$${formatNumber(details.amount)}` : "", details.note]
+      .filter(Boolean).join(" / ");
+  }
+  if (event.action === "target.updated" || event.action === "target.removed") {
+    return [details.item, event.action === "target.updated" ? `Target ${details.target}` : "Removed"].filter(Boolean).join(" / ");
+  }
+  if (event.action === "account.role_changed") return `${details.previousRole} to ${details.role}`;
+  if (details.previousStatus || details.status) return [details.previousStatus, details.status].filter(Boolean).join(" to ");
+  return "";
 }
 
 async function syncOperation(entryId) {

@@ -693,6 +693,11 @@ tr:last-child td {
   display: none;
 }
 
+.employee-view .management-only,
+.manager-view .admin-only {
+  display: none !important;
+}
+
 .accounts-disabled .accounts-only {
   display: none;
 }
@@ -743,7 +748,61 @@ tr:last-child td {
 
 .employee-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+}
+
+.audit-filters {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(210px, 1fr) minmax(240px, 1.4fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.audit-search {
+  min-width: 0;
+}
+
+.audit-meta {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.audit-list {
+  display: grid;
+  gap: 8px;
+}
+
+.audit-entry {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px 12px;
+  background: #12161b;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.audit-entry-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audit-entry-header time,
+.audit-entry span,
+.audit-entry small {
+  color: var(--muted);
+}
+
+.audit-entry-header time {
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
 .auth-page {
@@ -1383,6 +1442,10 @@ h2 {
 .operation-entry small,
 .employee-identity span,
 .employee-identity small,
+.audit-meta,
+.audit-entry-header time,
+.audit-entry span,
+.audit-entry small,
 .order-card span,
 .order-card small,
 .empty-line,
@@ -1402,6 +1465,7 @@ label {
 .time-entry,
 .operation-entry,
 .employee-row,
+.audit-entry,
 .order-card {
   color: var(--text);
   background: rgba(255, 250, 232, 0.58);
@@ -1746,6 +1810,16 @@ body.auth-page {
   .operations-panel,
   .employee-panel {
     padding: 14px 10px;
+  }
+
+  .audit-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .audit-entry-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
   }
 
   .auth-page {

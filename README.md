@@ -6,7 +6,15 @@ This project preserves the order desk, production planning, storefront targets, 
 
 ## Employee Accounts
 
-Employees request access with their full name and a password. New accounts remain pending until an admin approves them in the Employees tab. Passwords are stored only as salted `scrypt` hashes, and account sessions use signed, HTTP-only cookies.
+Employees request access with their in-game character name and a password. No real-life name or personal information is requested. New accounts remain pending until an admin or manager approves them in the Staff tab. Passwords are stored only as salted `scrypt` hashes, and account sessions use signed, HTTP-only cookies.
+
+Roles are intentionally separated:
+
+- Employees can use orders, production planning, restock information, and their time clock.
+- Managers can also run counts and adjustments, maintain storefront targets, approve or disable employee accounts, and review the employee audit ledger.
+- Admins can additionally run payroll and promote or demote managers.
+
+The server-side audit ledger records account requests, successful sign-ins and sign-outs, staff actions, time-clock events, counts, adjustments, and storefront target changes. It does not record passwords, IP addresses, or real-life identity data.
 
 The Railway GUI service needs one persistent volume so accounts survive deployments. See `docs/hosting.md` for the migration from the shared login.
 

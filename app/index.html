@@ -32,8 +32,8 @@
         <button class="section-button active" data-section="dashboard" type="button">Dashboard</button>
         <button class="section-button" data-section="restock" type="button">Restock</button>
         <button class="section-button" data-section="workbench" type="button">Workbench</button>
-        <button class="section-button" data-section="operations" type="button">Operations</button>
-        <button class="section-button admin-only accounts-only" data-section="employees" type="button">Employees</button>
+        <button class="section-button management-only" data-section="operations" type="button">Operations</button>
+        <button class="section-button management-only accounts-only" data-section="employees" type="button">Staff</button>
       </nav>
 
       <main class="dashboard workspace-section" id="dashboardSection">
@@ -347,7 +347,7 @@
         </section>
       </main>
 
-      <main class="operations workspace-section hidden" id="operationsSection">
+      <main class="operations workspace-section hidden management-only" id="operationsSection">
         <section class="panel operations-panel">
           <div class="panel-header">
             <div>
@@ -423,11 +423,11 @@
           </div>
         </section>
 
-        <section class="panel operations-panel admin-only">
+        <section class="panel operations-panel management-only">
           <div class="panel-header">
             <div>
               <h2>Storefront Targets</h2>
-              <p>Admin-only target counts used to generate continuous restock orders</p>
+              <p>Manager target counts used to generate continuous restock orders</p>
             </div>
           </div>
           <div class="operation-form">
@@ -444,7 +444,7 @@
           <div class="target-list" id="targetList"></div>
         </section>
 
-        <section class="panel operations-panel admin-only">
+        <section class="panel operations-panel management-only">
           <div class="panel-header">
             <div>
               <h2>Ledger Adjustment</h2>
@@ -538,11 +538,11 @@
         </section>
       </main>
 
-      <main class="employees workspace-section hidden admin-only accounts-only" id="employeesSection">
+      <main class="employees workspace-section hidden management-only accounts-only" id="employeesSection">
         <section class="panel employee-panel">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">Admin</p>
+              <p class="eyebrow">Management</p>
               <h2>Access Requests</h2>
             </div>
             <span class="status-count" id="pendingUserCount">0 pending</span>
@@ -557,6 +557,42 @@
             </div>
           </div>
           <div class="employee-list" id="employeeUserList"></div>
+        </section>
+
+        <section class="panel employee-panel audit-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Staff Ledger</p>
+              <h2>Employee Audit</h2>
+              <p>Review account access, clock activity, counts, adjustments, and staff changes</p>
+            </div>
+            <button class="ghost-button" id="refreshAuditButton" type="button">Refresh</button>
+          </div>
+          <div class="audit-filters">
+            <label>
+              Employee
+              <select id="auditEmployeeFilter">
+                <option value="">All employees</option>
+              </select>
+            </label>
+            <label>
+              Activity
+              <select id="auditCategoryFilter">
+                <option value="">All activity</option>
+                <option value="authentication">Sign-ins and sign-outs</option>
+                <option value="time_clock">Clock activity</option>
+                <option value="operations">Counts and adjustments</option>
+                <option value="staff">Staff changes</option>
+                <option value="account">Access requests</option>
+              </select>
+            </label>
+            <label class="audit-search">
+              Search
+              <input id="auditSearchInput" type="search" autocomplete="off" placeholder="Name, item, action, or note">
+            </label>
+          </div>
+          <p class="audit-meta" id="auditMetaText">Loading audit ledger...</p>
+          <div class="audit-list" id="auditList"></div>
         </section>
       </main>
     </div>
