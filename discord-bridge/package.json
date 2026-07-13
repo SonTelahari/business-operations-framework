@@ -10,7 +10,8 @@
     "start": "node index.js",
     "check:channel": "node check-channel.js",
     "test:parser": "node test-parser.js",
-    "test:forward": "node test-forward.js"
+    "test:forward": "node test-forward.js",
+    "replay:captures": "node replay-captures.js"
   },
   "dependencies": {
     "discord.js": "^14.16.3"

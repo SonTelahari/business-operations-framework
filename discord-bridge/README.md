@@ -17,6 +17,8 @@ The ignored local capture journal preserves event order and Discord message IDs 
 
 Discord message IDs are the transaction identity used for deduplication. Storefront `Weapon ID` values are server-side instance metadata and are intentionally not mapped into inventory records.
 
+Run `npm run replay:captures` for a read-only journal summary. After verifying the target receiver, run `npm run replay:captures -- --commit` to post every unique capture. Re-running commit mode is safe because the receiver deduplicates by Discord message ID.
+
 ## Setup
 
 1. Enable Message Content Intent for the Still Water reader bot.
