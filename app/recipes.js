@@ -1,6 +1,6 @@
 const rifleRecipe = [
   ["Iron", 5],
-  ["Wood", 5],
+  ["Softwood", 5],
   ["Rifle Stock", 1],
   ["Rifle Barrel", 1],
   ["Rifle Receiver", 1],
@@ -9,7 +9,7 @@ const rifleRecipe = [
 
 const pistolRecipe = [
   ["Iron", 2],
-  ["Wood", 2],
+  ["Softwood", 2],
   ["Pistol Handle", 1],
   ["Pistol Barrel", 1],
   ["Pistol Chamber", 1],
@@ -18,7 +18,7 @@ const pistolRecipe = [
 
 const shotgunRecipe = [
   ["Iron", 5],
-  ["Wood", 5],
+  ["Softwood", 5],
   ["Shotgun Stock", 1],
   ["Shotgun Barrel", 1],
   ["Bolts", 5]
@@ -26,7 +26,7 @@ const shotgunRecipe = [
 
 const repeaterRecipe = [
   ["Iron", 5],
-  ["Wood", 5],
+  ["Softwood", 5],
   ["Repeater Stock", 1],
   ["Repeater Barrel", 1],
   ["Repeater Receiver", 1],
@@ -35,7 +35,7 @@ const repeaterRecipe = [
 
 const revolverRecipe = [
   ["Iron", 2],
-  ["Wood", 2],
+  ["Softwood", 2],
   ["Revolver Handle", 1],
   ["Revolver Barrel", 1],
   ["Revolver Cylinder", 1],
@@ -54,7 +54,7 @@ window.FRONTIER_RECIPES = {
   "Varmint Rifle": rifleRecipe,
   "Boltaction Rifle": rifleRecipe,
   "Rollingblock Rifle": rifleRecipe,
-  "Bow": [["Hard wood", 10], ["Wood", 4]],
+  "Bow": [["Hard wood", 10], ["Softwood", 4]],
   "Lasso": [["Flax", 30]],
   "Reinforced Lasso": [["Flax", 100]],
   "Doublebarrel Shotgun": shotgunRecipe,
@@ -86,7 +86,7 @@ window.FRONTIER_RECIPES = {
   "Repeater Ammo Express": ammoRecipe,
   "Repeater Ammo Splitpoint": ammoRecipe,
   "Repeater Ammo Normal": ammoRecipe,
-  "Arrow Small Game": [["Iron", 1], ["Wood", 2]],
+  "Arrow Small Game": [["Iron", 1], ["Softwood", 2]],
   "Shotgun Ammo Normal": ammoRecipe,
   "Shotgun Ammo Slug": ammoRecipe,
   "Rifle Ammo Express": ammoRecipe,

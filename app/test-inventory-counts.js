@@ -1,5 +1,16 @@
 const assert = require("node:assert/strict");
-const { selectLatestCounts } = require("./inventory-counts");
+const { normalizeKey, selectLatestCounts } = require("./inventory-counts");
+const pricing = require("./pricing");
+
+global.window = {};
+require("./recipes");
+const recipes = global.window.FRONTIER_RECIPES;
+delete global.window;
+
+assert.equal(normalizeKey("Wood"), "softwood");
+assert.equal(normalizeKey("Soft Wood"), "softwood");
+assert.equal(pricing.materials.Softwood.midpoint, 0.175);
+assert(Object.values(recipes).flat().every(([ingredient]) => ingredient !== "Wood"));
 
 const staleSheet = selectLatestCounts({
   location: "Storage",
@@ -13,6 +24,19 @@ const staleSheet = selectLatestCounts({
   }]
 });
 assert.equal(staleSheet.get("iron"), 129, "a local count must override a stale untimed Sheet value");
+
+const softwoodAlias = selectLatestCounts({
+  location: "Storage",
+  inventory: { materials: [{ ingredient: "Wood", storageCount: 0 }] },
+  operations: [{
+    kind: "Stock Count",
+    location: "Storage",
+    itemName: "Soft Wood",
+    quantity: 64,
+    createdAt: "2026-07-13T10:35:00.000Z"
+  }]
+});
+assert.equal(softwoodAlias.get("softwood"), 64, "wood spelling variants must share one stock count");
 
 const latestManualCount = selectLatestCounts({
   location: "Storage",

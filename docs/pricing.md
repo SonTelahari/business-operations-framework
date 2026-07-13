@@ -17,7 +17,7 @@ Captured storefront overrides also set Reinforced Lasso to `$35`, Revolver Ammo 
 
 ## Material Aliases
 
-- `Wood` uses the Carpenter `Soft Wood` range.
+- `Softwood` is the canonical inventory name and uses the Carpenter `Soft Wood` range. Legacy `Wood` and `Soft Wood` entries resolve to the same material.
 - `Hard wood` uses the Carpenter `Hard Wood` range.
 - `Flax` uses the Ranch `Crops/Flowers` range.
 - Gun-part spelling differences such as `Barrell` and `Cylindar` map to the recipe's normalized part name.
@@ -27,7 +27,7 @@ Captured storefront overrides also set Reinforced Lasso to `$35`, Revolver Ammo 
 | Material | Unit Cost |
 | --- | ---: |
 | Iron | $0.225 |
-| Wood | $0.175 |
+| Softwood | $0.175 |
 | Hard wood | $0.325 |
 | Flax | $0.04 |
 | Bolts | $0.045 |

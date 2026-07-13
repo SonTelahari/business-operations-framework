@@ -4,7 +4,8 @@
   if (root) root.FRONTIER_INVENTORY_COUNTS = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function createInventoryCounts() {
   function normalizeKey(value) {
-    return String(value || "").trim().toLowerCase();
+    const key = String(value || "").trim().toLowerCase();
+    return key === "wood" || key === "soft wood" || key === "softwood" ? "softwood" : key;
   }
 
   function stockKey(entry) {

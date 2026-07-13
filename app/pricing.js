@@ -70,7 +70,7 @@ const FRONTIER_PRICING = Object.freeze({
   }),
   materials: Object.freeze({
     "Iron": msrp(0.2, 0.25, "MIning/Oil", "Iron"),
-    "Wood": msrp(0.15, 0.2, "Carpenter MSRPs", "Soft Wood", "alias"),
+    "Softwood": msrp(0.15, 0.2, "Carpenter MSRPs", "Soft Wood", "alias"),
     "Hard wood": msrp(0.3, 0.35, "Carpenter MSRPs", "Hard Wood", "alias"),
     "Flax": msrp(0.03, 0.05, "Ranch MSRPs", "Crops/Flowers", "alias"),
     "Bolts": msrp(0.04, 0.05, "Blacksmith MSRPs", "Bolts"),
