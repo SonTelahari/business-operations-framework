@@ -67,7 +67,10 @@ async function run() {
 
   const loginPage = await fetch(`${baseUrl}/login.html`);
   assert.equal(loginPage.status, 200);
-  assert.match(await loginPage.text(), /Request Access/);
+  const loginPageHtml = await loginPage.text();
+  assert.match(loginPageHtml, /Request Access/);
+  assert.match(loginPageHtml, /In-game Character Name/);
+  assert.match(loginPageHtml, /No real-life name or personal information is requested/);
 
   const unauthenticatedPage = await fetch(baseUrl, { redirect: "manual" });
   assert.equal(unauthenticatedPage.status, 302);

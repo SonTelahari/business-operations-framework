@@ -48,7 +48,7 @@ class AccountStore {
     return this.mutate(async () => {
       const key = loginKey(cleanedName);
       if (this.data.users.some(user => user.loginKey === key)) {
-        throw accountError("An account with that full name already exists", 409, "name_taken");
+        throw accountError("An account with that character name already exists", 409, "name_taken");
       }
       const user = {
         id: crypto.randomUUID(),
@@ -71,7 +71,7 @@ class AccountStore {
   async authenticate(fullName, plainPassword) {
     const user = this.data.users.find(candidate => candidate.loginKey === loginKey(fullName));
     if (!user || !(await verifyPassword(plainPassword, user.password))) {
-      throw accountError("Full name or password is incorrect", 401, "invalid_credentials");
+      throw accountError("Character name or password is incorrect", 401, "invalid_credentials");
     }
     if (user.status === "pending") {
       throw accountError("Your account is waiting for admin approval", 403, "approval_pending");
@@ -214,7 +214,7 @@ async function verifyPassword(plainPassword, stored) {
 function validateFullName(value) {
   const cleaned = cleanFullName(value);
   if (cleaned.length < 3 || cleaned.length > 80 || !cleaned.includes(" ")) {
-    throw accountError("Enter your first and last name", 400, "invalid_name");
+    throw accountError("Enter your character's first and last name", 400, "invalid_name");
   }
   return cleaned;
 }
