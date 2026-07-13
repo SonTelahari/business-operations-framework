@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { AccountStore, SESSION_MAX_AGE_SECONDS } = require("./auth");
+const { BusinessStore } = require("./business-store");
 
 const root = __dirname;
 loadEnvFile(path.join(root, "..", "discord-bridge", ".env"));
@@ -18,6 +19,7 @@ const accountDataDirectory = process.env.AUTH_DATA_DIR
 const accountStore = accountAuthEnabled
   ? new AccountStore({ filePath: path.join(accountDataDirectory, "users.json"), sessionSecret })
   : null;
+const businessStore = new BusinessStore({ filePath: path.join(accountDataDirectory, "business.json") });
 const loginAttempts = new Map();
 
 const mimeTypes = {
@@ -51,6 +53,7 @@ const server = http.createServer(async (request, response) => {
         authConfigured: accountAuthEnabled || Boolean(authPassword),
         authMode: accountAuthEnabled ? "accounts" : authPassword ? "legacy-basic" : "none",
         persistentAccountStore: accountAuthEnabled && Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
+        persistentBusinessStore: Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -71,6 +74,7 @@ const server = http.createServer(async (request, response) => {
         redirect(response, "/");
         return;
       }
+      if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(user));
         return;
@@ -103,16 +107,17 @@ const server = http.createServer(async (request, response) => {
         response.end("Authentication required");
         return;
       }
+      const user = {
+        id: "legacy-admin",
+        fullName: authUser,
+        role: "admin",
+        status: "active",
+        accountManagement: false
+      };
       if (url.pathname === "/api/auth/session" && request.method === "GET") {
         sendJson(response, {
           ok: true,
-          user: {
-            id: "legacy-admin",
-            fullName: authUser,
-            role: "admin",
-            status: "active",
-            accountManagement: false
-          }
+          user
         });
         return;
       }
@@ -120,6 +125,7 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, { ok: true });
         return;
       }
+      if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(null));
         return;
@@ -253,6 +259,58 @@ function requireManagement(response, user) {
 
 function isManagementRole(user) {
   return user?.role === "admin" || user?.role === "manager";
+}
+
+async function handleSupplyOrderRoute(request, response, url, user) {
+  if (!url.pathname.startsWith("/api/supply-orders")) return false;
+  if (!requireManagement(response, user)) return true;
+
+  try {
+    if (url.pathname === "/api/supply-orders" && request.method === "GET") {
+      sendJson(response, { ok: true, orders: businessStore.listSupplyOrders() });
+      return true;
+    }
+    if (url.pathname === "/api/supply-orders" && request.method === "POST") {
+      const order = await businessStore.saveSupplyOrder(await readJsonBody(request), user);
+      await recordSupplyOrderAudit("supply_order.saved", order, user);
+      sendJson(response, { ok: true, order, orders: businessStore.listSupplyOrders() });
+      return true;
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/supply-orders/")) {
+      const orderId = decodeURIComponent(url.pathname.slice("/api/supply-orders/".length));
+      const order = await businessStore.removeSupplyOrder(orderId);
+      await recordSupplyOrderAudit("supply_order.removed", order, user);
+      sendJson(response, { ok: true, order, orders: businessStore.listSupplyOrders() });
+      return true;
+    }
+    sendJson(response, { ok: false, error: "Supply order route not found", code: "not_found" }, 404);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Supply order request failed",
+      code: error.code || "supply_order_error"
+    }, error.status || 500);
+  }
+  return true;
+}
+
+async function recordSupplyOrderAudit(action, order, user) {
+  if (!accountStore) return;
+  await accountStore.recordAudit({
+    category: "procurement",
+    action,
+    actorId: user.id,
+    actorName: user.fullName,
+    subjectId: order.id,
+    subjectName: order.producer,
+    fingerprint: `${action}:${order.id}:${order.updatedAt}`,
+    details: {
+      producer: order.producer,
+      status: order.status,
+      lineCount: order.lines.length,
+      total: order.lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0)
+    }
+  });
 }
 
 function requiresAdmin(payload) {
@@ -444,6 +502,7 @@ startServer().catch(error => {
 });
 
 async function startServer() {
+  await businessStore.initialize();
   if (accountAuthEnabled) {
     await accountStore.initialize({
       adminFullName: process.env.ADMIN_FULL_NAME || "",
@@ -500,7 +559,8 @@ async function getBootstrapData(user) {
       manualMovements: "/api/sync",
       ledgerAdjustments: "/api/sync",
       stockTargets: "/api/sync",
-      timeClock: "/api/sync"
+      timeClock: "/api/sync",
+      supplyOrders: "/api/supply-orders"
     }
   };
 }

@@ -2,6 +2,7 @@ const STORAGE_KEY = "frontier_still_water_work_orders_v1";
 const TIME_CLOCK_KEY = "frontier_still_water_time_clock_v1";
 const OPERATIONS_KEY = "frontier_still_water_manual_operations_v1";
 const TARGETS_KEY = "frontier_still_water_storefront_targets_v1";
+const SUPPLY_ACTIVE_STATUSES = new Set(["Draft", "Ordered"]);
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
@@ -15,6 +16,7 @@ let orders = loadOrders();
 let timeClock = { current: null, entries: [] };
 let operations = loadOperations();
 let stockTargets = loadStockTargets();
+let supplyOrders = [];
 let currentUser = null;
 let currentRole = "employee";
 let employeeUsers = [];
@@ -24,6 +26,7 @@ let backendRefreshTimer = null;
 let backendRefreshPromise = null;
 let lastBackendRefreshAt = 0;
 let activeOrder = newOrder();
+let activeSupplyOrder = newSupplyOrder();
 let activeView = "quote";
 let activeSection = "dashboard";
 
@@ -41,6 +44,7 @@ const elements = {
   itemOptions: document.querySelector("#itemOptions"),
   stockOptions: document.querySelector("#stockOptions"),
   countStockOptions: document.querySelector("#countStockOptions"),
+  supplyMaterialOptions: document.querySelector("#supplyMaterialOptions"),
   quantity: document.querySelector("#quantityInput"),
   price: document.querySelector("#priceInput"),
   lines: document.querySelector("#lineItemsBody"),
@@ -60,6 +64,28 @@ const elements = {
   productionBuildList: document.querySelector("#productionBuildList"),
   productionMaterialsList: document.querySelector("#productionMaterialsList"),
   missingRecipes: document.querySelector("#missingRecipes"),
+  supplySection: document.querySelector("#supplySection"),
+  supplyOrderMeta: document.querySelector("#supplyOrderMeta"),
+  supplyStatus: document.querySelector("#supplyStatusSelect"),
+  supplyProducer: document.querySelector("#supplyProducerInput"),
+  supplyRequestedBy: document.querySelector("#supplyRequestedByInput"),
+  supplyExpectedDate: document.querySelector("#supplyExpectedDateInput"),
+  supplyMaterial: document.querySelector("#supplyMaterialInput"),
+  supplyQuantity: document.querySelector("#supplyQuantityInput"),
+  supplyUnitPrice: document.querySelector("#supplyUnitPriceInput"),
+  supplyNotes: document.querySelector("#supplyNotesInput"),
+  supplyLines: document.querySelector("#supplyLinesBody"),
+  supplySubtotal: document.querySelector("#supplySubtotalValue"),
+  supplyLineCount: document.querySelector("#supplyLineCountValue"),
+  supplyUncovered: document.querySelector("#supplyUncoveredValue"),
+  supplySummary: document.querySelector("#supplySummaryPreview"),
+  supplyFilter: document.querySelector("#supplyFilterSelect"),
+  supplySavedCount: document.querySelector("#supplySavedCount"),
+  supplyDataStatus: document.querySelector("#supplyDataStatus"),
+  supplyOrdersList: document.querySelector("#supplyOrdersList"),
+  producerOptions: document.querySelector("#producerOptions"),
+  newDocument: document.querySelector("#newOrderButton"),
+  saveDocument: document.querySelector("#saveOrderButton"),
   dashboardSection: document.querySelector("#dashboardSection"),
   restockSection: document.querySelector("#restockSection"),
   workbenchSection: document.querySelector("#workbenchSection"),
@@ -151,6 +177,21 @@ function newOrder() {
   };
 }
 
+function newSupplyOrder() {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    producer: "",
+    status: "Draft",
+    expectedDate: "",
+    requestedBy: currentUser?.fullName || "",
+    notes: "",
+    lines: [],
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
 function loadOrders() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
@@ -212,6 +253,7 @@ function seedDatalist() {
     .map(item => `<option value="${escapeHtml(item.label)}">${escapeHtml(item.name)} - $${formatNumber(item.price)}</option>`)
     .join("");
   elements.stockOptions.innerHTML = stockOptionMarkup(stockCatalog);
+  elements.supplyMaterialOptions.innerHTML = stockOptionMarkup(ingredientCatalog);
   seedCountDatalist();
 }
 
@@ -229,13 +271,8 @@ function stockOptionMarkup(catalog) {
 }
 
 function wireEvents() {
-  document.querySelector("#newOrderButton").addEventListener("click", () => {
-    activeOrder = newOrder();
-    activeSection = "workbench";
-    render();
-  });
-
-  document.querySelector("#saveOrderButton").addEventListener("click", saveActiveOrder);
+  elements.newDocument.addEventListener("click", startNewDocument);
+  elements.saveDocument.addEventListener("click", saveCurrentDocument);
   document.querySelector("#addItemButton").addEventListener("click", addItemLine);
   document.querySelector("#copySummaryButton").addEventListener("click", copySummary);
   document.querySelector("#copyProductionButton").addEventListener("click", copyProduction);
@@ -261,6 +298,12 @@ function wireEvents() {
   document.querySelector("#reserveButton").addEventListener("click", () => setStatus("Reserved"));
   document.querySelector("#completeButton").addEventListener("click", () => setStatus("Completed"));
   document.querySelector("#deleteOrderButton").addEventListener("click", removeActiveOrder);
+  document.querySelector("#addSupplyLineButton").addEventListener("click", addSupplyLine);
+  document.querySelector("#addMissingSupplyButton").addEventListener("click", addMissingSupplyLines);
+  document.querySelector("#copySupplyOrderButton").addEventListener("click", copySupplyOrder);
+  document.querySelector("#orderSupplyButton").addEventListener("click", () => setSupplyStatus("Ordered"));
+  document.querySelector("#receiveSupplyButton").addEventListener("click", () => setSupplyStatus("Received"));
+  document.querySelector("#deleteSupplyOrderButton").addEventListener("click", removeActiveSupplyOrder);
 
   document.querySelectorAll(".chip-button").forEach(button => {
     button.addEventListener("click", () => {
@@ -291,6 +334,7 @@ function wireEvents() {
       activeSection = button.dataset.section;
       renderSection();
       if (activeSection === "employees" && isManagement()) loadStaffData();
+      if (activeSection === "supplies" && isManagement()) loadSupplyOrders({ silent: true });
     });
   });
 
@@ -310,7 +354,30 @@ function wireEvents() {
     elements.price.value = item ? item.price : "";
   });
 
+  [elements.supplyProducer, elements.supplyExpectedDate, elements.supplyStatus, elements.supplyNotes]
+    .forEach(field => ["input", "change"].forEach(eventName => field.addEventListener(eventName, updateSupplyFromInputs)));
+
+  elements.supplyMaterial.addEventListener("input", updateSupplyMaterialDefaults);
+
   elements.filter.addEventListener("change", renderOrdersList);
+  elements.supplyFilter.addEventListener("change", renderSupplyOrdersList);
+}
+
+function startNewDocument() {
+  if (activeSection === "supplies") {
+    activeSupplyOrder = newSupplyOrder();
+    renderSupplyWorkspace();
+    elements.supplyProducer.focus();
+    return;
+  }
+  activeOrder = newOrder();
+  activeSection = "workbench";
+  render();
+}
+
+function saveCurrentDocument() {
+  if (activeSection === "supplies") return saveSupplyOrder();
+  saveActiveOrder();
 }
 
 function updateActiveFromInputs() {
@@ -416,6 +483,198 @@ function removeLine(lineId) {
   render();
 }
 
+function updateSupplyFromInputs() {
+  activeSupplyOrder.producer = elements.supplyProducer.value.trim();
+  activeSupplyOrder.expectedDate = elements.supplyExpectedDate.value;
+  activeSupplyOrder.status = elements.supplyStatus.value;
+  activeSupplyOrder.requestedBy = currentUser?.fullName || activeSupplyOrder.requestedBy;
+  activeSupplyOrder.notes = elements.supplyNotes.value;
+  touchSupplyOrder();
+  renderSupplySummary();
+}
+
+function touchSupplyOrder() {
+  activeSupplyOrder.updatedAt = new Date().toISOString();
+}
+
+function findRecipeIngredient(value) {
+  const needle = normalize(value);
+  if (!needle) return null;
+  return ingredientCatalog.find(item => normalize(item.name) === needle || normalize(item.label) === needle)
+    || ingredientCatalog.find(item => normalize(item.name).includes(needle));
+}
+
+function updateSupplyMaterialDefaults() {
+  const ingredient = ingredientCatalog.find(item => normalize(item.name) === normalize(elements.supplyMaterial.value));
+  if (!ingredient) return;
+  const metrics = getSupplyLineMetrics(ingredient.name, activeSupplyOrder.id);
+  elements.supplyQuantity.value = Math.max(1, metrics.missing);
+  elements.supplyUnitPrice.value = materialUnitPrice(ingredient.name);
+}
+
+function addSupplyLine() {
+  const enteredName = elements.supplyMaterial.value.trim();
+  if (!enteredName) {
+    elements.supplyMaterial.focus();
+    return;
+  }
+  const ingredient = findRecipeIngredient(enteredName) || {
+    name: enteredName,
+    label: enteredName,
+    category: "Manual Material"
+  };
+  const quantity = Math.max(1, Number(elements.supplyQuantity.value || 1));
+  const unitPrice = Math.max(0, Number(elements.supplyUnitPrice.value || materialUnitPrice(ingredient.name)));
+  const existing = activeSupplyOrder.lines.find(line => normalize(line.name) === normalize(ingredient.name));
+  if (existing) {
+    existing.quantity += quantity;
+    existing.unitPrice = unitPrice;
+  } else {
+    activeSupplyOrder.lines.push({
+      id: crypto.randomUUID(),
+      name: ingredient.name,
+      label: ingredient.label || ingredient.name,
+      category: ingredient.category || "Recipe Ingredient",
+      quantity,
+      unitPrice
+    });
+  }
+  elements.supplyMaterial.value = "";
+  elements.supplyQuantity.value = "1";
+  elements.supplyUnitPrice.value = "0";
+  touchSupplyOrder();
+  renderSupplyWorkspace();
+}
+
+function addMissingSupplyLines() {
+  const missing = getMaterialPurchasePlan(activeSupplyOrder.id).filter(line => line.missing > 0);
+  if (!missing.length) {
+    elements.supplyDataStatus.textContent = "No uncovered material shortages to add";
+    return;
+  }
+  missing.forEach(material => {
+    const existing = activeSupplyOrder.lines.find(line => normalize(line.name) === normalize(material.ingredient));
+    if (existing) {
+      existing.quantity = Math.max(Number(existing.quantity || 0), material.missing);
+      return;
+    }
+    activeSupplyOrder.lines.push({
+      id: crypto.randomUUID(),
+      name: material.ingredient,
+      label: material.ingredient,
+      category: "Recipe Ingredient",
+      quantity: material.missing,
+      unitPrice: materialUnitPrice(material.ingredient)
+    });
+  });
+  touchSupplyOrder();
+  elements.supplyDataStatus.textContent = `${missing.length} uncovered material lines added`;
+  renderSupplyWorkspace();
+}
+
+function removeSupplyLine(lineId) {
+  activeSupplyOrder.lines = activeSupplyOrder.lines.filter(line => line.id !== lineId);
+  touchSupplyOrder();
+  renderSupplyWorkspace();
+}
+
+function loadSupplyOrder(orderId) {
+  const order = supplyOrders.find(candidate => candidate.id === orderId);
+  if (!order) return;
+  activeSupplyOrder = structuredClone(order);
+  renderSupplyWorkspace();
+}
+
+async function loadSupplyOrders({ silent = false } = {}) {
+  if (!isManagement()) return;
+  try {
+    const response = await fetch("/api/supply-orders", { headers: { accept: "application/json" } });
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    supplyOrders = Array.isArray(result.orders) ? result.orders : [];
+    elements.supplyDataStatus.textContent = `${supplyOrders.length} shared producer orders loaded`;
+    seedProducerOptions();
+    renderSupplyOrdersList();
+  } catch (error) {
+    if (!silent) elements.supplyDataStatus.textContent = `Unable to load producer orders: ${error.message}`;
+  }
+}
+
+async function saveSupplyOrder() {
+  updateSupplyFromInputs();
+  if (!activeSupplyOrder.producer) {
+    elements.supplyDataStatus.textContent = "Choose a producer before saving";
+    elements.supplyProducer.focus();
+    return;
+  }
+  elements.saveDocument.disabled = true;
+  elements.supplyDataStatus.textContent = "Saving shared producer order";
+  try {
+    const response = await fetch("/api/supply-orders", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(activeSupplyOrder)
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    activeSupplyOrder = structuredClone(result.order);
+    supplyOrders = result.orders || [];
+    elements.supplyDataStatus.textContent = `Saved for ${activeSupplyOrder.producer}`;
+    seedProducerOptions();
+    renderSupplyWorkspace();
+  } catch (error) {
+    elements.supplyDataStatus.textContent = `Save failed: ${error.message}`;
+  } finally {
+    elements.saveDocument.disabled = false;
+  }
+}
+
+async function removeActiveSupplyOrder() {
+  const saved = supplyOrders.some(order => order.id === activeSupplyOrder.id);
+  if (!saved) {
+    activeSupplyOrder = newSupplyOrder();
+    renderSupplyWorkspace();
+    return;
+  }
+  if (!window.confirm(`Remove the supply order for ${activeSupplyOrder.producer}?`)) return;
+  try {
+    const response = await fetch(`/api/supply-orders/${encodeURIComponent(activeSupplyOrder.id)}`, {
+      method: "DELETE",
+      headers: { accept: "application/json" }
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    supplyOrders = result.orders || [];
+    activeSupplyOrder = newSupplyOrder();
+    elements.supplyDataStatus.textContent = "Supply order removed";
+    seedProducerOptions();
+    renderSupplyWorkspace();
+  } catch (error) {
+    elements.supplyDataStatus.textContent = `Remove failed: ${error.message}`;
+  }
+}
+
+function setSupplyStatus(status) {
+  activeSupplyOrder.status = status;
+  elements.supplyStatus.value = status;
+  saveSupplyOrder();
+}
+
+async function copySupplyOrder() {
+  updateSupplyFromInputs();
+  const summary = buildSupplyOrderSummary(activeSupplyOrder);
+  await navigator.clipboard.writeText(summary);
+  elements.supplySummary.textContent = `${summary}\n\nCopied.`;
+}
+
+function materialUnitPrice(name) {
+  return Number(pricingCatalog.materials[name]?.midpoint || 0);
+}
+
 function render() {
   elements.customer.value = activeOrder.customer;
   elements.handler.value = activeOrder.handler;
@@ -431,6 +690,7 @@ function render() {
   renderOrdersList();
   renderMeta();
   renderProduction();
+  renderSupplyWorkspace();
   renderView();
   renderDashboard();
   renderTimeClock();
@@ -467,6 +727,137 @@ function renderLines() {
   });
 }
 
+function renderSupplyWorkspace() {
+  if (!elements.supplySection) return;
+  activeSupplyOrder.requestedBy = activeSupplyOrder.requestedBy || currentUser?.fullName || "";
+  elements.supplyProducer.value = activeSupplyOrder.producer;
+  elements.supplyRequestedBy.value = activeSupplyOrder.requestedBy;
+  elements.supplyExpectedDate.value = activeSupplyOrder.expectedDate || "";
+  elements.supplyStatus.value = activeSupplyOrder.status;
+  elements.supplyNotes.value = activeSupplyOrder.notes;
+  elements.supplyOrderMeta.textContent = `${activeSupplyOrder.status} / ${activeSupplyOrder.producer || "Producer not selected"} / ${formatDate(activeSupplyOrder.updatedAt)}`;
+  renderSupplyLines();
+  renderSupplySummary();
+  renderSupplyOrdersList();
+  seedProducerOptions();
+}
+
+function renderSupplyLines() {
+  if (!activeSupplyOrder.lines.length) {
+    elements.supplyLines.innerHTML = `<tr><td colspan="9" class="empty-line">No parts or materials added</td></tr>`;
+    return;
+  }
+  elements.supplyLines.innerHTML = activeSupplyOrder.lines.map(line => {
+    const metrics = getSupplyLineMetrics(line.name, activeSupplyOrder.id);
+    const total = Number(line.quantity || 0) * Number(line.unitPrice || 0);
+    return `
+      <tr>
+        <td><strong>${escapeHtml(line.label || line.name)}</strong><span>${escapeHtml(line.category || "Recipe Ingredient")}</span></td>
+        <td>${formatNumber(metrics.demand)}</td>
+        <td>${formatNumber(metrics.available)}</td>
+        <td>${formatNumber(metrics.ordered)}</td>
+        <td class="${metrics.missing > 0 ? "metric-short" : ""}">${formatNumber(metrics.missing)}</td>
+        <td>${formatNumber(line.quantity)}</td>
+        <td>$${formatNumber(line.unitPrice)}</td>
+        <td>$${formatNumber(total)}</td>
+        <td><button class="icon-button" type="button" data-remove-supply-line="${line.id}" title="Remove line">x</button></td>
+      </tr>
+    `;
+  }).join("");
+  elements.supplyLines.querySelectorAll("[data-remove-supply-line]").forEach(button => {
+    button.addEventListener("click", () => removeSupplyLine(button.dataset.removeSupplyLine));
+  });
+}
+
+function renderSupplySummary() {
+  const subtotal = getSupplyOrderTotal(activeSupplyOrder);
+  const activeQuantities = new Map();
+  activeSupplyOrder.lines.forEach(line => {
+    const key = normalize(line.name);
+    activeQuantities.set(key, (activeQuantities.get(key) || 0) + Number(line.quantity || 0));
+  });
+  const uncovered = getMaterialPurchasePlan(activeSupplyOrder.id)
+    .reduce((sum, line) => sum + Math.max(0, line.missing - (activeQuantities.get(normalize(line.ingredient)) || 0)), 0);
+  elements.supplySubtotal.textContent = `$${formatNumber(subtotal)}`;
+  elements.supplyLineCount.textContent = activeSupplyOrder.lines.length;
+  elements.supplyUncovered.textContent = formatNumber(uncovered);
+  elements.supplySummary.textContent = buildSupplyOrderSummary(activeSupplyOrder);
+}
+
+function renderSupplyOrdersList() {
+  const filter = elements.supplyFilter.value;
+  const visible = supplyOrders
+    .filter(order => filter === "All" || (filter === "Active" ? SUPPLY_ACTIVE_STATUSES.has(order.status) : order.status === filter))
+    .sort((a, b) => a.producer.localeCompare(b.producer) || new Date(b.updatedAt) - new Date(a.updatedAt));
+  const activeCount = supplyOrders.filter(order => SUPPLY_ACTIVE_STATUSES.has(order.status)).length;
+  const producerCount = new Set(supplyOrders.map(order => normalize(order.producer))).size;
+  elements.supplySavedCount.textContent = `${activeCount} active across ${producerCount} ${producerCount === 1 ? "producer" : "producers"}`;
+  if (!visible.length) {
+    elements.supplyOrdersList.innerHTML = `<div class="empty-card">No producer orders in this view</div>`;
+    return;
+  }
+
+  const groups = new Map();
+  visible.forEach(order => {
+    const key = order.producer || "Unassigned producer";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(order);
+  });
+  elements.supplyOrdersList.innerHTML = [...groups.entries()].map(([producer, producerOrders]) => `
+    <section class="producer-order-group">
+      <div class="producer-order-heading">
+        <h3>${escapeHtml(producer)}</h3>
+        <span>${producerOrders.length} ${producerOrders.length === 1 ? "order" : "orders"}</span>
+      </div>
+      <div class="orders-list">
+        ${producerOrders.map(order => `
+          <button class="order-card ${order.id === activeSupplyOrder.id ? "selected" : ""}" type="button" data-supply-order-id="${order.id}">
+            <span class="status-pill ${normalize(order.status)}">${escapeHtml(order.status)}</span>
+            <strong>${order.expectedDate ? formatDelivery(order.expectedDate) : "No expected date"}</strong>
+            <span>${order.lines.length} lines / $${formatNumber(getSupplyOrderTotal(order))}</span>
+            <small>Updated ${formatDate(order.updatedAt)} by ${escapeHtml(order.updatedBy || order.requestedBy)}</small>
+          </button>
+        `).join("")}
+      </div>
+    </section>
+  `).join("");
+  elements.supplyOrdersList.querySelectorAll("[data-supply-order-id]").forEach(button => {
+    button.addEventListener("click", () => loadSupplyOrder(button.dataset.supplyOrderId));
+  });
+}
+
+function seedProducerOptions() {
+  const producers = [...new Set(supplyOrders.map(order => order.producer).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  elements.producerOptions.innerHTML = producers.map(producer => `<option value="${escapeHtml(producer)}"></option>`).join("");
+}
+
+function buildSupplyOrderSummary(order) {
+  const lines = order.lines.length
+    ? order.lines.map(line => {
+      const metrics = getSupplyLineMetrics(line.name, order.id);
+      const total = Number(line.quantity || 0) * Number(line.unitPrice || 0);
+      return `${formatNumber(line.quantity)}x ${line.label || line.name} - $${formatNumber(line.unitPrice)} each = $${formatNumber(total)} / ${formatNumber(metrics.missing)} currently missing`;
+    }).join("\n")
+    : "No parts or materials added";
+  return [
+    "Frontier Firearms Supply Order",
+    `Producer: ${order.producer || ""}`,
+    `Requested by: ${order.requestedBy || currentUser?.fullName || ""}`,
+    order.expectedDate ? `Expected: ${formatDelivery(order.expectedDate)}` : "Expected: Not set",
+    `Status: ${order.status}`,
+    "",
+    lines,
+    "",
+    `Order total: $${formatNumber(getSupplyOrderTotal(order))}`,
+    order.notes ? `\nNotes:\n${order.notes}` : ""
+  ].filter(line => line !== "").join("\n");
+}
+
+function getSupplyOrderTotal(order) {
+  return order.lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0);
+}
+
 function renderTotals() {
   const subtotal = getSubtotal(activeOrder);
   const deposit = Number(activeOrder.deposit || 0);
@@ -493,9 +884,13 @@ function renderSection() {
   });
   elements.dashboardSection.classList.toggle("hidden", activeSection !== "dashboard");
   elements.restockSection.classList.toggle("hidden", activeSection !== "restock");
+  elements.supplySection.classList.toggle("hidden", activeSection !== "supplies");
   elements.workbenchSection.classList.toggle("hidden", activeSection !== "workbench");
   elements.operationsSection.classList.toggle("hidden", activeSection !== "operations");
   elements.employeesSection.classList.toggle("hidden", activeSection !== "employees");
+  const supplyMode = activeSection === "supplies";
+  elements.newDocument.textContent = supplyMode ? "New Supply" : "New Sale";
+  elements.saveDocument.textContent = supplyMode ? "Save Supply" : "Save Sale";
 }
 
 function renderDashboard() {
@@ -540,7 +935,7 @@ function renderRole() {
     activeSection = "dashboard";
     renderSection();
   }
-  if (!isManagement() && activeSection === "operations") {
+  if (!isManagement() && (activeSection === "operations" || activeSection === "supplies")) {
     activeSection = "dashboard";
     renderSection();
   }
@@ -1079,7 +1474,10 @@ async function loadSessionAndData() {
     render();
     await loadBackendSnapshot();
     startBackendRefreshLoop();
-    if (isManagement()) await loadStaffData();
+    if (isManagement()) {
+      await loadSupplyOrders();
+      await loadStaffData();
+    }
   } catch {
     window.location.replace("/login.html");
   }
@@ -1108,6 +1506,7 @@ function applyIdentityDefaults() {
     field.disabled = true;
   });
   if (!elements.handler.value) elements.handler.value = currentUser.fullName;
+  if (!activeSupplyOrder.requestedBy) activeSupplyOrder.requestedBy = currentUser.fullName;
 }
 
 async function logout() {
@@ -1423,6 +1822,7 @@ async function performBackendRefresh({ silent = false } = {}) {
       hydrateSheetInventory();
       renderDashboard();
       renderOperations();
+      renderSupplyWorkspace();
       if (!silent) retryPendingSyncs();
     }
   } catch {
@@ -1526,6 +1926,57 @@ function getReplenishmentPlan() {
     .sort((a, b) => b.shortage - a.shortage || a.ingredient.localeCompare(b.ingredient));
 
   return { missing, materials, missingRecipes };
+}
+
+function getMaterialPurchasePlan(excludeSupplyOrderId = "") {
+  const demand = new Map();
+  const addDemand = (ingredient, quantity) => {
+    const key = normalize(ingredient);
+    const current = demand.get(key) || { ingredient, demand: 0 };
+    current.demand += Number(quantity || 0);
+    demand.set(key, current);
+  };
+
+  getReplenishmentPlan().materials.forEach(line => addDemand(line.ingredient, line.needed));
+  orders
+    .filter(order => !statusesHiddenFromActive.has(order.status))
+    .forEach(order => getProductionPlan(order).materials.forEach(material => addDemand(material.ingredient, material.qty)));
+
+  const storageCounts = getLatestCounts("Storage");
+  const committed = getCommittedSupplyQuantities(excludeSupplyOrderId);
+  return [...demand.entries()].map(([key, line]) => {
+    const available = storageCounts.get(key) || 0;
+    const ordered = committed.get(key) || 0;
+    const shortage = Math.max(0, line.demand - available);
+    return {
+      ingredient: line.ingredient,
+      demand: line.demand,
+      available,
+      ordered,
+      shortage,
+      missing: Math.max(0, shortage - ordered)
+    };
+  }).sort((a, b) => b.missing - a.missing || a.ingredient.localeCompare(b.ingredient));
+}
+
+function getCommittedSupplyQuantities(excludeSupplyOrderId = "") {
+  const committed = new Map();
+  supplyOrders
+    .filter(order => order.status === "Ordered" && order.id !== excludeSupplyOrderId)
+    .forEach(order => order.lines.forEach(line => {
+      const key = normalize(line.name);
+      committed.set(key, (committed.get(key) || 0) + Number(line.quantity || 0));
+    }));
+  return committed;
+}
+
+function getSupplyLineMetrics(ingredient, excludeSupplyOrderId = "") {
+  const key = normalize(ingredient);
+  const planned = getMaterialPurchasePlan(excludeSupplyOrderId).find(line => normalize(line.ingredient) === key);
+  if (planned) return planned;
+  const available = getLatestCounts("Storage").get(key) || 0;
+  const ordered = getCommittedSupplyQuantities(excludeSupplyOrderId).get(key) || 0;
+  return { ingredient, demand: 0, available, ordered, shortage: 0, missing: 0 };
 }
 
 function getLatestCounts(location) {

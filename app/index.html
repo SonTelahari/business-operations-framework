@@ -23,14 +23,15 @@
             <span id="currentUserRole">Employee</span>
           </div>
           <button class="ghost-button" id="logoutButton" type="button">Sign Out</button>
-          <button class="ghost-button" id="newOrderButton" type="button">New</button>
-          <button class="primary-button" id="saveOrderButton" type="button">Save</button>
+          <button class="ghost-button" id="newOrderButton" type="button">New Sale</button>
+          <button class="primary-button" id="saveOrderButton" type="button">Save Sale</button>
         </div>
       </header>
 
       <nav class="section-tabs" aria-label="Main sections">
         <button class="section-button active" data-section="dashboard" type="button">Dashboard</button>
         <button class="section-button" data-section="restock" type="button">Restock</button>
+        <button class="section-button management-only" data-section="supplies" type="button">Supplies</button>
         <button class="section-button" data-section="workbench" type="button">Workbench</button>
         <button class="section-button management-only" data-section="operations" type="button">Operations</button>
         <button class="section-button management-only accounts-only" data-section="employees" type="button">Staff</button>
@@ -347,6 +348,126 @@
         </section>
       </main>
 
+      <main class="workspace supply-workspace workspace-section hidden management-only" id="supplySection">
+        <section class="panel active-order" aria-label="Active supply order">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Procurement</p>
+              <h2>Parts and Materials Order</h2>
+              <p id="supplyOrderMeta">Draft</p>
+            </div>
+            <select id="supplyStatusSelect" aria-label="Supply order status">
+              <option value="Draft">Draft</option>
+              <option value="Ordered">Ordered</option>
+              <option value="Received">Received</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          <div class="form-grid supply-order-fields">
+            <label>
+              Producer
+              <input id="supplyProducerInput" list="producerOptions" type="text" autocomplete="off" placeholder="Producer or supplier">
+              <datalist id="producerOptions"></datalist>
+            </label>
+            <label>
+              Requested By
+              <input id="supplyRequestedByInput" type="text" disabled>
+            </label>
+            <label>
+              Expected Date
+              <input id="supplyExpectedDateInput" type="date">
+            </label>
+          </div>
+
+          <div class="add-line supply-add-line">
+            <label class="search-box">
+              Part or Material
+              <input id="supplyMaterialInput" list="supplyMaterialOptions" autocomplete="off" placeholder="Search recipe ingredient">
+            </label>
+            <label>
+              Order Qty
+              <input id="supplyQuantityInput" type="number" min="1" step="1" value="1">
+            </label>
+            <label>
+              Unit Cost
+              <input id="supplyUnitPriceInput" type="number" min="0" step="0.01" value="0">
+            </label>
+            <button class="primary-button" id="addSupplyLineButton" type="button">Add</button>
+            <button class="ghost-button" id="addMissingSupplyButton" type="button">Add Missing</button>
+          </div>
+
+          <div class="line-table-wrap supply-line-table-wrap">
+            <table class="line-table supply-line-table">
+              <thead>
+                <tr>
+                  <th>Material</th>
+                  <th>Demand</th>
+                  <th>Storage</th>
+                  <th>Already Ordered</th>
+                  <th>Still Missing</th>
+                  <th>Order Qty</th>
+                  <th>Each</th>
+                  <th>Total</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="supplyLinesBody"></tbody>
+            </table>
+          </div>
+
+          <div class="notes-grid supply-notes-grid">
+            <label>
+              Producer Notes
+              <textarea id="supplyNotesInput" rows="3" placeholder="Collection details, contact, agreed terms"></textarea>
+            </label>
+          </div>
+        </section>
+
+        <aside class="panel summary-panel" aria-label="Supply order summary">
+          <div class="total-block">
+            <span>Order Total</span>
+            <strong id="supplySubtotalValue">$0</strong>
+          </div>
+          <div class="total-row">
+            <span>Lines</span>
+            <strong id="supplyLineCountValue">0</strong>
+          </div>
+          <div class="balance-row">
+            <span>Uncovered Shortage</span>
+            <strong id="supplyUncoveredValue">0</strong>
+          </div>
+
+          <div class="action-grid">
+            <button id="copySupplyOrderButton" class="primary-button" type="button">Copy Order</button>
+            <button id="orderSupplyButton" class="ghost-button" type="button">Mark Ordered</button>
+            <button id="receiveSupplyButton" class="ghost-button" type="button">Mark Received</button>
+            <button id="deleteSupplyOrderButton" class="danger-button" type="button">Remove</button>
+          </div>
+
+          <div class="summary-preview" id="supplySummaryPreview"></div>
+        </aside>
+
+        <section class="panel saved-panel" aria-label="Saved supply orders">
+          <div class="panel-header">
+            <div>
+              <h2>Producer Orders</h2>
+              <p id="supplySavedCount">0 active</p>
+            </div>
+            <select id="supplyFilterSelect" aria-label="Filter supply orders">
+              <option value="Active">Active</option>
+              <option value="All">All</option>
+              <option value="Draft">Draft</option>
+              <option value="Ordered">Ordered</option>
+              <option value="Received">Received</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+          <p class="supply-data-status" id="supplyDataStatus">Loading shared producer orders</p>
+          <div class="producer-order-groups" id="supplyOrdersList"></div>
+        </section>
+      </main>
+
       <main class="operations workspace-section hidden management-only" id="operationsSection">
         <section class="panel operations-panel">
           <div class="panel-header">
@@ -601,8 +722,9 @@
     <script src="items.js"></script>
     <script src="recipes.js?v=20260713-softwood"></script>
     <script src="inventory-counts.js?v=20260713-softwood"></script>
+    <datalist id="supplyMaterialOptions"></datalist>
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
-    <script src="app.js?v=20260713-count-sort"></script>
+    <script src="app.js?v=20260713-supply-orders"></script>
   </body>
 </html>

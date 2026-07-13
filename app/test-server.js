@@ -151,6 +151,8 @@ async function run() {
   assert.equal(employeeAdminAttempt.response.status, 403);
   const employeeAuditAttempt = await getJson(`${baseUrl}/api/admin/audit`, employeeCookie);
   assert.equal(employeeAuditAttempt.response.status, 403);
+  const employeeSupplyAttempt = await getJson(`${baseUrl}/api/supply-orders`, employeeCookie);
+  assert.equal(employeeSupplyAttempt.response.status, 403);
 
   const protectedSync = await post(`${baseUrl}/api/sync`, {
     action: "stock_target",
@@ -180,6 +182,24 @@ async function run() {
 
   const managerUsers = await getJson(`${baseUrl}/api/admin/users`, managerCookie);
   assert.equal(managerUsers.response.status, 200);
+
+  const emptySupplyOrders = await getJson(`${baseUrl}/api/supply-orders`, managerCookie);
+  assert.equal(emptySupplyOrders.response.status, 200);
+  assert.deepEqual(emptySupplyOrders.body.orders, []);
+  const savedSupplyOrder = await post(`${baseUrl}/api/supply-orders`, {
+    id: "supply-order-1",
+    producer: "Van Horn Foundry",
+    status: "Ordered",
+    expectedDate: "2026-07-15",
+    requestedBy: "Spoofed Name",
+    notes: "Collect at the works",
+    lines: [{ id: "iron-line", name: "Iron", label: "Iron", quantity: 20, unitPrice: 1.5 }]
+  }, managerCookie);
+  assert.equal(savedSupplyOrder.response.status, 200);
+  assert.equal(savedSupplyOrder.body.order.requestedBy, "Ada Employee");
+  assert.equal(savedSupplyOrder.body.order.lines[0].quantity, 20);
+  const sharedSupplyOrders = await getJson(`${baseUrl}/api/supply-orders`, ownerCookie);
+  assert.equal(sharedSupplyOrders.body.orders[0].producer, "Van Horn Foundry");
 
   const workerRegistration = await post(`${baseUrl}/api/auth/register`, {
     fullName: "Grace Worker",
@@ -238,7 +258,12 @@ async function run() {
   assert.equal(managerAudit.response.status, 200);
   assert(managerAudit.body.events.some(event => event.action === "account.role_changed"));
   assert(managerAudit.body.events.some(event => event.action === "operation.recorded" && event.actorName === "Ada Employee"));
+  assert(managerAudit.body.events.some(event => event.action === "supply_order.saved" && event.subjectName === "Van Horn Foundry"));
   assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
+
+  const removedSupplyOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-1`, managerCookie);
+  assert.equal(removedSupplyOrder.response.status, 200);
+  assert.deepEqual(removedSupplyOrder.body.orders, []);
 
   const demoted = await post(`${baseUrl}/api/admin/users/${pendingUser.id}/demote`, {}, ownerCookie);
   assert.equal(demoted.response.status, 200);
@@ -266,13 +291,14 @@ async function run() {
 
 async function testLegacyFallback() {
   const legacyPort = 4285;
+  const legacyDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "still-water-legacy-business-"));
   const legacyServer = spawn(process.execPath, [path.join(__dirname, "server.js")], {
     env: {
       ...process.env,
       PORT: String(legacyPort),
       APPS_SCRIPT_URL: "",
       AUTH_SESSION_SECRET: "",
-      AUTH_DATA_DIR: "",
+      AUTH_DATA_DIR: legacyDataDirectory,
       ADMIN_FULL_NAME: "",
       ADMIN_PASSWORD: "",
       APP_AUTH_USER: "frontier-legacy",
@@ -294,6 +320,7 @@ async function testLegacyFallback() {
     assert.equal(result.user.accountManagement, false);
   } finally {
     legacyServer.kill();
+    await fs.promises.rm(legacyDataDirectory, { recursive: true, force: true });
   }
 }
 
@@ -312,6 +339,14 @@ async function post(url, payload, cookie = "") {
 
 async function getJson(url, cookie = "") {
   const response = await fetch(url, {
+    headers: { accept: "application/json", ...(cookie ? { cookie } : {}) }
+  });
+  return { response, body: await response.json() };
+}
+
+async function remove(url, cookie = "") {
+  const response = await fetch(url, {
+    method: "DELETE",
     headers: { accept: "application/json", ...(cookie ? { cookie } : {}) }
   });
   return { response, body: await response.json() };
