@@ -2,6 +2,8 @@
 **/.env.*
 !**/.env.example
 **/node_modules/
+**/.data/
+**/users.json
 *.log
 discord-bridge/captures/
 .DS_Store

@@ -1,15 +1,23 @@
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const port = 4283;
+const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "still-water-auth-"));
 const server = spawn(process.execPath, [path.join(__dirname, "server.js")], {
   env: {
     ...process.env,
     PORT: String(port),
     APPS_SCRIPT_URL: "",
-    APP_AUTH_USER: "frontier-test",
-    APP_AUTH_PASSWORD: "correct-horse"
+    APP_AUTH_USER: "",
+    APP_AUTH_PASSWORD: "",
+    AUTH_DATA_DIR: dataDirectory,
+    AUTH_SESSION_SECRET: "test-session-secret-with-enough-entropy-123456789",
+    ADMIN_FULL_NAME: "Frontier Owner",
+    ADMIN_PASSWORD: "OwnerPassword123!",
+    NODE_ENV: "test"
   },
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -21,8 +29,9 @@ run().catch(error => {
   console.error(error.stack || error.message);
   if (stderr) console.error(stderr);
   process.exitCode = 1;
-}).finally(() => {
+}).finally(async () => {
   server.kill();
+  await fs.promises.rm(dataDirectory, { recursive: true, force: true });
 });
 
 async function run() {
@@ -31,28 +40,159 @@ async function run() {
 
   const health = await fetch(`${baseUrl}/health`);
   assert.equal(health.status, 200);
-  assert.equal((await health.json()).authConfigured, true);
+  assert.deepEqual(await health.json().then(result => [result.authMode, result.persistentAccountStore]), ["accounts", true]);
 
-  const unauthenticated = await fetch(baseUrl, { redirect: "manual" });
-  assert.equal(unauthenticated.status, 401);
-  assert.match(unauthenticated.headers.get("www-authenticate") || "", /^Basic /);
+  const loginPage = await fetch(`${baseUrl}/login.html`);
+  assert.equal(loginPage.status, 200);
+  assert.match(await loginPage.text(), /Request Access/);
 
-  const wrong = await fetch(baseUrl, {
-    headers: { authorization: basic("frontier-test", "wrong") }
+  const unauthenticatedPage = await fetch(baseUrl, { redirect: "manual" });
+  assert.equal(unauthenticatedPage.status, 302);
+  assert.equal(unauthenticatedPage.headers.get("location"), "/login.html");
+
+  const unauthenticatedApi = await fetch(`${baseUrl}/api/bootstrap`);
+  assert.equal(unauthenticatedApi.status, 401);
+
+  const ownerLogin = await post(`${baseUrl}/api/auth/login`, {
+    fullName: "Frontier Owner",
+    password: "OwnerPassword123!"
   });
-  assert.equal(wrong.status, 401);
+  assert.equal(ownerLogin.response.status, 200);
+  assert.equal(ownerLogin.body.user.role, "admin");
+  const ownerCookie = cookieFrom(ownerLogin.response);
 
-  const authenticated = await fetch(baseUrl, {
-    headers: { authorization: basic("frontier-test", "correct-horse") }
+  const authenticatedPage = await fetch(baseUrl, { headers: { cookie: ownerCookie } });
+  assert.equal(authenticatedPage.status, 200);
+  assert.match(await authenticatedPage.text(), /Employee Accounts/);
+
+  const accountStoreLeak = await fetch(`${baseUrl}/.data/users.json`, { headers: { cookie: ownerCookie } });
+  assert.equal(accountStoreLeak.status, 404);
+  const serverSourceLeak = await fetch(`${baseUrl}/server.js`, { headers: { cookie: ownerCookie } });
+  assert.equal(serverSourceLeak.status, 404);
+
+  const registration = await post(`${baseUrl}/api/auth/register`, {
+    fullName: "Ada Employee",
+    password: "EmployeePassword123!"
   });
-  assert.equal(authenticated.status, 200);
-  assert.match(await authenticated.text(), /Frontier Firearms/);
+  assert.equal(registration.response.status, 201);
+  assert.equal(registration.body.user.status, "pending");
 
-  console.log("App server health and Basic Auth checks passed.");
+  const duplicate = await post(`${baseUrl}/api/auth/register`, {
+    fullName: "  ADA   EMPLOYEE ",
+    password: "AnotherPassword123!"
+  });
+  assert.equal(duplicate.response.status, 409);
+
+  const pendingLogin = await post(`${baseUrl}/api/auth/login`, {
+    fullName: "Ada Employee",
+    password: "EmployeePassword123!"
+  });
+  assert.equal(pendingLogin.response.status, 403);
+  assert.equal(pendingLogin.body.code, "approval_pending");
+
+  const usersBeforeApproval = await getJson(`${baseUrl}/api/admin/users`, ownerCookie);
+  const pendingUser = usersBeforeApproval.body.users.find(user => user.fullName === "Ada Employee");
+  assert.equal(pendingUser.status, "pending");
+
+  const approval = await post(`${baseUrl}/api/admin/users/${pendingUser.id}/approve`, {}, ownerCookie);
+  assert.equal(approval.response.status, 200);
+  assert.equal(approval.body.user.status, "active");
+
+  const employeeLogin = await post(`${baseUrl}/api/auth/login`, {
+    fullName: "Ada Employee",
+    password: "EmployeePassword123!"
+  });
+  assert.equal(employeeLogin.response.status, 200);
+  const employeeCookie = cookieFrom(employeeLogin.response);
+
+  const employeeSession = await getJson(`${baseUrl}/api/auth/session`, employeeCookie);
+  assert.equal(employeeSession.body.user.fullName, "Ada Employee");
+  assert.equal(employeeSession.body.user.accountManagement, true);
+
+  const employeeAdminAttempt = await getJson(`${baseUrl}/api/admin/users`, employeeCookie);
+  assert.equal(employeeAdminAttempt.response.status, 403);
+
+  const protectedSync = await post(`${baseUrl}/api/sync`, {
+    action: "stock_target",
+    target: { itemName: "Navy Revolver", target: 2 }
+  }, employeeCookie);
+  assert.equal(protectedSync.response.status, 403);
+
+  const disabled = await post(`${baseUrl}/api/admin/users/${pendingUser.id}/disable`, {}, ownerCookie);
+  assert.equal(disabled.response.status, 200);
+  const disabledSession = await getJson(`${baseUrl}/api/auth/session`, employeeCookie);
+  assert.equal(disabledSession.body.user, null);
+
+  const accountFile = await fs.promises.readFile(path.join(dataDirectory, "users.json"), "utf8");
+  assert.doesNotMatch(accountFile, /OwnerPassword123|EmployeePassword123/);
+  assert.match(accountFile, /"algorithm": "scrypt"/);
+
+  const logout = await post(`${baseUrl}/api/auth/logout`, {}, ownerCookie);
+  assert.equal(logout.response.status, 200);
+  assert.match(logout.response.headers.get("set-cookie") || "", /Max-Age=0/);
+
+  await testLegacyFallback();
+
+  console.log("Personal accounts and safe shared-login migration checks passed.");
 }
 
-function basic(user, password) {
-  return `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
+async function testLegacyFallback() {
+  const legacyPort = 4285;
+  const legacyServer = spawn(process.execPath, [path.join(__dirname, "server.js")], {
+    env: {
+      ...process.env,
+      PORT: String(legacyPort),
+      APPS_SCRIPT_URL: "",
+      AUTH_SESSION_SECRET: "",
+      AUTH_DATA_DIR: "",
+      ADMIN_FULL_NAME: "",
+      ADMIN_PASSWORD: "",
+      APP_AUTH_USER: "frontier-legacy",
+      APP_AUTH_PASSWORD: "LegacyPassword123!",
+      NODE_ENV: "test"
+    },
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  try {
+    const legacyUrl = `http://127.0.0.1:${legacyPort}`;
+    await waitForServer(`${legacyUrl}/health`);
+    const unauthenticated = await fetch(legacyUrl);
+    assert.equal(unauthenticated.status, 401);
+    const authorization = `Basic ${Buffer.from("frontier-legacy:LegacyPassword123!").toString("base64")}`;
+    const session = await fetch(`${legacyUrl}/api/auth/session`, { headers: { authorization } });
+    assert.equal(session.status, 200);
+    const result = await session.json();
+    assert.equal(result.user.role, "admin");
+    assert.equal(result.user.accountManagement, false);
+  } finally {
+    legacyServer.kill();
+  }
+}
+
+async function post(url, payload, cookie = "") {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      ...(cookie ? { cookie } : {})
+    },
+    body: JSON.stringify(payload)
+  });
+  return { response, body: await response.json() };
+}
+
+async function getJson(url, cookie = "") {
+  const response = await fetch(url, {
+    headers: { accept: "application/json", ...(cookie ? { cookie } : {}) }
+  });
+  return { response, body: await response.json() };
+}
+
+function cookieFrom(response) {
+  const value = response.headers.get("set-cookie") || "";
+  assert.match(value, /^ff_session=/);
+  return value.split(";", 1)[0];
 }
 
 async function waitForServer(url) {

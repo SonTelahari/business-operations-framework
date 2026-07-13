@@ -4,6 +4,12 @@ Still Water server edition of the Frontier Firearms business system.
 
 This project preserves the order desk, production planning, storefront targets, manual counts, ledger adjustments, employee time clock, payroll, Discord parser, Google Sheets receiver, and hosting setup from the original project. Its catalog contains Still Water data only, preventing server economies from being mixed.
 
+## Employee Accounts
+
+Employees request access with their full name and a password. New accounts remain pending until an admin approves them in the Employees tab. Passwords are stored only as salted `scrypt` hashes, and account sessions use signed, HTTP-only cookies.
+
+The Railway GUI service needs one persistent volume so accounts survive deployments. See `docs/hosting.md` for the migration from the shared login.
+
 ## Initial Weapon Categories
 
 - Rifles
@@ -40,6 +46,7 @@ The Still Water bridge is capture-only by default while its real storefront even
 - `webhook/Code.gs` contains a Still Water spreadsheet placeholder and cannot write to the original workbook.
 - Create a new `.env` from `discord-bridge/.env.example` only after the Still Water Discord channel and receiver exist.
 - The local GUI uses port `4273` and separate browser-storage keys to prevent cross-server data mixing.
+- Local account data under `app/.data` and Railway volume data are excluded from Git.
 
 See `docs/categories.md` for captured category sources and `docs/hosting.md` for deployment details.
 See `docs/pricing.md` for the MSRP midpoint policy, ingredient aliases, and unresolved prices.

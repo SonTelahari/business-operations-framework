@@ -32,11 +32,33 @@ Variables:
 
 ```text
 APPS_SCRIPT_URL=https://script.google.com/macros/s/AKfycbxUltse2dYLlqIyfX2JgQdMJEFRcWNM2OAlQa5ZKP630HVigsBhUwhIaYrg7eJFq855yg/exec
-APP_AUTH_USER=<shared login name>
-APP_AUTH_PASSWORD=<long unique password>
+AUTH_SESSION_SECRET=<long random secret, at least 32 characters>
+ADMIN_FULL_NAME=<first admin's full name>
+ADMIN_PASSWORD=<first admin's initial password, at least 10 characters>
 NODE_ENV=production
 ```
 
-The GUI health endpoint remains public for Railway. Every other GUI and API route requires HTTP Basic Auth when `APP_AUTH_PASSWORD` is configured. Railway serves the generated domain over HTTPS.
+Attach one Railway volume to `still-water-gui` with mount path `/data`. Railway provides the mount path to the application automatically. Keep the GUI at exactly one replica while it uses this file-backed account store.
+
+The GUI health endpoint remains public for Railway. The desk and business APIs require an active account. Railway serves the generated domain over HTTPS.
+
+## Shared Login Migration
+
+1. Attach the volume to `still-water-gui` at `/data`.
+2. Add `AUTH_SESSION_SECRET`, `ADMIN_FULL_NAME`, and `ADMIN_PASSWORD` to the GUI service variables.
+3. Deploy the staged Railway changes.
+4. Sign in with the first admin name and password.
+5. Confirm the Employees tab opens, then delete the old `APP_AUTH_USER` and `APP_AUTH_PASSWORD` variables.
+6. After the first admin account exists on the volume, `ADMIN_PASSWORD` may also be removed. Keep `AUTH_SESSION_SECRET` unchanged or all existing sessions will be signed out.
+
+If the account variables have not been added yet, the application continues using the old shared Basic Auth login. This makes the migration safe to deploy before the Railway variable changes are applied.
+
+## Employee Approval
+
+1. The employee opens the public GUI URL and selects Request Access.
+2. They enter their first and last name and a password of at least 10 characters.
+3. An admin signs in, opens Employees, and approves or rejects the request.
+4. Approved employees can sign in with their full name and password.
+5. Disabling an employee immediately invalidates their active sessions.
 
 Do not copy `.env` into Git or Railway. Enter each variable in its service's Variables tab. Railway injects `PORT` automatically.

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign In - Frontier Firearms</title>
+    <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="auth-page">
+    <main class="auth-shell">
+      <section class="auth-brand" aria-label="Frontier Firearms">
+        <img src="assets/frontier-firearms-logo.png" alt="Frontier Firearms">
+        <p class="eyebrow">Still Water</p>
+        <h1>Employee Desk</h1>
+      </section>
+
+      <section class="auth-panel">
+        <div class="auth-tabs" role="tablist" aria-label="Account access">
+          <button class="auth-tab active" id="showLoginButton" type="button" role="tab" aria-selected="true">Sign In</button>
+          <button class="auth-tab" id="showRegisterButton" type="button" role="tab" aria-selected="false">Request Access</button>
+        </div>
+
+        <form class="auth-form" id="loginForm">
+          <div>
+            <p class="eyebrow">Welcome Back</p>
+            <h2>Sign in to the desk</h2>
+          </div>
+          <label>
+            Full Name
+            <input id="loginNameInput" name="fullName" type="text" autocomplete="username" required>
+          </label>
+          <label>
+            Password
+            <input id="loginPasswordInput" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="primary-button auth-submit" type="submit">Sign In</button>
+        </form>
+
+        <form class="auth-form hidden" id="registerForm">
+          <div>
+            <p class="eyebrow">New Employee</p>
+            <h2>Request an account</h2>
+          </div>
+          <label>
+            Full Name
+            <input id="registerNameInput" name="fullName" type="text" autocomplete="name" required>
+          </label>
+          <label>
+            Password
+            <input id="registerPasswordInput" name="password" type="password" autocomplete="new-password" minlength="10" required>
+            <span class="field-hint">At least 10 characters</span>
+          </label>
+          <label>
+            Confirm Password
+            <input id="registerConfirmInput" name="confirmPassword" type="password" autocomplete="new-password" minlength="10" required>
+          </label>
+          <button class="primary-button auth-submit" type="submit">Send Request</button>
+        </form>
+
+        <div class="auth-message" id="authMessage" role="status" aria-live="polite"></div>
+      </section>
+    </main>
+    <script src="login.js"></script>
+  </body>
+</html>

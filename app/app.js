@@ -2,7 +2,6 @@ const STORAGE_KEY = "frontier_still_water_work_orders_v1";
 const TIME_CLOCK_KEY = "frontier_still_water_time_clock_v1";
 const OPERATIONS_KEY = "frontier_still_water_manual_operations_v1";
 const TARGETS_KEY = "frontier_still_water_storefront_targets_v1";
-const USER_ROLE_KEY = "frontier_still_water_user_role_v1";
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
 const itemCatalog = window.FRONTIER_ITEMS || [];
 const recipeCatalog = window.FRONTIER_RECIPES || {};
@@ -11,17 +10,21 @@ const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
 
 let orders = loadOrders();
-let timeClock = loadTimeClock();
+let timeClock = { current: null, entries: [] };
 let operations = loadOperations();
 let stockTargets = loadStockTargets();
-let currentRole = loadRole();
+let currentUser = null;
+let currentRole = "employee";
+let employeeUsers = [];
 let backendSnapshot = null;
 let activeOrder = newOrder();
 let activeView = "quote";
 let activeSection = "dashboard";
 
 const elements = {
-  role: document.querySelector("#roleSelect"),
+  currentUserName: document.querySelector("#currentUserName"),
+  currentUserRole: document.querySelector("#currentUserRole"),
+  logout: document.querySelector("#logoutButton"),
   customer: document.querySelector("#customerInput"),
   handler: document.querySelector("#handlerInput"),
   deposit: document.querySelector("#depositInput"),
@@ -54,6 +57,10 @@ const elements = {
   restockSection: document.querySelector("#restockSection"),
   workbenchSection: document.querySelector("#workbenchSection"),
   operationsSection: document.querySelector("#operationsSection"),
+  employeesSection: document.querySelector("#employeesSection"),
+  pendingUserCount: document.querySelector("#pendingUserCount"),
+  pendingUserList: document.querySelector("#pendingUserList"),
+  employeeUserList: document.querySelector("#employeeUserList"),
   dataStatus: document.querySelector("#dataStatusText"),
   missingStockCount: document.querySelector("#missingStockCount"),
   materialShortageCount: document.querySelector("#materialShortageCount"),
@@ -110,7 +117,7 @@ const elements = {
 seedDatalist();
 wireEvents();
 render();
-loadBackendSnapshot();
+loadSessionAndData();
 
 function newOrder() {
   const now = new Date().toISOString();
@@ -138,9 +145,9 @@ function loadOrders() {
   }
 }
 
-function loadTimeClock() {
+function loadTimeClock(storageKey = TIME_CLOCK_KEY) {
   try {
-    const stored = JSON.parse(localStorage.getItem(TIME_CLOCK_KEY) || "{}");
+    const stored = JSON.parse(localStorage.getItem(storageKey) || "{}");
     return {
       current: stored.current || null,
       entries: Array.isArray(stored.entries) ? stored.entries : []
@@ -166,16 +173,16 @@ function loadStockTargets() {
   }
 }
 
-function loadRole() {
-  return localStorage.getItem(USER_ROLE_KEY) || "admin";
-}
-
 function persistOrders() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
 }
 
 function persistTimeClock() {
-  localStorage.setItem(TIME_CLOCK_KEY, JSON.stringify(timeClock));
+  localStorage.setItem(timeClockStorageKey(), JSON.stringify(timeClock));
+}
+
+function timeClockStorageKey() {
+  return currentUser ? `${TIME_CLOCK_KEY}_${currentUser.id}` : TIME_CLOCK_KEY;
 }
 
 function persistOperations() {
@@ -184,10 +191,6 @@ function persistOperations() {
 
 function persistStockTargets() {
   localStorage.setItem(TARGETS_KEY, JSON.stringify(stockTargets));
-}
-
-function persistRole() {
-  localStorage.setItem(USER_ROLE_KEY, currentRole);
 }
 
 function seedDatalist() {
@@ -210,11 +213,9 @@ function wireEvents() {
   document.querySelector("#addItemButton").addEventListener("click", addItemLine);
   document.querySelector("#copySummaryButton").addEventListener("click", copySummary);
   document.querySelector("#copyProductionButton").addEventListener("click", copyProduction);
-  elements.role.addEventListener("change", () => {
-    currentRole = elements.role.value;
-    persistRole();
-    renderRole();
-  });
+  elements.logout.addEventListener("click", logout);
+  elements.pendingUserList.addEventListener("click", handleEmployeeAction);
+  elements.employeeUserList.addEventListener("click", handleEmployeeAction);
   elements.clockToggle.addEventListener("click", toggleTimeClock);
   elements.saveCount.addEventListener("click", saveManualCount);
   elements.saveMovement.addEventListener("click", saveManualMovement);
@@ -258,6 +259,7 @@ function wireEvents() {
     button.addEventListener("click", () => {
       activeSection = button.dataset.section;
       renderSection();
+      if (activeSection === "employees" && currentRole === "admin") loadEmployeeUsers();
     });
   });
 
@@ -402,6 +404,7 @@ function render() {
   renderDashboard();
   renderTimeClock();
   renderOperations();
+  renderEmployees();
   renderRole();
   renderSection();
 }
@@ -461,6 +464,7 @@ function renderSection() {
   elements.restockSection.classList.toggle("hidden", activeSection !== "restock");
   elements.workbenchSection.classList.toggle("hidden", activeSection !== "workbench");
   elements.operationsSection.classList.toggle("hidden", activeSection !== "operations");
+  elements.employeesSection.classList.toggle("hidden", activeSection !== "employees");
 }
 
 function renderDashboard() {
@@ -495,9 +499,15 @@ function renderDashboard() {
 }
 
 function renderRole() {
-  elements.role.value = currentRole;
   document.body.classList.toggle("employee-view", currentRole === "employee");
   document.body.classList.toggle("admin-view", currentRole === "admin");
+  document.body.classList.toggle("accounts-disabled", !currentUser?.accountManagement);
+  elements.currentUserName.textContent = currentUser?.fullName || "Loading account";
+  elements.currentUserRole.textContent = currentRole === "admin" ? "Admin" : "Employee";
+  if ((currentRole !== "admin" || !currentUser?.accountManagement) && activeSection === "employees") {
+    activeSection = "dashboard";
+    renderSection();
+  }
 }
 
 function renderReplenishment() {
@@ -536,7 +546,8 @@ function renderReplenishment() {
 
 function renderTimeClock() {
   const current = timeClock.current;
-  elements.clockEmployee.value = current?.employee || elements.clockEmployee.value;
+  elements.clockEmployee.value = current?.employee || currentUser?.fullName || elements.clockEmployee.value;
+  elements.clockEmployee.disabled = Boolean(currentUser);
   elements.clockToggle.textContent = current ? "Clock Out" : "Clock In";
   elements.clockStatus.textContent = current
     ? `${current.employee} clocked in at ${formatDateTime(current.clockIn)} / ${current.syncStatus || "Pending sheet sync"}`
@@ -698,7 +709,7 @@ function buildProductionSummary(order) {
 }
 
 function toggleTimeClock() {
-  const employee = elements.clockEmployee.value.trim();
+  const employee = currentUser?.fullName || elements.clockEmployee.value.trim();
   if (!timeClock.current && !employee) {
     elements.clockEmployee.focus();
     return;
@@ -748,7 +759,7 @@ function saveManualCount() {
     itemLabel: item.label,
     itemTag: item.tag,
     quantity,
-    employee: elements.countEmployee.value.trim(),
+    employee: currentUser?.fullName || elements.countEmployee.value.trim(),
     amount: "",
     note: `Counted ${formatNumber(quantity)} at ${elements.countLocation.value}`
   });
@@ -773,7 +784,7 @@ function saveManualMovement() {
     itemLabel: item.label,
     itemTag: item.tag,
     quantity,
-    employee: elements.movementEmployee.value.trim(),
+    employee: currentUser?.fullName || elements.movementEmployee.value.trim(),
     amount: Number(elements.movementAmount.value || 0),
     note: elements.movementNote.value.trim()
   });
@@ -794,7 +805,7 @@ function saveLedgerAdjustment() {
     itemLabel: "",
     itemTag: "",
     quantity: "",
-    employee: elements.ledgerEmployee.value.trim(),
+    employee: currentUser?.fullName || elements.ledgerEmployee.value.trim(),
     amount,
     note: elements.ledgerNote.value.trim()
   });
@@ -833,7 +844,7 @@ function savePayrollPayment() {
     itemTag: "",
     quantity: "",
     amount,
-    employee: elements.payrollEnteredBy.value.trim(),
+    employee: currentUser?.fullName || elements.payrollEnteredBy.value.trim(),
     note: elements.payrollNote.value.trim(),
     payee,
     payPeriodStart: periodStart,
@@ -1004,6 +1015,132 @@ function resolveStockItem(value) {
   return item || { name: trimmed, label: trimmed, tag: "", category: "Manual" };
 }
 
+async function loadSessionAndData() {
+  try {
+    const response = await fetch("/api/auth/session", { headers: { accept: "application/json" } });
+    const result = await response.json();
+    if (!response.ok || !result.user) throw new Error("Authentication required");
+    currentUser = result.user;
+    currentRole = currentUser.role;
+    timeClock = loadTimeClock(timeClockStorageKey());
+    migrateLegacyTimeClock();
+    applyIdentityDefaults();
+    render();
+    await loadBackendSnapshot();
+    if (currentRole === "admin") await loadEmployeeUsers();
+  } catch {
+    window.location.replace("/login.html");
+  }
+}
+
+function migrateLegacyTimeClock() {
+  if (timeClock.current || timeClock.entries.length) return;
+  const legacy = loadTimeClock(TIME_CLOCK_KEY);
+  if (legacy.current && normalize(legacy.current.employee) === normalize(currentUser.fullName)) {
+    timeClock = legacy;
+    persistTimeClock();
+  }
+}
+
+function applyIdentityDefaults() {
+  const identityFields = [
+    elements.clockEmployee,
+    elements.countEmployee,
+    elements.movementEmployee,
+    elements.ledgerEmployee,
+    elements.payrollEnteredBy
+  ];
+  identityFields.forEach(field => {
+    if (!field) return;
+    field.value = currentUser.fullName;
+    field.disabled = true;
+  });
+  if (!elements.handler.value) elements.handler.value = currentUser.fullName;
+}
+
+async function logout() {
+  elements.logout.disabled = true;
+  try {
+    await fetch("/api/auth/logout", { method: "POST", headers: { accept: "application/json" } });
+  } finally {
+    window.location.replace("/login.html");
+  }
+}
+
+async function loadEmployeeUsers() {
+  try {
+    const response = await fetch("/api/admin/users", { headers: { accept: "application/json" } });
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to load accounts");
+    employeeUsers = result.users || [];
+    renderEmployees();
+  } catch (error) {
+    elements.pendingUserList.innerHTML = `<div class="empty-card">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderEmployees() {
+  if (!elements.pendingUserList || currentRole !== "admin") return;
+  const pending = employeeUsers.filter(user => user.status === "pending");
+  const established = employeeUsers.filter(user => user.status !== "pending");
+  elements.pendingUserCount.textContent = `${pending.length} pending`;
+  elements.pendingUserList.innerHTML = pending.length
+    ? pending.map(user => employeeCard(user, true)).join("")
+    : `<div class="empty-card">No access requests waiting</div>`;
+  elements.employeeUserList.innerHTML = established.length
+    ? established.map(user => employeeCard(user, false)).join("")
+    : `<div class="empty-card">No employee accounts yet</div>`;
+}
+
+function employeeCard(user, pending) {
+  const isSelf = user.id === currentUser?.id;
+  const actions = pending
+    ? `<button class="primary-button" type="button" data-user-action="approve" data-user-id="${user.id}">Approve</button>
+       <button class="danger-button" type="button" data-user-action="reject" data-user-id="${user.id}">Reject</button>`
+    : user.status === "disabled"
+      ? `<button class="ghost-button" type="button" data-user-action="approve" data-user-id="${user.id}">Reactivate</button>`
+      : isSelf
+        ? ""
+        : `<button class="danger-button" type="button" data-user-action="disable" data-user-id="${user.id}">Disable</button>`;
+  return `
+    <div class="employee-row">
+      <div class="employee-identity">
+        <strong>${escapeHtml(user.fullName)}</strong>
+        <span>${escapeHtml(user.role === "admin" ? "Admin" : "Employee")} / ${escapeHtml(user.status)}</span>
+        <small>${pending ? `Requested ${formatDateTime(user.createdAt)}` : user.lastLoginAt ? `Last signed in ${formatDateTime(user.lastLoginAt)}` : "Has not signed in yet"}</small>
+      </div>
+      <div class="employee-actions">${actions}</div>
+    </div>
+  `;
+}
+
+async function handleEmployeeAction(event) {
+  const button = event.target.closest("[data-user-action]");
+  if (!button) return;
+  const user = employeeUsers.find(candidate => candidate.id === button.dataset.userId);
+  if (!user) return;
+  const action = button.dataset.userAction;
+  if ((action === "disable" || action === "reject") && !window.confirm(`${action === "reject" ? "Reject" : "Disable"} ${user.fullName}?`)) return;
+
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}/${action}`, {
+      method: "POST",
+      headers: { accept: "application/json" }
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to update account");
+    await loadEmployeeUsers();
+  } catch (error) {
+    window.alert(error.message);
+    button.disabled = false;
+  }
+}
+
 async function syncOperation(entryId) {
   const entry = operations.find(item => item.id === entryId);
   if (!entry) return;
@@ -1049,6 +1186,10 @@ async function syncToBackend(action, payload) {
       },
       body: JSON.stringify({ action, ...payload })
     });
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return { ok: false };
+    }
     if (!response.ok) return { ok: false };
     return await response.json();
   } catch {
@@ -1059,6 +1200,10 @@ async function syncToBackend(action, payload) {
 async function loadBackendSnapshot() {
   try {
     const response = await fetch("/api/bootstrap", { headers: { Accept: "application/json" } });
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
     if (!response.ok) throw new Error(`API ${response.status}`);
     backendSnapshot = await response.json();
     const sheetReady = backendSnapshot.sheet?.ok && Array.isArray(backendSnapshot.sheet.sheets);

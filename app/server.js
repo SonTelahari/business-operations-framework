@@ -3,12 +3,22 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { AccountStore, SESSION_MAX_AGE_SECONDS } = require("./auth");
 
 const root = __dirname;
 loadEnvFile(path.join(root, "..", "discord-bridge", ".env"));
 const port = Number(process.env.PORT || 4273);
 const authUser = process.env.APP_AUTH_USER || "frontier";
 const authPassword = process.env.APP_AUTH_PASSWORD || "";
+const sessionSecret = process.env.AUTH_SESSION_SECRET || "";
+const accountAuthEnabled = Boolean(sessionSecret);
+const accountDataDirectory = process.env.AUTH_DATA_DIR
+  || process.env.RAILWAY_VOLUME_MOUNT_PATH
+  || path.join(root, ".data");
+const accountStore = accountAuthEnabled
+  ? new AccountStore({ filePath: path.join(accountDataDirectory, "users.json"), sessionSecret })
+  : null;
+const loginAttempts = new Map();
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -17,59 +27,288 @@ const mimeTypes = {
   ".json": "application/json; charset=utf-8",
   ".png": "image/png"
 };
+const publicFiles = new Set([
+  "/index.html",
+  "/login.html",
+  "/styles.css",
+  "/app.js",
+  "/login.js",
+  "/pricing.js",
+  "/items.js",
+  "/recipes.js",
+  "/assets/frontier-firearms-logo.png"
+]);
 
 const server = http.createServer(async (request, response) => {
-  const url = new URL(request.url, `http://${request.headers.host}`);
-  if (url.pathname === "/health") {
+  try {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    if (url.pathname === "/health") {
+      sendJson(response, {
+        ok: true,
+        service: "frontier-firearms-still-water-app",
+        sheetConfigured: Boolean(process.env.APPS_SCRIPT_URL),
+        authConfigured: accountAuthEnabled || Boolean(authPassword),
+        authMode: accountAuthEnabled ? "accounts" : authPassword ? "legacy-basic" : "none",
+        persistentAccountStore: accountAuthEnabled && Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
+        uptimeSeconds: Math.round(process.uptime())
+      });
+      return;
+    }
+
+    if (accountAuthEnabled) {
+      const user = accountStore.verifySession(readCookie(request, "ff_session"));
+      if (await handleAccountRoute(request, response, url, user)) return;
+      if (!user) {
+        if (url.pathname.startsWith("/api/")) {
+          sendJson(response, { ok: false, error: "Authentication required", code: "authentication_required" }, 401);
+        } else {
+          redirect(response, "/login.html");
+        }
+        return;
+      }
+      if (url.pathname === "/login.html") {
+        redirect(response, "/");
+        return;
+      }
+      if (url.pathname === "/api/bootstrap") {
+        sendJson(response, await getBootstrapData(user));
+        return;
+      }
+      if (url.pathname === "/api/sync" && request.method === "POST") {
+        const payload = await readJsonBody(request);
+        if (requiresAdmin(payload) && user.role !== "admin") {
+          sendJson(response, { ok: false, error: "Admin access required", code: "admin_required" }, 403);
+          return;
+        }
+        stampEmployee(payload, user);
+        sendJson(response, await syncGuiPayload(payload));
+        return;
+      }
+    } else {
+      if (authPassword && !isAuthorized(request)) {
+        response.writeHead(401, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          "WWW-Authenticate": 'Basic realm="Frontier Firearms - Still Water", charset="UTF-8"'
+        });
+        response.end("Authentication required");
+        return;
+      }
+      if (url.pathname === "/api/auth/session" && request.method === "GET") {
+        sendJson(response, {
+          ok: true,
+          user: {
+            id: "legacy-admin",
+            fullName: authUser,
+            role: "admin",
+            status: "active",
+            accountManagement: false
+          }
+        });
+        return;
+      }
+      if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+        sendJson(response, { ok: true });
+        return;
+      }
+      if (url.pathname === "/api/bootstrap") {
+        sendJson(response, await getBootstrapData(null));
+        return;
+      }
+      if (url.pathname === "/api/sync" && request.method === "POST") {
+        sendJson(response, await syncGuiPayload(await readJsonBody(request)));
+        return;
+      }
+    }
+
+    serveStatic(response, url.pathname === "/" ? "/index.html" : url.pathname);
+  } catch (error) {
+    console.error("App request failed:", error);
+    sendJson(response, { ok: false, error: "The request could not be completed" }, 500);
+  }
+});
+
+async function handleAccountRoute(request, response, url, user) {
+  if (isPublicAsset(url.pathname)) {
+    serveStatic(response, url.pathname);
+    return true;
+  }
+  if (url.pathname === "/api/auth/session" && request.method === "GET") {
+    sendJson(response, { ok: true, user: user ? { ...user, accountManagement: true } : null });
+    return true;
+  }
+  if (url.pathname === "/api/auth/register" && request.method === "POST") {
+    if (!allowAuthAttempt(request)) {
+      sendJson(response, { ok: false, error: "Too many attempts. Try again later.", code: "rate_limited" }, 429);
+      return true;
+    }
+    return handleAccountAction(response, async () => {
+      const body = await readJsonBody(request);
+      const registration = await accountStore.register(body.fullName, body.password);
+      sendJson(response, { ok: true, user: registration }, 201);
+    });
+  }
+  if (url.pathname === "/api/auth/login" && request.method === "POST") {
+    if (!allowAuthAttempt(request)) {
+      sendJson(response, { ok: false, error: "Too many attempts. Try again later.", code: "rate_limited" }, 429);
+      return true;
+    }
+    return handleAccountAction(response, async () => {
+      const body = await readJsonBody(request);
+      const authenticatedUser = await accountStore.authenticate(body.fullName, body.password);
+      setSessionCookie(response, request, accountStore.createSession(authenticatedUser));
+      sendJson(response, { ok: true, user: authenticatedUser });
+    });
+  }
+  if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+    clearSessionCookie(response, request);
+    sendJson(response, { ok: true });
+    return true;
+  }
+  if (url.pathname === "/api/admin/users" && request.method === "GET") {
+    if (!requireAdmin(response, user)) return true;
+    sendJson(response, { ok: true, users: accountStore.listUsers() });
+    return true;
+  }
+
+  const userAction = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/(approve|disable|reject)$/);
+  if (userAction && request.method === "POST") {
+    if (!requireAdmin(response, user)) return true;
+    return handleAccountAction(response, async () => {
+      const [, userId, action] = userAction;
+      const result = action === "approve"
+        ? await accountStore.approve(userId, user)
+        : action === "disable"
+          ? await accountStore.disable(userId, user)
+          : await accountStore.reject(userId);
+      sendJson(response, { ok: true, user: result });
+    });
+  }
+  return false;
+}
+
+async function handleAccountAction(response, callback) {
+  try {
+    await callback();
+  } catch (error) {
     sendJson(response, {
-      ok: true,
-      service: "frontier-firearms-still-water-app",
-      sheetConfigured: Boolean(process.env.APPS_SCRIPT_URL),
-      authConfigured: Boolean(authPassword),
-      uptimeSeconds: Math.round(process.uptime())
-    });
-    return;
+      ok: false,
+      error: error.message || "Account request failed",
+      code: error.code || "account_error"
+    }, error.status || 500);
   }
-  if (authPassword && !isAuthorized(request)) {
-    response.writeHead(401, {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store",
-      "WWW-Authenticate": 'Basic realm="Frontier Firearms - Still Water", charset="UTF-8"'
-    });
-    response.end("Authentication required");
-    return;
-  }
-  if (url.pathname === "/api/bootstrap") {
-    sendJson(response, await getBootstrapData());
-    return;
-  }
-  if (url.pathname === "/api/sync" && request.method === "POST") {
-    sendJson(response, await syncGuiPayload(await readJsonBody(request)));
-    return;
-  }
+  return true;
+}
 
-  const pathname = url.pathname === "/" ? "/index.html" : url.pathname;
+function requireAdmin(response, user) {
+  if (!user) {
+    sendJson(response, { ok: false, error: "Authentication required", code: "authentication_required" }, 401);
+    return false;
+  }
+  if (user.role !== "admin") {
+    sendJson(response, { ok: false, error: "Admin access required", code: "admin_required" }, 403);
+    return false;
+  }
+  return true;
+}
+
+function requiresAdmin(payload) {
+  if (payload.action === "stock_target") return true;
+  if (payload.action !== "manual_operation") return false;
+  const adminKinds = new Set(["Ledger Count", "Cash In", "Cash Out", "Correction", "Payroll Payment"]);
+  return adminKinds.has(payload.entry?.kind);
+}
+
+function stampEmployee(payload, user) {
+  if ((payload.action === "manual_operation" || payload.action === "time_clock") && payload.entry) {
+    payload.entry.employee = user.fullName;
+  }
+}
+
+function serveStatic(response, pathname) {
+  if (!publicFiles.has(pathname)) {
+    response.writeHead(404);
+    response.end("Not found");
+    return;
+  }
   const filePath = path.normalize(path.join(root, pathname));
-
   if (!filePath.startsWith(root)) {
     response.writeHead(403);
     response.end("Forbidden");
     return;
   }
-
   fs.readFile(filePath, (error, data) => {
     if (error) {
       response.writeHead(404);
       response.end("Not found");
       return;
     }
-
     response.writeHead(200, {
-      "Content-Type": mimeTypes[path.extname(filePath)] || "application/octet-stream"
+      "Content-Type": mimeTypes[path.extname(filePath)] || "application/octet-stream",
+      "Cache-Control": pathname.endsWith(".html") ? "no-store" : "public, max-age=300"
     });
     response.end(data);
   });
-});
+}
+
+function isPublicAsset(pathname) {
+  return pathname === "/login.html"
+    || pathname === "/login.js"
+    || pathname === "/styles.css"
+    || pathname === "/assets/frontier-firearms-logo.png";
+}
+
+function readCookie(request, name) {
+  const cookies = String(request.headers.cookie || "").split(";");
+  for (const cookie of cookies) {
+    const separator = cookie.indexOf("=");
+    if (separator === -1) continue;
+    if (cookie.slice(0, separator).trim() === name) {
+      return decodeURIComponent(cookie.slice(separator + 1).trim());
+    }
+  }
+  return "";
+}
+
+function setSessionCookie(response, request, token) {
+  const secure = isHttps(request) ? "; Secure" : "";
+  response.setHeader(
+    "Set-Cookie",
+    `ff_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}${secure}`
+  );
+}
+
+function clearSessionCookie(response, request) {
+  const secure = isHttps(request) ? "; Secure" : "";
+  response.setHeader("Set-Cookie", `ff_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`);
+}
+
+function isHttps(request) {
+  return process.env.NODE_ENV === "production"
+    || String(request.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+}
+
+function redirect(response, location) {
+  response.writeHead(302, { Location: location, "Cache-Control": "no-store" });
+  response.end();
+}
+
+function allowAuthAttempt(request) {
+  const now = Date.now();
+  const windowStart = now - 15 * 60 * 1000;
+  const key = String(request.headers["x-forwarded-for"] || request.socket.remoteAddress || "unknown")
+    .split(",")[0]
+    .trim();
+  const attempts = (loginAttempts.get(key) || []).filter(timestamp => timestamp > windowStart);
+  attempts.push(now);
+  loginAttempts.set(key, attempts);
+  if (loginAttempts.size > 500) {
+    for (const [candidate, timestamps] of loginAttempts) {
+      if (!timestamps.some(timestamp => timestamp > windowStart)) loginAttempts.delete(candidate);
+    }
+  }
+  return attempts.length <= 20;
+}
 
 function isAuthorized(request) {
   const header = String(request.headers.authorization || "");
@@ -94,12 +333,26 @@ function safeEqual(actual, expected) {
     && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
-server.listen(port, () => {
-  console.log(`Frontier Firearms - Still Water app running at http://localhost:${port}`);
+startServer().catch(error => {
+  console.error("Unable to start Still Water app:", error.message);
+  process.exitCode = 1;
 });
 
-function sendJson(response, payload) {
-  response.writeHead(payload.ok === false ? 503 : 200, {
+async function startServer() {
+  if (accountAuthEnabled) {
+    await accountStore.initialize({
+      adminFullName: process.env.ADMIN_FULL_NAME || "",
+      adminPassword: process.env.ADMIN_PASSWORD || ""
+    });
+  }
+  server.listen(port, () => {
+    const mode = accountAuthEnabled ? "personal accounts" : authPassword ? "legacy Basic Auth" : "no authentication";
+    console.log(`Frontier Firearms - Still Water app running at http://localhost:${port} with ${mode}`);
+  });
+}
+
+function sendJson(response, payload, status = payload.ok === false ? 503 : 200) {
+  response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store"
   });
@@ -124,12 +377,13 @@ function readJsonBody(request) {
   });
 }
 
-async function getBootstrapData() {
+async function getBootstrapData(user) {
   const data = readCatalogFiles();
   const sheetSnapshot = await readSheetSnapshot();
   return {
     source: sheetSnapshot ? "apps-script-and-local-app-files" : "local-app-files",
     generatedAt: new Date().toISOString(),
+    user,
     sheetConfigured: Boolean(process.env.APPS_SCRIPT_URL),
     sheet: sheetSnapshot,
     categories: data.categories,

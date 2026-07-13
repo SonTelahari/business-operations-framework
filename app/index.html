@@ -7,7 +7,7 @@
     <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png">
     <link rel="stylesheet" href="styles.css">
   </head>
-  <body>
+  <body class="employee-view">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-lockup">
@@ -18,13 +18,11 @@
           </div>
         </div>
         <div class="topbar-actions">
-          <label class="role-picker">
-            Access
-            <select id="roleSelect">
-              <option value="admin">Admin</option>
-              <option value="employee">Employee</option>
-            </select>
-          </label>
+          <div class="account-summary">
+            <strong id="currentUserName">Loading account</strong>
+            <span id="currentUserRole">Employee</span>
+          </div>
+          <button class="ghost-button" id="logoutButton" type="button">Sign Out</button>
           <button class="ghost-button" id="newOrderButton" type="button">New</button>
           <button class="primary-button" id="saveOrderButton" type="button">Save</button>
         </div>
@@ -35,6 +33,7 @@
         <button class="section-button" data-section="restock" type="button">Restock</button>
         <button class="section-button" data-section="workbench" type="button">Workbench</button>
         <button class="section-button" data-section="operations" type="button">Operations</button>
+        <button class="section-button admin-only accounts-only" data-section="employees" type="button">Employees</button>
       </nav>
 
       <main class="dashboard workspace-section" id="dashboardSection">
@@ -536,6 +535,28 @@
             </div>
           </div>
           <div class="operation-list" id="operationList"></div>
+        </section>
+      </main>
+
+      <main class="employees workspace-section hidden admin-only accounts-only" id="employeesSection">
+        <section class="panel employee-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Admin</p>
+              <h2>Access Requests</h2>
+            </div>
+            <span class="status-count" id="pendingUserCount">0 pending</span>
+          </div>
+          <div class="employee-list" id="pendingUserList"></div>
+        </section>
+
+        <section class="panel employee-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Employee Accounts</h2>
+            </div>
+          </div>
+          <div class="employee-list" id="employeeUserList"></div>
         </section>
       </main>
     </div>
