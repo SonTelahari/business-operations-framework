@@ -3,6 +3,7 @@ const TIME_CLOCK_KEY = "frontier_still_water_time_clock_v1";
 const OPERATIONS_KEY = "frontier_still_water_manual_operations_v1";
 const TARGETS_KEY = "frontier_still_water_storefront_targets_v1";
 const SUPPLY_ACTIVE_STATUSES = new Set(["Active", "Ordered", "Partially Received"]);
+const SUPPLY_DELIVERY_STATUSES = new Set(["Ordered", "Partially Received"]);
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
@@ -155,6 +156,8 @@ const elements = {
   stockAlertList: document.querySelector("#stockAlertList"),
   missingStockCount: document.querySelector("#missingStockCount"),
   materialShortageCount: document.querySelector("#materialShortageCount"),
+  expectedDeliveryTodayCount: document.querySelector("#expectedDeliveryTodayCount"),
+  expectedDeliveryTodayList: document.querySelector("#expectedDeliveryTodayList"),
   dueTodayCount: document.querySelector("#dueTodayCount"),
   overdueCount: document.querySelector("#overdueCount"),
   expeditedCount: document.querySelector("#expeditedCount"),
@@ -706,6 +709,7 @@ async function loadSupplyOrders({ silent = false } = {}) {
     elements.supplyDataStatus.textContent = `${supplyOrders.length} shared producer orders loaded`;
     seedProducerOptions();
     renderSupplyOrdersList();
+    renderDashboard();
   } catch (error) {
     if (!silent) elements.supplyDataStatus.textContent = `Unable to load producer orders: ${error.message}`;
   }
@@ -1012,6 +1016,7 @@ async function saveSupplyOrder() {
     elements.supplyDataStatus.textContent = `Saved as ${activeSupplyOrder.status} for ${activeSupplyOrder.producer}`;
     seedProducerOptions();
     renderSupplyWorkspace();
+    renderDashboard();
   } catch (error) {
     elements.supplyDataStatus.textContent = `Save failed: ${error.message}`;
   } finally {
@@ -1039,6 +1044,7 @@ async function removeActiveSupplyOrder() {
     elements.supplyDataStatus.textContent = "Supply order removed";
     seedProducerOptions();
     renderSupplyWorkspace();
+    renderDashboard();
   } catch (error) {
     elements.supplyDataStatus.textContent = `Remove failed: ${error.message}`;
   }
@@ -1078,6 +1084,7 @@ async function receiveSupplyOrder() {
     activeSupplyOrder = structuredClone(result.order);
     supplyOrders = result.orders || [];
     renderSupplyWorkspace();
+    renderDashboard();
     await loadBackendSnapshot({ silent: true });
     const receivedUnits = (result.receipts || []).reduce((sum, receipt) => sum + Number(receipt.quantity || 0), 0);
     elements.supplyDataStatus.textContent = `${formatNumber(receivedUnits)} units added to Storage / ${activeSupplyOrder.status}`;
@@ -1375,16 +1382,23 @@ function renderDashboard() {
   const expedited = activeOrders.filter(order => order.status === "Expedited" || order.priority === "Expedite");
   const paused = activeOrders.filter(order => order.status === "Paused");
   const attention = uniqueOrders([...expedited, ...paused]);
+  const expectedDeliveries = supplyOrders
+    .filter(order => order.expectedDate === todayKey())
+    .filter(order => SUPPLY_DELIVERY_STATUSES.has(order.status))
+    .filter(order => getSupplyReceivedUnits(order) < getSupplyOrderedUnits(order))
+    .sort((a, b) => (a.producer || "").localeCompare(b.producer || "") || new Date(a.updatedAt) - new Date(b.updatedAt));
 
   elements.dueTodayCount.textContent = dueToday.length;
   elements.overdueCount.textContent = overdue.length;
   elements.expeditedCount.textContent = expedited.length;
   elements.pausedCount.textContent = paused.length;
   elements.inStoreCount.textContent = inStore.length;
+  elements.expectedDeliveryTodayCount.textContent = expectedDeliveries.length;
   elements.dueTodayList.innerHTML = renderDashboardCards(dueToday, "No deliveries due today");
   elements.overdueList.innerHTML = renderDashboardCards(overdue, "No overdue orders");
   elements.attentionList.innerHTML = renderDashboardCards(attention, "No paused or expedited orders");
   elements.inStoreList.innerHTML = renderDashboardCards(inStore, "No active in-store orders");
+  elements.expectedDeliveryTodayList.innerHTML = renderSupplyDeliveryCards(expectedDeliveries);
   renderReplenishment();
 
   [...elements.dueTodayList.querySelectorAll("[data-dashboard-order]"),
@@ -1395,6 +1409,14 @@ function renderDashboard() {
       loadOrder(button.dataset.dashboardOrder);
       activeSection = "workbench";
       renderSection();
+    }));
+
+  elements.expectedDeliveryTodayList.querySelectorAll("[data-dashboard-supply-order]")
+    .forEach(button => button.addEventListener("click", () => {
+      loadSupplyOrder(button.dataset.dashboardSupplyOrder);
+      activeSection = "supplies";
+      renderSection();
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }));
 }
 
@@ -1421,10 +1443,11 @@ function isManagement() {
 
 function renderReplenishment() {
   const plan = getReplenishmentPlan();
+  const materialShortages = plan.materials.filter(line => line.shortage > 0);
   elements.missingStockCount.textContent = plan.missing.length;
-  elements.materialShortageCount.textContent = plan.materials.filter(line => line.shortage > 0).length;
+  elements.materialShortageCount.textContent = materialShortages.length;
   elements.replenishmentMeta.textContent = stockTargets.length
-    ? `${plan.missing.length} storefront lines missing / ${plan.materials.length} material lines${plan.missingRecipes.length ? ` / ${plan.missingRecipes.length} missing recipes` : ""}`
+    ? `${plan.missing.length} storefront lines missing / ${materialShortages.length} material shortages${plan.missingRecipes.length ? ` / ${plan.missingRecipes.length} missing recipes` : ""}`
     : "Set admin stock targets to generate a standing order";
 
   elements.replenishmentList.innerHTML = plan.missing.length
@@ -1436,10 +1459,10 @@ function renderReplenishment() {
     `).join("")
     : `<div class="empty-card">${stockTargets.length ? "Storefront targets are currently filled" : "No storefront targets set yet"}</div>`;
 
-  const materialRows = plan.materials.map(line => `
-      <div class="replenishment-row ${line.shortage > 0 ? "short" : ""}">
+  const materialRows = materialShortages.map(line => `
+      <div class="replenishment-row short">
         <strong>${escapeHtml(line.ingredient)}</strong>
-        <span>Need ${formatNumber(line.needed)} / Storage ${formatNumber(line.available)}${line.shortage > 0 ? ` / Short ${formatNumber(line.shortage)}` : ""}</span>
+        <span>Need ${formatNumber(line.needed)} / Storage ${formatNumber(line.available)} / Short ${formatNumber(line.shortage)}</span>
       </div>
     `).join("");
   const missingRecipeRows = plan.missingRecipes.length ? `
@@ -1450,7 +1473,7 @@ function renderReplenishment() {
   ` : "";
   elements.replenishmentMaterialsList.innerHTML = materialRows || missingRecipeRows
     ? materialRows + missingRecipeRows
-    : `<div class="empty-card">No materials needed from current targets</div>`;
+    : `<div class="empty-card">Storage covers all known recipe needs</div>`;
 
   elements.stockAlertList.innerHTML = plan.missing.length
     ? plan.missing.map(line => `
@@ -1492,6 +1515,23 @@ function renderDashboardCards(items, emptyText) {
       <span>${formatDelivery(order.deliveryDate)} / ${order.lines.length} lines / $${formatNumber(getSubtotal(order))}</span>
     </button>
   `).join("");
+}
+
+function renderSupplyDeliveryCards(items) {
+  if (!items.length) return `<div class="empty-card">No supply deliveries expected today</div>`;
+  return items.map(order => {
+    const ordered = getSupplyOrderedUnits(order);
+    const received = getSupplyReceivedUnits(order);
+    const remaining = Math.max(0, ordered - received);
+    const remainingLines = order.lines.filter(line => Number(line.receivedQuantity || 0) < Number(line.quantity || 0)).length;
+    return `
+      <button class="dashboard-order" type="button" data-dashboard-supply-order="${order.id}">
+        <span class="status-pill ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
+        <strong>${escapeHtml(order.producer || "Unassigned producer")}</strong>
+        <span>${formatNumber(remaining)} units remaining / ${remainingLines} ${remainingLines === 1 ? "line" : "lines"} / $${formatNumber(getSupplyOrderTotal(order))}</span>
+      </button>
+    `;
+  }).join("");
 }
 
 function renderProduction() {
