@@ -1,9 +1,9 @@
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
-const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { appendCaptureRecord, createCaptureRecord, serializeCaptureRecord } = require('./capture');
 const { parseStillWaterEmbed } = require('./parser');
+const { embedToText, loadEnvFile, normalizeSnowflake } = require('./runtime-utils');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -152,41 +152,6 @@ function startHealthServer() {
   server.listen(PORT, () => {
     logInfo(`Health server listening on port ${PORT}`);
   });
-}
-
-function embedToText(embed) {
-  const parts = [];
-  if (embed.description) parts.push(embed.description);
-
-  for (const field of embed.fields || []) {
-    parts.push(`${field.name}:\n${field.value}`);
-  }
-
-  return parts.join('\n');
-}
-
-function loadEnvFile(filePath) {
-  if (!fs.existsSync(filePath)) return;
-
-  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-
-    const separator = trimmed.indexOf('=');
-    if (separator === -1) continue;
-
-    const key = trimmed.slice(0, separator).trim();
-    const value = trimmed.slice(separator + 1).trim().replace(/^['"]|['"]$/g, '');
-    if (key && process.env[key] === undefined) {
-      process.env[key] = value;
-    }
-  }
-}
-
-function normalizeSnowflake(value) {
-  const match = String(value || '').match(/\d{15,25}/);
-  return match ? match[0] : String(value || '').trim();
 }
 
 function numberValue(value) {

@@ -18,7 +18,7 @@ The server-side audit ledger records account requests, successful sign-ins and s
 
 The Railway GUI service needs one persistent volume so accounts survive deployments. See `docs/hosting.md` for the migration from the shared login.
 
-## Initial Weapon Categories
+## Current Catalog Categories
 
 - Rifles
 - Bows
@@ -27,8 +27,10 @@ The Railway GUI service needs one persistent volume so accounts survive deployme
 - Repeaters
 - Revolvers
 - Pistols
+- Tools
+- Ammunition
 
-These are page 1 of 7 from the Still Water crafting menu. Additional categories will be added as screenshots arrive.
+The catalog and recipe checks require every sellable item to have exactly one recipe and prevent duplicate item names, labels, and tags.
 
 ## Data Intake
 
@@ -46,7 +48,7 @@ The base catalog uses Still Water's native item tag and label. Names, descriptio
 
 ## Discord Parser Status
 
-The Still Water bridge is capture-only by default while its real storefront event formats are collected. Capture mode records raw Discord embeds in the host logs and cannot forward transactions to Google Sheets. Once deposit, withdrawal, customer purchase, and customer-sale examples have been converted into parser tests, forwarding can be enabled explicitly with `CAPTURE_ONLY=0`.
+The Still Water bridge is capture-only by default for a safe first deployment. The current parser suite covers 26 event formats, including 20 captured Still Water storefront events. Production forwarding is enabled explicitly with `CAPTURE_ONLY=0`; capture mode remains available for collecting unfamiliar future formats without writing them to Google Sheets.
 
 ## Safety
 

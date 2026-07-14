@@ -8,6 +8,20 @@ const items = require("./items");
 const recipes = global.window.FRONTIER_RECIPES;
 const yields = global.window.FRONTIER_RECIPE_YIELDS;
 
+assertUnique(items.map(item => item.name), "item names");
+assertUnique(items.map(item => item.label), "item labels");
+assertUnique(items.map(item => item.tag).filter(Boolean), "item tags");
+assert.deepEqual(
+  Object.keys(recipes).filter(name => name !== "Fabric" && !items.some(item => item.name === name)),
+  [],
+  "Every sellable recipe should have one catalog item"
+);
+assert.deepEqual(
+  items.filter(item => !recipes[item.name]).map(item => item.name),
+  [],
+  "Every catalog item should have one recipe"
+);
+
 assert.deepEqual(recipes["Gun Cleaning Kit"], [
   ["Refined Oil", 1],
   ["Glass Bottle", 5],
@@ -48,4 +62,9 @@ function recipeCost(name, priceField) {
 
 function assertClose(actual, expected) {
   assert.ok(Math.abs(actual - expected) < 1e-9, `Expected ${expected}, received ${actual}`);
+}
+
+function assertUnique(values, label) {
+  const normalized = values.map(value => String(value).trim().toLowerCase());
+  assert.equal(new Set(normalized).size, normalized.length, `Duplicate ${label} found`);
 }

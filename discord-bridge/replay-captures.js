@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { parseStillWaterEmbed } = require('./parser');
+const { loadEnvFile } = require('./runtime-utils');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -102,17 +103,4 @@ async function forwardToSheet(payload) {
   }
   if (result.ok === false) throw new Error(result.error || text);
   return result;
-}
-
-function loadEnvFile(filePath) {
-  if (!fs.existsSync(filePath)) return;
-  for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const separator = trimmed.indexOf('=');
-    if (separator === -1) continue;
-    const key = trimmed.slice(0, separator).trim();
-    const value = trimmed.slice(separator + 1).trim().replace(/^['"]|['"]$/g, '');
-    if (key && process.env[key] === undefined) process.env[key] = value;
-  }
 }

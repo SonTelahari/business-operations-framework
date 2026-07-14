@@ -9,6 +9,8 @@
   "scripts": {
     "start": "node index.js",
     "check:channel": "node check-channel.js",
+    "test": "npm run test:utils && npm run test:parser",
+    "test:utils": "node test-runtime-utils.js",
     "test:parser": "node test-parser.js",
     "test:forward": "node test-forward.js",
     "replay:captures": "node replay-captures.js"

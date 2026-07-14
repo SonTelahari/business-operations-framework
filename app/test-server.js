@@ -272,6 +272,17 @@ async function run() {
   assert.equal(activatedSupplyOrder.body.order.status, "Active");
   assert.equal(activatedSupplyOrder.body.order.lines.length, 0);
   assert(activatedSupplyOrder.body.orders.some(order => order.id === "supply-order-active" && order.status === "Active"));
+  const duplicateSupplyLine = await post(`${baseUrl}/api/supply-orders`, {
+    id: "supply-order-duplicate-line",
+    producer: "Van Horn Foundry",
+    status: "Ordered",
+    lines: [
+      { id: "iron-line-one", name: "Iron", quantity: 5, unitPrice: 1.5 },
+      { id: "iron-line-two", name: " iron ", quantity: 5, unitPrice: 1.5 }
+    ]
+  }, managerCookie);
+  assert.equal(duplicateSupplyLine.response.status, 400);
+  assert.equal(duplicateSupplyLine.body.code, "duplicate_supply_line");
   const savedSupplyOrder = await post(`${baseUrl}/api/supply-orders`, {
     id: "supply-order-1",
     producer: "Van Horn Foundry",

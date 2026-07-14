@@ -7,6 +7,20 @@ const SUPPLY_DELIVERY_STATUSES = new Set(["Ordered", "Partially Received"]);
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
+const DELIVERY_DATE_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+});
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false
+});
+const NUMBER_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const AUDIT_ACTION_LABELS = Object.freeze({
   "account.admin_created": "Admin account created",
   "account.requested": "Access requested",
@@ -880,7 +894,7 @@ function renderSupplierWorkspace() {
   const saved = suppliers.some(supplier => supplier.id === activeSupplier.id);
   elements.deleteSupplier.disabled = !saved;
   elements.supplierEditMeta.textContent = saved
-    ? `Updated ${formatDate(activeSupplier.updatedAt)} by ${activeSupplier.updatedBy || "Unknown"}`
+    ? `Updated ${formatDateTime(activeSupplier.updatedAt)} by ${activeSupplier.updatedBy || "Unknown"}`
     : "New supplier record";
   renderSupplierProducts();
   renderSupplierEmployees();
@@ -1191,11 +1205,11 @@ function renderSupplyWorkspace() {
   elements.supplyExpectedDate.value = activeSupplyOrder.expectedDate || "";
   elements.supplyStatus.value = activeSupplyOrder.status;
   elements.supplyNotes.value = activeSupplyOrder.notes;
-  elements.supplyOrderMeta.textContent = `${activeSupplyOrder.status} / ${activeSupplyOrder.producer || "Producer not selected"} / ${formatDate(activeSupplyOrder.updatedAt)}`;
+  elements.supplyOrderMeta.textContent = `${activeSupplyOrder.status} / ${activeSupplyOrder.producer || "Producer not selected"} / ${formatDateTime(activeSupplyOrder.updatedAt)}`;
   const hasRemaining = activeSupplyOrder.lines.some(line => Number(line.quantity || 0) > Number(line.receivedQuantity || 0));
   const isSaved = supplyOrders.some(order => order.id === activeSupplyOrder.id);
   elements.copySupplyTelegram.disabled = !isSaved || !activeSupplyOrder.lines.length;
-  elements.receiveSupply.disabled = supplyReceiptPending || !hasRemaining || !new Set(["Ordered", "Partially Received"]).has(activeSupplyOrder.status);
+  elements.receiveSupply.disabled = supplyReceiptPending || !hasRemaining || !SUPPLY_DELIVERY_STATUSES.has(activeSupplyOrder.status);
   renderSupplyLines();
   renderSupplySummary();
   renderSupplyOrdersList();
@@ -1212,7 +1226,7 @@ function renderSupplyLines() {
     const total = Number(line.quantity || 0) * Number(line.unitPrice || 0);
     const received = Math.max(0, Number(line.receivedQuantity || 0));
     const remaining = Math.max(0, Number(line.quantity || 0) - received);
-    const receivable = remaining > 0 && new Set(["Ordered", "Partially Received"]).has(activeSupplyOrder.status);
+    const receivable = remaining > 0 && SUPPLY_DELIVERY_STATUSES.has(activeSupplyOrder.status);
     return `
       <tr>
         <td><strong>${escapeHtml(line.label || line.name)}</strong><span>${escapeHtml(line.category || "Recipe Ingredient")}</span></td>
@@ -1282,7 +1296,7 @@ function renderSupplyOrdersList() {
             <span class="status-pill ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
             <strong>${order.expectedDate ? formatDelivery(order.expectedDate) : "No expected date"}</strong>
             <span>${order.lines.length} lines / ${formatNumber(getSupplyReceivedUnits(order))} of ${formatNumber(getSupplyOrderedUnits(order))} received / $${formatNumber(getSupplyOrderTotal(order))}</span>
-            <small>Updated ${formatDate(order.updatedAt)} by ${escapeHtml(order.updatedBy || order.requestedBy)}</small>
+            <small>Updated ${formatDateTime(order.updatedAt)} by ${escapeHtml(order.updatedBy || order.requestedBy)}</small>
           </button>
         `).join("")}
       </div>
@@ -1376,14 +1390,15 @@ function renderSection() {
 
 function renderDashboard() {
   const activeOrders = orders.filter(order => !statusesHiddenFromActive.has(order.status));
-  const dueToday = activeOrders.filter(isDueToday);
-  const overdue = activeOrders.filter(isOverdue);
+  const today = todayKey();
+  const dueToday = activeOrders.filter(order => order.deliveryDate === today);
+  const overdue = activeOrders.filter(order => Boolean(order.deliveryDate && order.deliveryDate < today));
   const inStore = activeOrders.filter(order => !order.deliveryDate);
   const expedited = activeOrders.filter(order => order.status === "Expedited" || order.priority === "Expedite");
   const paused = activeOrders.filter(order => order.status === "Paused");
   const attention = uniqueOrders([...expedited, ...paused]);
   const expectedDeliveries = supplyOrders
-    .filter(order => order.expectedDate === todayKey())
+    .filter(order => order.expectedDate === today)
     .filter(order => SUPPLY_DELIVERY_STATUSES.has(order.status))
     .filter(order => getSupplyReceivedUnits(order) < getSupplyOrderedUnits(order))
     .sort((a, b) => (a.producer || "").localeCompare(b.producer || "") || new Date(a.updatedAt) - new Date(b.updatedAt));
@@ -1585,7 +1600,7 @@ function renderOrdersList() {
       <strong>${escapeHtml(order.customer || "Unnamed customer")}</strong>
       <span>${order.lines.length} lines / $${formatNumber(getSubtotal(order))}</span>
       <span>${formatDelivery(order.deliveryDate)}</span>
-      <small>${formatDate(order.updatedAt)}</small>
+      <small>${formatDateTime(order.updatedAt)}</small>
     </button>
   `).join("");
 
@@ -1595,7 +1610,7 @@ function renderOrdersList() {
 }
 
 function renderMeta() {
-  elements.orderMeta.textContent = `${activeOrder.status} / ${activeOrder.priority} / ${formatDate(activeOrder.updatedAt)}`;
+  elements.orderMeta.textContent = `${activeOrder.status} / ${activeOrder.priority} / ${formatDateTime(activeOrder.updatedAt)}`;
 }
 
 async function copySummary() {
@@ -2298,6 +2313,7 @@ function startBackendRefreshLoop() {
 function refreshBackendIfStale() {
   if (!currentUser || Date.now() - lastBackendRefreshAt < FOCUS_REFRESH_STALE_MS) return;
   loadBackendSnapshot({ silent: true });
+  if (isManagement()) loadSupplyOrders({ silent: true });
 }
 
 async function loadBackendSnapshot(options = {}) {
@@ -2478,7 +2494,7 @@ function getMaterialPurchasePlan(excludeSupplyOrderId = "") {
 function getCommittedSupplyQuantities(excludeSupplyOrderId = "") {
   const committed = new Map();
   supplyOrders
-    .filter(order => new Set(["Ordered", "Partially Received"]).has(order.status) && order.id !== excludeSupplyOrderId)
+    .filter(order => SUPPLY_DELIVERY_STATUSES.has(order.status) && order.id !== excludeSupplyOrderId)
     .forEach(order => order.lines.forEach(line => {
       const key = normalize(line.name);
       const remaining = Math.max(0, Number(line.quantity || 0) - Number(line.receivedQuantity || 0));
@@ -2603,33 +2619,14 @@ function todayKey() {
   return `${year}-${month}-${day}`;
 }
 
-function isDueToday(order) {
-  return order.deliveryDate === todayKey();
-}
-
-function isOverdue(order) {
-  return Boolean(order.deliveryDate && order.deliveryDate < todayKey());
-}
-
 function formatDelivery(value) {
   if (!value) return "In-store order";
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric"
-  }).format(new Date(`${value}T00:00:00`));
+  return DELIVERY_DATE_FORMATTER.format(new Date(`${value}T00:00:00`));
 }
 
 function formatDateTime(value) {
   if (!value) return "";
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).format(new Date(value));
+  return DATE_TIME_FORMATTER.format(new Date(value));
 }
 
 function formatDuration(minutes) {
@@ -2639,19 +2636,8 @@ function formatDuration(minutes) {
   return `${hours}h ${String(remainder).padStart(2, "0")}m`;
 }
 
-function formatDate(value) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).format(new Date(value));
-}
-
 function formatNumber(value) {
-  return Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return NUMBER_FORMATTER.format(Number(value || 0));
 }
 
 function normalize(value) {

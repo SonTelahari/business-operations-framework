@@ -210,6 +210,10 @@ function cleanSupplyOrder(input, actor, { id, now, existing }) {
   const lines = Array.isArray(input.lines)
     ? input.lines.slice(0, 100).map(line => cleanSupplyLine(line, existingLines.get(line.id)))
     : [];
+  const lineKeys = lines.map(line => normalizeKey(line.name));
+  if (new Set(lineKeys).size !== lineKeys.length) {
+    throw businessError("Each material can only appear once in a supply order", 400, "duplicate_supply_line");
+  }
   const removedReceivedLine = (existing?.lines || []).find(existingLine =>
     Number(existingLine.receivedQuantity || 0) > 0 && !lines.some(line => line.id === existingLine.id)
   );

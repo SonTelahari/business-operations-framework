@@ -10,11 +10,12 @@
     "postinstall": "npm --prefix discord-bridge install",
     "start": "npm --prefix discord-bridge start",
     "start:app": "node app/server.js",
-    "test": "npm run test:inventory && npm run test:catalog && npm run test:telegram && npm run test:app-server",
+    "test": "npm run test:inventory && npm run test:catalog && npm run test:telegram && npm run test:app-server && npm run test:bridge",
     "test:inventory": "node app/test-inventory-counts.js",
     "test:catalog": "node app/test-catalog.js",
     "test:telegram": "node app/test-supply-telegram.js",
     "test:app-server": "node app/test-server.js",
+    "test:bridge": "npm --prefix discord-bridge test",
     "check:channel": "npm --prefix discord-bridge run check:channel",
     "test:parser": "npm --prefix discord-bridge run test:parser",
     "test:forward": "npm --prefix discord-bridge run test:forward"
