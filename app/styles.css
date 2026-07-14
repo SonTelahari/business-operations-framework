@@ -1039,6 +1039,19 @@ tr:last-child td {
   white-space: nowrap;
 }
 
+@media (max-width: 680px) {
+  .production-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .production-row span {
+    width: 100%;
+    white-space: normal;
+  }
+}
+
 .missing-recipes {
   margin-top: 12px;
   color: #ffd6d0;

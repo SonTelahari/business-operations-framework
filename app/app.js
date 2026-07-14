@@ -8,6 +8,7 @@ const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
 const itemCatalog = window.FRONTIER_ITEMS || [];
 const recipeCatalog = window.FRONTIER_RECIPES || {};
+const recipeYieldCatalog = window.FRONTIER_RECIPE_YIELDS || {};
 const pricingCatalog = window.FRONTIER_PRICING || { materials: {} };
 const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
@@ -1095,7 +1096,7 @@ function renderProduction() {
     elements.productionBuildList.innerHTML = production.buildLines.map(line => `
       <div class="production-row">
         <strong>${escapeHtml(line.name)}</strong>
-        <span>${formatNumber(line.quantity)} to make</span>
+        <span>${formatNumber(line.quantity)} needed${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""} / $${formatNumber(line.unitCost)} ea</span>
       </div>
     `).join("");
   }
@@ -1194,7 +1195,7 @@ function buildSummary(order) {
 function buildProductionSummary(order) {
   const production = getProductionPlan(order);
   const buildLines = production.buildLines.length
-    ? production.buildLines.map(line => `${formatNumber(line.quantity)}x ${line.name}`).join("\n")
+    ? production.buildLines.map(line => `${formatNumber(line.quantity)}x ${line.name}${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""} / $${formatNumber(line.unitCost)} each`).join("\n")
     : "No craftable lines";
   const materials = production.materials.length
     ? production.materials.map(material => `${formatNumber(material.qty)}x ${material.ingredient} - $${formatNumber(material.cost)}`).join("\n")
@@ -1973,8 +1974,9 @@ function getReplenishmentPlan() {
       return;
     }
 
+    const batches = recipeBatchCount(line.itemName, line.missing);
     recipe.forEach(([ingredient, qty]) => {
-      materialTotals.set(ingredient, (materialTotals.get(ingredient) || 0) + Number(qty || 0) * line.missing);
+      materialTotals.set(ingredient, (materialTotals.get(ingredient) || 0) + Number(qty || 0) * batches);
     });
   });
 
@@ -2072,15 +2074,33 @@ function getProductionPlan(order) {
 
     const quantity = Number(line.quantity || 0);
     buildMap.set(line.name, (buildMap.get(line.name) || 0) + quantity);
+  });
 
-    recipe.forEach(([ingredient, qty]) => {
-      materialTotals.set(ingredient, (materialTotals.get(ingredient) || 0) + Number(qty || 0) * quantity);
+  buildMap.forEach((quantity, name) => {
+    const batches = recipeBatchCount(name, quantity);
+    recipeCatalog[name].forEach(([ingredient, qty]) => {
+      materialTotals.set(ingredient, (materialTotals.get(ingredient) || 0) + Number(qty || 0) * batches);
     });
   });
 
   return {
     buildLines: [...buildMap.entries()]
-      .map(([name, quantity]) => ({ name, quantity }))
+      .map(([name, quantity]) => {
+        const yieldQuantity = recipeYield(name);
+        const batches = recipeBatchCount(name, quantity);
+        const batchCost = recipeCatalog[name].reduce((sum, [ingredient, qty]) => {
+          const unitCost = Number(pricingCatalog.materials[ingredient]?.midpoint || 0);
+          return sum + Number(qty || 0) * unitCost;
+        }, 0);
+        return {
+          name,
+          quantity,
+          batches,
+          yield: yieldQuantity,
+          producedQuantity: batches * yieldQuantity,
+          unitCost: batchCost / yieldQuantity
+        };
+      })
       .sort((a, b) => a.name.localeCompare(b.name)),
     materials: [...materialTotals.entries()]
       .map(([ingredient, qty]) => {
@@ -2095,6 +2115,14 @@ function getProductionPlan(order) {
       }, 0),
     missing
   };
+}
+
+function recipeYield(name) {
+  return Math.max(1, Number(recipeYieldCatalog[name] || 1));
+}
+
+function recipeBatchCount(name, quantity) {
+  return Math.ceil(Math.max(0, Number(quantity || 0)) / recipeYield(name));
 }
 
 function getSubtotal(order) {

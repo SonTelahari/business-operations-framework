@@ -49,6 +49,20 @@ const ammoRecipe = [
 
 const hatchetAmmoRecipe = [["Iron", 1]];
 
+const gunCleaningKitRecipe = [
+  ["Refined Oil", 1],
+  ["Glass Bottle", 5],
+  ["Fabric", 2]
+];
+
+const weaponRepairKitRecipe = [
+  ["Refined Oil", 1],
+  ["Glass Bottle", 1],
+  ["Hard wood", 5],
+  ["Bolts", 5],
+  ["Fabric", 1]
+];
+
 window.FRONTIER_RECIPES = {
   "Springfield Rifle": rifleRecipe,
   "Varmint Rifle": rifleRecipe,
@@ -76,6 +90,9 @@ window.FRONTIER_RECIPES = {
   "Schofield Revolver": revolverRecipe,
   "Volcanic Pistol": pistolRecipe,
   "M1899 Pistol": pistolRecipe,
+  "Gun Cleaning Kit": gunCleaningKitRecipe,
+  "Weapon Repair Kit": weaponRepairKitRecipe,
+  "Fabric": [["Flax", 2]],
   "Revolver Ammo Express": ammoRecipe,
   "Revolver Ammo Normal": ammoRecipe,
   "Revolver Ammo Splitpoint": ammoRecipe,
@@ -101,4 +118,8 @@ window.FRONTIER_RECIPES = {
   "Hatchet Ammo": hatchetAmmoRecipe,
   "Hatchet Cleaver Ammo": hatchetAmmoRecipe,
   "Hatchet Hunter Ammo": hatchetAmmoRecipe
+};
+
+window.FRONTIER_RECIPE_YIELDS = {
+  "Gun Cleaning Kit": 5
 };

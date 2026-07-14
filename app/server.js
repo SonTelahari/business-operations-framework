@@ -708,6 +708,7 @@ async function getBootstrapData(user) {
     items: data.items,
     recipeCount: Object.keys(data.recipes).length,
     recipes: data.recipes,
+    recipeYields: data.recipeYields,
     syncTargets: {
       stockCounts: "/api/sync",
       manualMovements: "/api/sync",
@@ -777,7 +778,8 @@ function readCatalogFiles() {
   return {
     categories: context.window.FRONTIER_CATEGORIES || [],
     items: context.window.FRONTIER_ITEMS || [],
-    recipes: context.window.FRONTIER_RECIPES || {}
+    recipes: context.window.FRONTIER_RECIPES || {},
+    recipeYields: context.window.FRONTIER_RECIPE_YIELDS || {}
   };
 }
 

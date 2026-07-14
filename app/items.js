@@ -10,6 +10,7 @@ const FRONTIER_CATEGORIES = [
   "Repeaters",
   "Revolvers",
   "Pistols",
+  "Tools",
   "Ammunition"
 ];
 
@@ -40,6 +41,8 @@ const FRONTIER_ITEMS = [
   { name: "Schofield Revolver", label: "Revolver Schofield", tag: "WEAPON_REVOLVER_SCHOFIELD", category: "Revolvers", price: 55 },
   { name: "Volcanic Pistol", label: "Volcanic Pistol", tag: "", category: "Pistols", price: 0 },
   { name: "M1899 Pistol", label: "M1899 Pistol", tag: "", category: "Pistols", price: 0 },
+  { name: "Gun Cleaning Kit", label: "Gun Cleaning Kit", tag: "", category: "Tools", price: 0 },
+  { name: "Weapon Repair Kit", label: "Weapon Repair Kit", tag: "", category: "Tools", price: 0 },
   { name: "Revolver Ammo Express", label: "Revolver Ammo Express", tag: "", category: "Ammunition", price: 0 },
   { name: "Revolver Ammo Normal", label: "Revolver Ammo Normal", tag: "ammorevolvernormal", category: "Ammunition", price: 2 },
   { name: "Revolver Ammo Splitpoint", label: "Revolver Ammo Splitpoint", tag: "", category: "Ammunition", price: 0 },
