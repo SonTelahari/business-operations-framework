@@ -354,7 +354,8 @@ h2 {
   grid-template-columns: minmax(0, 1fr) 360px;
   grid-template-areas:
     "active summary"
-    "saved summary";
+    "saved summary"
+    "suppliers suppliers";
   gap: 16px;
   align-items: start;
 }
@@ -388,6 +389,163 @@ h2 {
 .saved-panel {
   grid-area: saved;
   padding: 18px;
+}
+
+.supplier-panel {
+  grid-area: suppliers;
+  min-width: 0;
+  padding: 18px;
+}
+
+.supplier-panel-header,
+.supplier-header-actions,
+.supplier-subsection-heading,
+.supplier-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.supplier-header-actions {
+  flex-wrap: wrap;
+}
+
+.supplier-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(260px, 0.75fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.supplier-editor,
+.supplier-directory {
+  min-width: 0;
+}
+
+.supplier-main-fields,
+.supplier-contact-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.supplier-main-fields {
+  grid-template-columns: minmax(220px, 1.5fr) minmax(140px, 0.8fr) minmax(160px, 1fr);
+}
+
+.supplier-contact-fields {
+  margin-top: 14px;
+}
+
+.supplier-editor-section {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.supplier-subsection-heading h3,
+.supplier-subsection-heading span {
+  margin: 0;
+}
+
+.supplier-subsection-heading span,
+.supplier-editor-footer,
+.supplier-card span,
+.supplier-card small {
+  color: var(--muted);
+}
+
+.supplier-add-row {
+  display: grid;
+  gap: 10px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.supplier-product-add {
+  grid-template-columns: minmax(180px, 1fr) 120px auto;
+}
+
+.supplier-contact-add {
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.7fr) auto;
+}
+
+.supplier-product-list,
+.supplier-employee-list,
+.supplier-card-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.supplier-product-row,
+.supplier-employee-row {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.supplier-product-row {
+  grid-template-columns: minmax(160px, 1fr) 120px auto;
+}
+
+.supplier-employee-row {
+  grid-template-columns: minmax(160px, 1fr) minmax(140px, 0.8fr) auto;
+}
+
+.supplier-product-row:last-child,
+.supplier-employee-row:last-child {
+  border-bottom: 0;
+}
+
+.supplier-product-row strong,
+.supplier-employee-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.supplier-price-input {
+  width: 100%;
+}
+
+.supplier-editor-footer {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.supplier-card {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  min-height: 112px;
+  padding: 12px;
+  text-align: left;
+  color: var(--text);
+  background: rgba(255, 250, 232, 0.58);
+  border: 1px solid rgba(119, 99, 70, 0.5);
+  border-radius: 2px;
+  box-shadow: 2px 2px 0 rgba(104, 83, 54, 0.08);
+}
+
+.supplier-card.selected {
+  border-left: 4px solid var(--green);
+}
+
+.supplier-card-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.supplier-card-heading strong {
+  overflow-wrap: anywhere;
+}
+
+.supplier-card-heading span {
+  flex: 0 0 auto;
 }
 
 .operations-panel {
@@ -1161,7 +1319,8 @@ tr:last-child td {
     grid-template-areas:
       "active"
       "summary"
-      "saved";
+      "saved"
+      "suppliers";
   }
 
   .summary-panel {
@@ -1194,6 +1353,10 @@ tr:last-child td {
   }
 
   .production-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .supplier-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -1279,6 +1442,28 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .supplier-panel-header,
+  .supplier-editor-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .supplier-header-actions,
+  .supplier-header-actions button,
+  .supplier-product-add,
+  .supplier-contact-add,
+  .supplier-product-row,
+  .supplier-employee-row {
+    width: 100%;
+  }
+
+  .supplier-product-add,
+  .supplier-contact-add,
+  .supplier-product-row,
+  .supplier-employee-row {
+    grid-template-columns: 1fr;
+  }
+
   .production-header {
     align-items: stretch;
     flex-direction: column;
@@ -1290,7 +1475,8 @@ tr:last-child td {
 
   .active-order,
   .summary-panel,
-  .saved-panel {
+  .saved-panel,
+  .supplier-panel {
     padding: 14px;
   }
 }

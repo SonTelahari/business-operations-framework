@@ -473,6 +473,110 @@
           <p class="supply-data-status" id="supplyDataStatus">Loading shared producer orders</p>
           <div class="producer-order-groups" id="supplyOrdersList"></div>
         </section>
+
+        <section class="panel supplier-panel" id="supplierPanel" aria-label="Supplier directory">
+          <div class="panel-header supplier-panel-header">
+            <div>
+              <p class="eyebrow">Trade Contacts</p>
+              <h2>Supplier Directory</h2>
+              <p id="supplierSavedCount">0 suppliers</p>
+            </div>
+            <div class="supplier-header-actions">
+              <button id="newSupplierButton" class="ghost-button" type="button">New Supplier</button>
+              <button id="saveSupplierButton" class="primary-button" type="button">Save Supplier</button>
+            </div>
+          </div>
+          <p class="supply-data-status" id="supplierDataStatus">Loading shared suppliers</p>
+
+          <div class="supplier-layout">
+            <div class="supplier-editor">
+              <div class="form-grid supplier-main-fields">
+                <label>
+                  Supplier Name
+                  <input id="supplierNameInput" type="text" autocomplete="off" placeholder="Business or producer name">
+                </label>
+                <label>
+                  Category
+                  <input id="supplierCategoryInput" list="supplierCategoryOptions" type="text" autocomplete="off" placeholder="Blacksmith, ranch, textiles">
+                </label>
+                <label>
+                  Location
+                  <input id="supplierLocationInput" type="text" autocomplete="off" placeholder="Town or region">
+                </label>
+              </div>
+
+              <div class="form-grid supplier-contact-fields">
+                <label>
+                  Business Telegram
+                  <input id="supplierBusinessTelegramInput" type="text" autocomplete="off" placeholder="Business telegram number">
+                </label>
+                <label>
+                  Owner
+                  <input id="supplierOwnerNameInput" type="text" autocomplete="off" placeholder="Owner character name">
+                </label>
+                <label>
+                  Owner Telegram
+                  <input id="supplierOwnerTelegramInput" type="text" autocomplete="off" placeholder="Owner telegram number">
+                </label>
+              </div>
+
+              <section class="supplier-editor-section" aria-labelledby="supplierProductsHeading">
+                <div class="supplier-subsection-heading">
+                  <div>
+                    <h3 id="supplierProductsHeading">Products and Prices</h3>
+                    <span id="supplierProductCount">0 products</span>
+                  </div>
+                </div>
+                <div class="supplier-add-row supplier-product-add">
+                  <label>
+                    Product
+                    <input id="supplierProductInput" list="supplyMaterialOptions" type="text" autocomplete="off" placeholder="Part or material">
+                  </label>
+                  <label>
+                    Unit Price
+                    <input id="supplierProductPriceInput" type="number" min="0" step="0.01" value="0">
+                  </label>
+                  <button id="addSupplierProductButton" class="primary-button" type="button">Add Product</button>
+                </div>
+                <div class="supplier-product-list" id="supplierProductList"></div>
+              </section>
+
+              <section class="supplier-editor-section" aria-labelledby="supplierEmployeesHeading">
+                <div class="supplier-subsection-heading">
+                  <div>
+                    <h3 id="supplierEmployeesHeading">Employee Contacts</h3>
+                    <span id="supplierEmployeeCount">0 of 5</span>
+                  </div>
+                </div>
+                <div class="supplier-add-row supplier-contact-add">
+                  <label>
+                    Character Name
+                    <input id="supplierEmployeeNameInput" type="text" autocomplete="off" placeholder="Employee character name">
+                  </label>
+                  <label>
+                    Telegram
+                    <input id="supplierEmployeeTelegramInput" type="text" autocomplete="off" placeholder="Telegram number">
+                  </label>
+                  <button id="addSupplierEmployeeButton" class="primary-button" type="button">Add Contact</button>
+                </div>
+                <div class="supplier-employee-list" id="supplierEmployeeList"></div>
+              </section>
+
+              <div class="supplier-editor-footer">
+                <span id="supplierEditMeta">New supplier record</span>
+                <button id="deleteSupplierButton" class="danger-button" type="button">Remove Supplier</button>
+              </div>
+            </div>
+
+            <aside class="supplier-directory" aria-label="Saved suppliers">
+              <label>
+                Find Supplier
+                <input id="supplierSearchInput" type="search" autocomplete="off" placeholder="Name, category, location, product">
+              </label>
+              <div class="supplier-card-list" id="supplierCardList"></div>
+            </aside>
+          </div>
+        </section>
       </main>
 
       <main class="operations workspace-section hidden management-only" id="operationsSection">
@@ -736,9 +840,18 @@
     <script src="recipes.js?v=20260714-kits"></script>
     <script src="inventory-counts.js?v=20260713-softwood"></script>
     <datalist id="supplyMaterialOptions"></datalist>
+    <datalist id="supplierCategoryOptions">
+      <option value="Blacksmith"></option>
+      <option value="Carpenter"></option>
+      <option value="Ranch and Crops"></option>
+      <option value="Mining"></option>
+      <option value="Textiles"></option>
+      <option value="Gunsmith"></option>
+      <option value="General Merchant"></option>
+    </datalist>
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260714-telegram"></script>
+    <script src="app.js?v=20260714-suppliers"></script>
   </body>
 </html>

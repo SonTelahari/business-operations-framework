@@ -115,6 +115,7 @@ async function run() {
   const authenticatedHtml = await authenticatedPage.text();
   assert.match(authenticatedHtml, /Employee Accounts/);
   assert.match(authenticatedHtml, /Employee Audit/);
+  assert.match(authenticatedHtml, /Supplier Directory/);
 
   const inventoryResolver = await fetch(`${baseUrl}/inventory-counts.js`, { headers: { cookie: ownerCookie } });
   assert.equal(inventoryResolver.status, 200);
@@ -176,6 +177,8 @@ async function run() {
   assert.equal(employeeAuditAttempt.response.status, 403);
   const employeeSupplyAttempt = await getJson(`${baseUrl}/api/supply-orders`, employeeCookie);
   assert.equal(employeeSupplyAttempt.response.status, 403);
+  const employeeSupplierAttempt = await getJson(`${baseUrl}/api/suppliers`, employeeCookie);
+  assert.equal(employeeSupplierAttempt.response.status, 403);
 
   const protectedSync = await post(`${baseUrl}/api/sync`, {
     action: "stock_target",
@@ -205,6 +208,55 @@ async function run() {
 
   const managerUsers = await getJson(`${baseUrl}/api/admin/users`, managerCookie);
   assert.equal(managerUsers.response.status, 200);
+
+  const emptySuppliers = await getJson(`${baseUrl}/api/suppliers`, managerCookie);
+  assert.equal(emptySuppliers.response.status, 200);
+  assert.deepEqual(emptySuppliers.body.suppliers, []);
+  const savedSupplier = await post(`${baseUrl}/api/suppliers`, {
+    id: "supplier-foundry",
+    name: "Van Horn Foundry",
+    category: "Blacksmith",
+    location: "Van Horn",
+    businessTelegram: "SWB-VH22",
+    ownerName: "Maeve Smith",
+    ownerTelegram: "SW-221",
+    employees: [
+      { id: "contact-one", name: "Jon Bell", telegram: "SW-222" },
+      { id: "contact-two", name: "Anna Bell", telegram: "SW-223" }
+    ],
+    products: [
+      { id: "product-iron", name: "Iron", label: "Iron", unitPrice: 1.5 },
+      { id: "product-rifle-barrel", name: "Rifle Barrel", label: "Rifle Barrel", unitPrice: 8 }
+    ]
+  }, managerCookie);
+  assert.equal(savedSupplier.response.status, 200);
+  assert.equal(savedSupplier.body.supplier.updatedBy, "Ada Employee");
+  assert.equal(savedSupplier.body.supplier.employees.length, 2);
+  assert.equal(savedSupplier.body.supplier.products[1].unitPrice, 8);
+  const updatedSupplier = await post(`${baseUrl}/api/suppliers`, {
+    ...savedSupplier.body.supplier,
+    products: savedSupplier.body.supplier.products.map(product =>
+      product.name === "Rifle Barrel" ? { ...product, unitPrice: 8.5 } : product
+    )
+  }, managerCookie);
+  assert.equal(updatedSupplier.response.status, 200);
+  assert.equal(updatedSupplier.body.supplier.products.find(product => product.name === "Rifle Barrel").unitPrice, 8.5);
+  const ownerSuppliers = await getJson(`${baseUrl}/api/suppliers`, ownerCookie);
+  assert.equal(ownerSuppliers.response.status, 200);
+  assert.equal(ownerSuppliers.body.suppliers[0].businessTelegram, "SWB-VH22");
+  const tooManyContacts = await post(`${baseUrl}/api/suppliers`, {
+    id: "supplier-too-many",
+    name: "Overstaffed Supplier",
+    employees: Array.from({ length: 6 }, (_, index) => ({ name: `Contact ${index + 1}`, telegram: `SW-${index + 1}` }))
+  }, managerCookie);
+  assert.equal(tooManyContacts.response.status, 400);
+  assert.equal(tooManyContacts.body.code, "supplier_employee_limit");
+  const duplicateSupplier = await post(`${baseUrl}/api/suppliers`, {
+    id: "supplier-duplicate",
+    name: " van horn foundry "
+  }, managerCookie);
+  assert.equal(duplicateSupplier.response.status, 409);
+  assert.equal(duplicateSupplier.body.code, "supplier_name_exists");
 
   const emptySupplyOrders = await getJson(`${baseUrl}/api/supply-orders`, managerCookie);
   assert.equal(emptySupplyOrders.response.status, 200);
@@ -339,12 +391,18 @@ async function run() {
   const managerReactivatedWorker = await post(`${baseUrl}/api/admin/users/${worker.id}/approve`, {}, managerCookie);
   assert.equal(managerReactivatedWorker.response.status, 200);
 
+  const removedSupplier = await remove(`${baseUrl}/api/suppliers/supplier-foundry`, managerCookie);
+  assert.equal(removedSupplier.response.status, 200);
+  assert.deepEqual(removedSupplier.body.suppliers, []);
+
   const managerAudit = await getJson(`${baseUrl}/api/admin/audit?limit=1000`, managerCookie);
   assert.equal(managerAudit.response.status, 200);
   assert(managerAudit.body.events.some(event => event.action === "account.role_changed"));
   assert(managerAudit.body.events.some(event => event.action === "operation.recorded" && event.actorName === "Ada Employee"));
   assert(managerAudit.body.events.some(event => event.action === "supply_order.saved" && event.subjectName === "Van Horn Foundry"));
   assert(managerAudit.body.events.some(event => event.action === "supply_order.received" && event.details.quantity === 7));
+  assert(managerAudit.body.events.some(event => event.action === "supplier.saved" && event.subjectName === "Van Horn Foundry"));
+  assert(managerAudit.body.events.some(event => event.action === "supplier.removed" && event.subjectName === "Van Horn Foundry"));
   assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
 
   const removedSupplyOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-1`, managerCookie);

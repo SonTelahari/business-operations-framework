@@ -7,7 +7,7 @@ const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially 
 class BusinessStore {
   constructor({ filePath }) {
     this.filePath = filePath;
-    this.data = { version: 1, supplyOrders: [] };
+    this.data = { version: 2, supplyOrders: [], suppliers: [] };
     this.writeQueue = Promise.resolve();
   }
 
@@ -25,6 +25,42 @@ class BusinessStore {
   getSupplyOrder(orderId) {
     const order = this.data.supplyOrders.find(candidate => candidate.id === cleanText(orderId, 100));
     return order ? structuredClone(order) : null;
+  }
+
+  listSuppliers() {
+    return this.data.suppliers
+      .map(supplier => structuredClone(supplier))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  getSupplier(supplierId) {
+    const supplier = this.data.suppliers.find(candidate => candidate.id === cleanText(supplierId, 100));
+    return supplier ? structuredClone(supplier) : null;
+  }
+
+  async saveSupplier(input, actor) {
+    return this.mutate(async () => {
+      const now = new Date().toISOString();
+      const id = cleanText(input.id, 100) || crypto.randomUUID();
+      const existingIndex = this.data.suppliers.findIndex(supplier => supplier.id === id);
+      const existing = existingIndex >= 0 ? this.data.suppliers[existingIndex] : null;
+      const saved = cleanSupplier(input, actor, { id, now, existing });
+      const duplicate = this.data.suppliers.find(supplier => supplier.id !== id && normalizeKey(supplier.name) === normalizeKey(saved.name));
+      if (duplicate) throw businessError("A supplier with this name already exists", 409, "supplier_name_exists");
+      if (existingIndex >= 0) this.data.suppliers[existingIndex] = saved;
+      else this.data.suppliers.push(saved);
+      return structuredClone(saved);
+    });
+  }
+
+  async removeSupplier(supplierId) {
+    return this.mutate(async () => {
+      const id = cleanText(supplierId, 100);
+      const existing = this.data.suppliers.find(supplier => supplier.id === id);
+      if (!existing) throw businessError("Supplier not found", 404, "not_found");
+      this.data.suppliers = this.data.suppliers.filter(supplier => supplier.id !== id);
+      return structuredClone(existing);
+    });
   }
 
   async saveSupplyOrder(input, actor) {
@@ -91,14 +127,22 @@ class BusinessStore {
     try {
       const parsed = JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
       if (!Array.isArray(parsed.supplyOrders)) parsed.supplyOrders = [];
+      if (!Array.isArray(parsed.suppliers)) parsed.suppliers = [];
       return {
-        version: 1,
+        version: 2,
         supplyOrders: parsed.supplyOrders
           .filter(order => order && typeof order === "object")
-          .map(order => order.status === "Draft" ? { ...order, status: "Active" } : order)
+          .map(order => order.status === "Draft" ? { ...order, status: "Active" } : order),
+        suppliers: parsed.suppliers
+          .filter(supplier => supplier && typeof supplier === "object")
+          .map(supplier => ({
+            ...supplier,
+            employees: Array.isArray(supplier.employees) ? supplier.employees.slice(0, 5) : [],
+            products: Array.isArray(supplier.products) ? supplier.products.slice(0, 100) : []
+          }))
       };
     } catch (error) {
-      if (error.code === "ENOENT") return { version: 1, supplyOrders: [] };
+      if (error.code === "ENOENT") return { version: 2, supplyOrders: [], suppliers: [] };
       throw new Error(`Unable to read business store: ${error.message}`);
     }
   }
@@ -108,6 +152,52 @@ class BusinessStore {
     await fs.promises.writeFile(temporaryPath, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
     await fs.promises.rename(temporaryPath, this.filePath);
   }
+}
+
+function cleanSupplier(input, actor, { id, now, existing }) {
+  const name = cleanText(input.name, 100);
+  if (!name) throw businessError("Supplier name is required", 400, "supplier_name_required");
+  const employeeInputs = Array.isArray(input.employees) ? input.employees : [];
+  if (employeeInputs.length > 5) {
+    throw businessError("A supplier can have no more than 5 employee contacts", 400, "supplier_employee_limit");
+  }
+  const employees = employeeInputs
+    .map(contact => ({
+      id: cleanText(contact.id, 100) || crypto.randomUUID(),
+      name: cleanText(contact.name, 100),
+      telegram: cleanText(contact.telegram, 40)
+    }))
+    .filter(contact => contact.name || contact.telegram);
+  const products = (Array.isArray(input.products) ? input.products : []).slice(0, 100)
+    .map(product => {
+      const productName = cleanText(product.name || product.label, 100);
+      if (!productName) throw businessError("Every supplier product needs a name", 400, "invalid_supplier_product");
+      return {
+        id: cleanText(product.id, 100) || crypto.randomUUID(),
+        name: productName,
+        label: cleanText(product.label || productName, 100),
+        unitPrice: Math.max(0, finiteNumber(product.unitPrice, 0))
+      };
+    });
+  const productKeys = products.map(product => normalizeKey(product.name));
+  if (new Set(productKeys).size !== productKeys.length) {
+    throw businessError("Each supplier product can only be listed once", 400, "duplicate_supplier_product");
+  }
+
+  return {
+    id,
+    name,
+    category: cleanText(input.category, 60),
+    location: cleanText(input.location, 100),
+    businessTelegram: cleanText(input.businessTelegram, 40),
+    ownerName: cleanText(input.ownerName, 100),
+    ownerTelegram: cleanText(input.ownerTelegram, 40),
+    employees,
+    products,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    updatedBy: cleanText(actor?.fullName, 100)
+  };
 }
 
 function cleanSupplyOrder(input, actor, { id, now, existing }) {
@@ -170,6 +260,10 @@ function cleanDate(value) {
 
 function cleanText(value, limit) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, limit);
+}
+
+function normalizeKey(value) {
+  return cleanText(value, 200).toLocaleLowerCase("en");
 }
 
 function finiteNumber(value, fallback) {

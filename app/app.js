@@ -20,7 +20,9 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "clock.out": "Clocked out",
   "operation.recorded": "Operation recorded",
   "target.updated": "Storefront target updated",
-  "target.removed": "Storefront target removed"
+  "target.removed": "Storefront target removed",
+  "supplier.saved": "Supplier record saved",
+  "supplier.removed": "Supplier record removed"
 });
 const itemCatalog = window.FRONTIER_ITEMS || [];
 const recipeCatalog = window.FRONTIER_RECIPES || {};
@@ -35,6 +37,7 @@ let timeClock = { current: null, entries: [] };
 let operations = loadOperations();
 let stockTargets = loadStockTargets();
 let supplyOrders = [];
+let suppliers = [];
 let currentUser = null;
 let currentRole = "employee";
 let employeeUsers = [];
@@ -46,6 +49,7 @@ let lastBackendRefreshAt = 0;
 let supplyReceiptPending = false;
 let activeOrder = newOrder();
 let activeSupplyOrder = newSupplyOrder();
+let activeSupplier = newSupplier();
 let activeView = "quote";
 let activeSection = "dashboard";
 
@@ -105,6 +109,31 @@ const elements = {
   copySupplyTelegram: document.querySelector("#copySupplyTelegramButton"),
   receiveSupply: document.querySelector("#receiveSupplyButton"),
   producerOptions: document.querySelector("#producerOptions"),
+  supplierPanel: document.querySelector("#supplierPanel"),
+  supplierName: document.querySelector("#supplierNameInput"),
+  supplierCategory: document.querySelector("#supplierCategoryInput"),
+  supplierLocation: document.querySelector("#supplierLocationInput"),
+  supplierBusinessTelegram: document.querySelector("#supplierBusinessTelegramInput"),
+  supplierOwnerName: document.querySelector("#supplierOwnerNameInput"),
+  supplierOwnerTelegram: document.querySelector("#supplierOwnerTelegramInput"),
+  supplierProduct: document.querySelector("#supplierProductInput"),
+  supplierProductPrice: document.querySelector("#supplierProductPriceInput"),
+  supplierProductList: document.querySelector("#supplierProductList"),
+  supplierProductCount: document.querySelector("#supplierProductCount"),
+  supplierEmployeeName: document.querySelector("#supplierEmployeeNameInput"),
+  supplierEmployeeTelegram: document.querySelector("#supplierEmployeeTelegramInput"),
+  supplierEmployeeList: document.querySelector("#supplierEmployeeList"),
+  supplierEmployeeCount: document.querySelector("#supplierEmployeeCount"),
+  supplierSearch: document.querySelector("#supplierSearchInput"),
+  supplierCardList: document.querySelector("#supplierCardList"),
+  supplierSavedCount: document.querySelector("#supplierSavedCount"),
+  supplierDataStatus: document.querySelector("#supplierDataStatus"),
+  supplierEditMeta: document.querySelector("#supplierEditMeta"),
+  newSupplier: document.querySelector("#newSupplierButton"),
+  saveSupplier: document.querySelector("#saveSupplierButton"),
+  deleteSupplier: document.querySelector("#deleteSupplierButton"),
+  addSupplierProduct: document.querySelector("#addSupplierProductButton"),
+  addSupplierEmployee: document.querySelector("#addSupplierEmployeeButton"),
   newDocument: document.querySelector("#newOrderButton"),
   saveDocument: document.querySelector("#saveOrderButton"),
   dashboardSection: document.querySelector("#dashboardSection"),
@@ -214,6 +243,24 @@ function newSupplyOrder() {
   };
 }
 
+function newSupplier() {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    name: "",
+    category: "",
+    location: "",
+    businessTelegram: "",
+    ownerName: "",
+    ownerTelegram: "",
+    employees: [],
+    products: [],
+    createdAt: now,
+    updatedAt: now,
+    updatedBy: ""
+  };
+}
+
 function loadOrders() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
@@ -275,8 +322,17 @@ function seedDatalist() {
     .map(item => `<option value="${escapeHtml(item.label)}">${escapeHtml(item.name)} - $${formatNumber(item.price)}</option>`)
     .join("");
   elements.stockOptions.innerHTML = stockOptionMarkup(stockCatalog);
-  elements.supplyMaterialOptions.innerHTML = stockOptionMarkup(ingredientCatalog);
+  seedSupplyMaterialOptions();
   seedCountDatalist();
+}
+
+function seedSupplyMaterialOptions() {
+  const byName = new Map(ingredientCatalog.map(item => [normalize(item.name), item]));
+  suppliers.flatMap(supplier => supplier.products || []).forEach(product => {
+    const key = normalize(product.name);
+    if (!byName.has(key)) byName.set(key, { ...product, category: "Supplier Product" });
+  });
+  elements.supplyMaterialOptions.innerHTML = stockOptionMarkup([...byName.values()]);
 }
 
 function seedCountDatalist() {
@@ -328,6 +384,21 @@ function wireEvents() {
   document.querySelector("#orderSupplyButton").addEventListener("click", () => setSupplyStatus("Ordered"));
   elements.receiveSupply.addEventListener("click", receiveSupplyOrder);
   document.querySelector("#deleteSupplyOrderButton").addEventListener("click", removeActiveSupplyOrder);
+  elements.newSupplier.addEventListener("click", startNewSupplier);
+  elements.saveSupplier.addEventListener("click", saveSupplier);
+  elements.deleteSupplier.addEventListener("click", removeActiveSupplier);
+  elements.addSupplierProduct.addEventListener("click", addSupplierProduct);
+  elements.addSupplierEmployee.addEventListener("click", addSupplierEmployee);
+  elements.supplierProduct.addEventListener("input", updateSupplierProductDefaults);
+  elements.supplierSearch.addEventListener("input", renderSupplierDirectory);
+  [
+    elements.supplierName,
+    elements.supplierCategory,
+    elements.supplierLocation,
+    elements.supplierBusinessTelegram,
+    elements.supplierOwnerName,
+    elements.supplierOwnerTelegram
+  ].forEach(field => field.addEventListener("input", updateSupplierFromInputs));
 
   document.querySelectorAll(".chip-button").forEach(button => {
     button.addEventListener("click", () => {
@@ -358,7 +429,10 @@ function wireEvents() {
       activeSection = button.dataset.section;
       renderSection();
       if (activeSection === "employees" && isManagement()) loadStaffData();
-      if (activeSection === "supplies" && isManagement()) loadSupplyOrders({ silent: true });
+      if (activeSection === "supplies" && isManagement()) {
+        loadSupplyOrders({ silent: true });
+        loadSuppliers({ silent: true });
+      }
     });
   });
 
@@ -380,6 +454,8 @@ function wireEvents() {
 
   [elements.supplyProducer, elements.supplyExpectedDate, elements.supplyStatus, elements.supplyNotes]
     .forEach(field => ["input", "change"].forEach(eventName => field.addEventListener(eventName, updateSupplyFromInputs)));
+
+  elements.supplyProducer.addEventListener("change", updateSupplyMaterialDefaults);
 
   elements.supplyMaterial.addEventListener("input", updateSupplyMaterialDefaults);
 
@@ -529,11 +605,17 @@ function findRecipeIngredient(value) {
 }
 
 function updateSupplyMaterialDefaults() {
-  const ingredient = ingredientCatalog.find(item => normalize(item.name) === normalize(elements.supplyMaterial.value));
-  if (!ingredient) return;
-  const metrics = getSupplyLineMetrics(ingredient.name, activeSupplyOrder.id);
-  elements.supplyQuantity.value = Math.max(1, metrics.missing);
-  elements.supplyUnitPrice.value = materialUnitPrice(ingredient.name);
+  const value = elements.supplyMaterial.value;
+  const ingredient = ingredientCatalog.find(item => normalize(item.name) === normalize(value));
+  const supplier = suppliers.find(candidate => normalize(candidate.name) === normalize(activeSupplyOrder.producer));
+  const supplierProduct = supplier?.products.find(product => normalize(product.name) === normalize(value));
+  const item = ingredient || supplierProduct;
+  if (!item) return;
+  if (ingredient) {
+    const metrics = getSupplyLineMetrics(ingredient.name, activeSupplyOrder.id);
+    elements.supplyQuantity.value = Math.max(1, metrics.missing);
+  }
+  elements.supplyUnitPrice.value = preferredSupplyUnitPrice(item.name);
 }
 
 function addSupplyLine() {
@@ -548,7 +630,8 @@ function addSupplyLine() {
     category: "Manual Material"
   };
   const quantity = Math.max(1, Number(elements.supplyQuantity.value || 1));
-  const unitPrice = Math.max(0, Number(elements.supplyUnitPrice.value || materialUnitPrice(ingredient.name)));
+  const enteredPrice = elements.supplyUnitPrice.value;
+  const unitPrice = Math.max(0, enteredPrice === "" ? preferredSupplyUnitPrice(ingredient.name) : Number(enteredPrice));
   const existing = activeSupplyOrder.lines.find(line => normalize(line.name) === normalize(ingredient.name));
   if (existing) {
     existing.quantity += quantity;
@@ -588,7 +671,7 @@ function addMissingSupplyLines() {
       label: material.ingredient,
       category: "Recipe Ingredient",
       quantity: material.missing,
-      unitPrice: materialUnitPrice(material.ingredient)
+      unitPrice: preferredSupplyUnitPrice(material.ingredient)
     });
   });
   touchSupplyOrder();
@@ -626,6 +709,283 @@ async function loadSupplyOrders({ silent = false } = {}) {
   } catch (error) {
     if (!silent) elements.supplyDataStatus.textContent = `Unable to load producer orders: ${error.message}`;
   }
+}
+
+async function loadSuppliers({ silent = false } = {}) {
+  if (!isManagement()) return;
+  try {
+    const response = await fetch("/api/suppliers", { headers: { accept: "application/json" } });
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    suppliers = Array.isArray(result.suppliers) ? result.suppliers : [];
+    const refreshed = suppliers.find(supplier => supplier.id === activeSupplier.id);
+    if (refreshed) activeSupplier = structuredClone(refreshed);
+    elements.supplierDataStatus.textContent = `${suppliers.length} shared ${suppliers.length === 1 ? "supplier" : "suppliers"} loaded`;
+    seedProducerOptions();
+    renderSupplierWorkspace();
+  } catch (error) {
+    if (!silent) elements.supplierDataStatus.textContent = `Unable to load suppliers: ${error.message}`;
+  }
+}
+
+function startNewSupplier() {
+  activeSupplier = newSupplier();
+  renderSupplierWorkspace();
+  elements.supplierName.focus();
+}
+
+function loadSupplier(supplierId) {
+  const supplier = suppliers.find(candidate => candidate.id === supplierId);
+  if (!supplier) return;
+  activeSupplier = structuredClone(supplier);
+  renderSupplierWorkspace();
+  elements.supplierPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function updateSupplierFromInputs() {
+  activeSupplier.name = elements.supplierName.value.trim();
+  activeSupplier.category = elements.supplierCategory.value.trim();
+  activeSupplier.location = elements.supplierLocation.value.trim();
+  activeSupplier.businessTelegram = elements.supplierBusinessTelegram.value.trim();
+  activeSupplier.ownerName = elements.supplierOwnerName.value.trim();
+  activeSupplier.ownerTelegram = elements.supplierOwnerTelegram.value.trim();
+  activeSupplier.updatedAt = new Date().toISOString();
+}
+
+async function saveSupplier() {
+  updateSupplierFromInputs();
+  if (!activeSupplier.name) {
+    elements.supplierDataStatus.textContent = "Enter a supplier name before saving";
+    elements.supplierName.focus();
+    return;
+  }
+  elements.saveSupplier.disabled = true;
+  elements.supplierDataStatus.textContent = `Saving ${activeSupplier.name}`;
+  try {
+    const response = await fetch("/api/suppliers", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(activeSupplier)
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    activeSupplier = structuredClone(result.supplier);
+    suppliers = Array.isArray(result.suppliers) ? result.suppliers : [];
+    elements.supplierDataStatus.textContent = `${activeSupplier.name} saved`;
+    seedProducerOptions();
+    renderSupplierWorkspace();
+  } catch (error) {
+    elements.supplierDataStatus.textContent = `Supplier save failed: ${error.message}`;
+  } finally {
+    elements.saveSupplier.disabled = false;
+  }
+}
+
+async function removeActiveSupplier() {
+  const saved = suppliers.some(supplier => supplier.id === activeSupplier.id);
+  if (!saved) {
+    startNewSupplier();
+    return;
+  }
+  if (!window.confirm(`Remove ${activeSupplier.name} from the supplier directory? Historical orders will be kept.`)) return;
+  elements.deleteSupplier.disabled = true;
+  try {
+    const response = await fetch(`/api/suppliers/${encodeURIComponent(activeSupplier.id)}`, {
+      method: "DELETE",
+      headers: { accept: "application/json" }
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    suppliers = Array.isArray(result.suppliers) ? result.suppliers : [];
+    activeSupplier = newSupplier();
+    elements.supplierDataStatus.textContent = "Supplier removed; historical orders were kept";
+    seedProducerOptions();
+    renderSupplierWorkspace();
+  } catch (error) {
+    elements.supplierDataStatus.textContent = `Supplier removal failed: ${error.message}`;
+  } finally {
+    elements.deleteSupplier.disabled = false;
+  }
+}
+
+function updateSupplierProductDefaults() {
+  const ingredient = findRecipeIngredient(elements.supplierProduct.value);
+  if (!ingredient) return;
+  const existing = activeSupplier.products.find(product => normalize(product.name) === normalize(ingredient.name));
+  elements.supplierProductPrice.value = existing ? existing.unitPrice : materialUnitPrice(ingredient.name);
+}
+
+function addSupplierProduct() {
+  const enteredName = elements.supplierProduct.value.trim();
+  if (!enteredName) {
+    elements.supplierProduct.focus();
+    return;
+  }
+  const ingredient = findRecipeIngredient(enteredName) || { name: enteredName, label: enteredName };
+  const unitPrice = Math.max(0, Number(elements.supplierProductPrice.value || 0));
+  const existing = activeSupplier.products.find(product => normalize(product.name) === normalize(ingredient.name));
+  if (existing) {
+    existing.unitPrice = unitPrice;
+  } else {
+    activeSupplier.products.push({
+      id: crypto.randomUUID(),
+      name: ingredient.name,
+      label: ingredient.label || ingredient.name,
+      unitPrice
+    });
+  }
+  activeSupplier.updatedAt = new Date().toISOString();
+  elements.supplierProduct.value = "";
+  elements.supplierProductPrice.value = "0";
+  renderSupplierProducts();
+}
+
+function addSupplierEmployee() {
+  if (activeSupplier.employees.length >= 5) {
+    elements.supplierDataStatus.textContent = "A supplier can have up to 5 employee contacts";
+    return;
+  }
+  const name = elements.supplierEmployeeName.value.trim();
+  const telegram = elements.supplierEmployeeTelegram.value.trim();
+  if (!name) {
+    elements.supplierDataStatus.textContent = "Enter the employee character name";
+    elements.supplierEmployeeName.focus();
+    return;
+  }
+  activeSupplier.employees.push({ id: crypto.randomUUID(), name, telegram });
+  activeSupplier.updatedAt = new Date().toISOString();
+  elements.supplierEmployeeName.value = "";
+  elements.supplierEmployeeTelegram.value = "";
+  renderSupplierEmployees();
+}
+
+function renderSupplierWorkspace() {
+  if (!elements.supplierPanel) return;
+  activeSupplier.products = Array.isArray(activeSupplier.products) ? activeSupplier.products : [];
+  activeSupplier.employees = Array.isArray(activeSupplier.employees) ? activeSupplier.employees : [];
+  elements.supplierName.value = activeSupplier.name || "";
+  elements.supplierCategory.value = activeSupplier.category || "";
+  elements.supplierLocation.value = activeSupplier.location || "";
+  elements.supplierBusinessTelegram.value = activeSupplier.businessTelegram || "";
+  elements.supplierOwnerName.value = activeSupplier.ownerName || "";
+  elements.supplierOwnerTelegram.value = activeSupplier.ownerTelegram || "";
+  const saved = suppliers.some(supplier => supplier.id === activeSupplier.id);
+  elements.deleteSupplier.disabled = !saved;
+  elements.supplierEditMeta.textContent = saved
+    ? `Updated ${formatDate(activeSupplier.updatedAt)} by ${activeSupplier.updatedBy || "Unknown"}`
+    : "New supplier record";
+  renderSupplierProducts();
+  renderSupplierEmployees();
+  renderSupplierDirectory();
+}
+
+function renderSupplierProducts() {
+  elements.supplierProductCount.textContent = `${activeSupplier.products.length} ${activeSupplier.products.length === 1 ? "product" : "products"}`;
+  if (!activeSupplier.products.length) {
+    elements.supplierProductList.innerHTML = `<div class="empty-card">No quoted products recorded</div>`;
+    return;
+  }
+  elements.supplierProductList.innerHTML = activeSupplier.products
+    .sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name))
+    .map(product => `
+      <div class="supplier-product-row">
+        <strong>${escapeHtml(product.label || product.name)}</strong>
+        <input class="supplier-price-input" data-supplier-product-price="${product.id}" type="number" min="0" step="0.01" value="${Number(product.unitPrice || 0)}" aria-label="Unit price for ${escapeHtml(product.label || product.name)}">
+        <button class="icon-button" data-remove-supplier-product="${product.id}" type="button" title="Remove product">x</button>
+      </div>
+    `).join("");
+  elements.supplierProductList.querySelectorAll("[data-supplier-product-price]").forEach(input => {
+    input.addEventListener("input", () => {
+      const product = activeSupplier.products.find(candidate => candidate.id === input.dataset.supplierProductPrice);
+      if (product) product.unitPrice = Math.max(0, Number(input.value || 0));
+    });
+  });
+  elements.supplierProductList.querySelectorAll("[data-remove-supplier-product]").forEach(button => {
+    button.addEventListener("click", () => {
+      activeSupplier.products = activeSupplier.products.filter(product => product.id !== button.dataset.removeSupplierProduct);
+      activeSupplier.updatedAt = new Date().toISOString();
+      renderSupplierProducts();
+    });
+  });
+}
+
+function renderSupplierEmployees() {
+  const employeeCount = activeSupplier.employees.length;
+  elements.supplierEmployeeCount.textContent = `${employeeCount} of 5`;
+  elements.addSupplierEmployee.disabled = employeeCount >= 5;
+  if (!employeeCount) {
+    elements.supplierEmployeeList.innerHTML = `<div class="empty-card">No employee contacts recorded</div>`;
+    return;
+  }
+  elements.supplierEmployeeList.innerHTML = activeSupplier.employees.map(contact => `
+    <div class="supplier-employee-row">
+      <input data-supplier-employee-name="${contact.id}" type="text" value="${escapeHtml(contact.name)}" aria-label="Employee character name">
+      <input data-supplier-employee-telegram="${contact.id}" type="text" value="${escapeHtml(contact.telegram)}" aria-label="Telegram for ${escapeHtml(contact.name || "employee")}">
+      <button class="icon-button" data-remove-supplier-employee="${contact.id}" type="button" title="Remove contact">x</button>
+    </div>
+  `).join("");
+  elements.supplierEmployeeList.querySelectorAll("[data-supplier-employee-name]").forEach(input => {
+    input.addEventListener("input", () => {
+      const contact = activeSupplier.employees.find(candidate => candidate.id === input.dataset.supplierEmployeeName);
+      if (contact) contact.name = input.value;
+    });
+  });
+  elements.supplierEmployeeList.querySelectorAll("[data-supplier-employee-telegram]").forEach(input => {
+    input.addEventListener("input", () => {
+      const contact = activeSupplier.employees.find(candidate => candidate.id === input.dataset.supplierEmployeeTelegram);
+      if (contact) contact.telegram = input.value;
+    });
+  });
+  elements.supplierEmployeeList.querySelectorAll("[data-remove-supplier-employee]").forEach(button => {
+    button.addEventListener("click", () => {
+      activeSupplier.employees = activeSupplier.employees.filter(contact => contact.id !== button.dataset.removeSupplierEmployee);
+      activeSupplier.updatedAt = new Date().toISOString();
+      renderSupplierEmployees();
+    });
+  });
+}
+
+function renderSupplierDirectory() {
+  const search = normalize(elements.supplierSearch.value);
+  const visible = suppliers.filter(supplier => !search || normalize([
+    supplier.name,
+    supplier.category,
+    supplier.location,
+    supplier.ownerName,
+    supplier.businessTelegram,
+    supplier.ownerTelegram,
+    ...supplier.products.map(product => product.label || product.name),
+    ...supplier.employees.flatMap(contact => [contact.name, contact.telegram])
+  ].join(" ")).includes(search));
+  elements.supplierSavedCount.textContent = `${suppliers.length} ${suppliers.length === 1 ? "supplier" : "suppliers"}`;
+  if (!visible.length) {
+    elements.supplierCardList.innerHTML = `<div class="empty-card">No suppliers match this view</div>`;
+    return;
+  }
+  elements.supplierCardList.innerHTML = visible.map(supplier => {
+    const offers = supplier.products.slice(0, 3)
+      .map(product => `${product.label || product.name} $${formatNumber(product.unitPrice)}`)
+      .join(" / ");
+    return `
+      <button class="supplier-card ${supplier.id === activeSupplier.id ? "selected" : ""}" type="button" data-supplier-id="${supplier.id}">
+        <span class="supplier-card-heading">
+          <strong>${escapeHtml(supplier.name)}</strong>
+          <span>${supplier.products.length} ${supplier.products.length === 1 ? "price" : "prices"}</span>
+        </span>
+        <span>${escapeHtml(supplier.category || "Uncategorized")} / ${escapeHtml(supplier.location || "Location not set")}</span>
+        <span>${escapeHtml(supplier.ownerName || "Owner not recorded")}${supplier.ownerTelegram ? ` / ${escapeHtml(supplier.ownerTelegram)}` : ""}</span>
+        <span>${supplier.businessTelegram ? `Business ${escapeHtml(supplier.businessTelegram)}` : "Business telegram not recorded"} / ${supplier.employees.length} employee ${supplier.employees.length === 1 ? "contact" : "contacts"}</span>
+        <small>${offers ? escapeHtml(offers) : "No product prices recorded"}</small>
+      </button>
+    `;
+  }).join("");
+  elements.supplierCardList.querySelectorAll("[data-supplier-id]").forEach(button => {
+    button.addEventListener("click", () => loadSupplier(button.dataset.supplierId));
+  });
 }
 
 async function saveSupplyOrder() {
@@ -757,6 +1117,12 @@ function materialUnitPrice(name) {
   return Number(pricingCatalog.materials[name]?.midpoint || 0);
 }
 
+function preferredSupplyUnitPrice(name) {
+  const supplier = suppliers.find(candidate => normalize(candidate.name) === normalize(activeSupplyOrder.producer));
+  const product = supplier?.products.find(candidate => normalize(candidate.name) === normalize(name));
+  return product ? Number(product.unitPrice || 0) : materialUnitPrice(name);
+}
+
 function render() {
   elements.customer.value = activeOrder.customer;
   elements.handler.value = activeOrder.handler;
@@ -773,6 +1139,7 @@ function render() {
   renderMeta();
   renderProduction();
   renderSupplyWorkspace();
+  renderSupplierWorkspace();
   renderView();
   renderDashboard();
   renderTimeClock();
@@ -920,9 +1287,13 @@ function renderSupplyOrdersList() {
 }
 
 function seedProducerOptions() {
-  const producers = [...new Set(supplyOrders.map(order => order.producer).filter(Boolean))]
+  const producers = [...new Set([
+    ...suppliers.map(supplier => supplier.name),
+    ...supplyOrders.map(order => order.producer)
+  ].filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));
   elements.producerOptions.innerHTML = producers.map(producer => `<option value="${escapeHtml(producer)}"></option>`).join("");
+  seedSupplyMaterialOptions();
 }
 
 function buildSupplyOrderSummary(order) {
@@ -1578,7 +1949,7 @@ async function loadSessionAndData() {
     await loadBackendSnapshot();
     startBackendRefreshLoop();
     if (isManagement()) {
-      await loadSupplyOrders();
+      await Promise.all([loadSupplyOrders(), loadSuppliers()]);
       await loadStaffData();
     }
   } catch {

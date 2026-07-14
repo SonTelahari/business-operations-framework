@@ -77,6 +77,7 @@ const server = http.createServer(async (request, response) => {
         redirect(response, "/");
         return;
       }
+      if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(user));
@@ -128,6 +129,7 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, { ok: true });
         return;
       }
+      if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(null));
@@ -262,6 +264,39 @@ function requireManagement(response, user) {
 
 function isManagementRole(user) {
   return user?.role === "admin" || user?.role === "manager";
+}
+
+async function handleSupplierRoute(request, response, url, user) {
+  if (!url.pathname.startsWith("/api/suppliers")) return false;
+  if (!requireManagement(response, user)) return true;
+
+  try {
+    if (url.pathname === "/api/suppliers" && request.method === "GET") {
+      sendJson(response, { ok: true, suppliers: businessStore.listSuppliers() });
+      return true;
+    }
+    if (url.pathname === "/api/suppliers" && request.method === "POST") {
+      const supplier = await businessStore.saveSupplier(await readJsonBody(request), user);
+      await recordSupplierAudit("supplier.saved", supplier, user);
+      sendJson(response, { ok: true, supplier, suppliers: businessStore.listSuppliers() });
+      return true;
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/suppliers/")) {
+      const supplierId = decodeURIComponent(url.pathname.slice("/api/suppliers/".length));
+      const supplier = await businessStore.removeSupplier(supplierId);
+      await recordSupplierAudit("supplier.removed", supplier, user);
+      sendJson(response, { ok: true, supplier, suppliers: businessStore.listSuppliers() });
+      return true;
+    }
+    sendJson(response, { ok: false, error: "Supplier route not found", code: "not_found" }, 404);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Supplier request failed",
+      code: error.code || "supplier_error"
+    }, error.status || 500);
+  }
+  return true;
 }
 
 async function handleSupplyOrderRoute(request, response, url, user) {
@@ -445,6 +480,25 @@ async function recordSupplyOrderAudit(action, order, user) {
       total: order.lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0)
     }
   });
+}
+
+async function recordSupplierAudit(action, supplier, user) {
+  if (!accountStore) return;
+  await accountStore.recordAudit({
+    category: "procurement",
+    action,
+    actorId: user.id,
+    actorName: user.fullName,
+    subjectId: supplier.id,
+    subjectName: supplier.name,
+    fingerprint: `${action}:${supplier.id}:${supplier.updatedAt}`,
+    details: {
+      category: supplier.category,
+      location: supplier.location,
+      products: supplier.products.length,
+      employeeContacts: supplier.employees.length
+    }
+  }).catch(error => console.error("Unable to write supplier audit event:", error.message));
 }
 
 async function recordSupplyReceiptAudit(order, line, receipt, user) {
