@@ -825,7 +825,7 @@ tr:last-child td {
 
 .audit-filters {
   display: grid;
-  grid-template-columns: minmax(170px, 0.8fr) minmax(210px, 1fr) minmax(240px, 1.4fr);
+  grid-template-columns: repeat(3, minmax(160px, 0.8fr)) minmax(220px, 1.2fr);
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -843,7 +843,15 @@ tr:last-child td {
 
 .audit-list {
   display: grid;
+  align-content: start;
   gap: 8px;
+  max-height: 520px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-color: var(--accent) rgba(18, 22, 27, 0.55);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 .audit-entry {

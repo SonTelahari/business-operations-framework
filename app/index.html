@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Frontier Firearms - Still Water</title>
     <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png?v=20260713-van-horn">
-    <link rel="stylesheet" href="styles.css?v=20260714-kits">
+    <link rel="stylesheet" href="styles.css?v=20260714-audit">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -712,6 +712,12 @@
                 <option value="account">Access requests</option>
               </select>
             </label>
+            <label>
+              Event Type
+              <select id="auditActionFilter">
+                <option value="">All event types</option>
+              </select>
+            </label>
             <label class="audit-search">
               Search
               <input id="auditSearchInput" type="search" autocomplete="off" placeholder="Name, item, action, or note">
@@ -730,6 +736,6 @@
     <datalist id="supplyMaterialOptions"></datalist>
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
-    <script src="app.js?v=20260714-kits"></script>
+    <script src="app.js?v=20260714-audit"></script>
   </body>
 </html>

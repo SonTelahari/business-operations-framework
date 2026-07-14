@@ -6,6 +6,22 @@ const SUPPLY_ACTIVE_STATUSES = new Set(["Draft", "Ordered", "Partially Received"
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
+const AUDIT_ACTION_LABELS = Object.freeze({
+  "account.admin_created": "Admin account created",
+  "account.requested": "Access requested",
+  "account.approved": "Employee approved",
+  "account.reactivated": "Account reactivated",
+  "account.disabled": "Account disabled",
+  "account.rejected": "Access request rejected",
+  "account.role_changed": "Staff role changed",
+  "auth.login": "Signed in",
+  "auth.logout": "Signed out",
+  "clock.in": "Clocked in",
+  "clock.out": "Clocked out",
+  "operation.recorded": "Operation recorded",
+  "target.updated": "Storefront target updated",
+  "target.removed": "Storefront target removed"
+});
 const itemCatalog = window.FRONTIER_ITEMS || [];
 const recipeCatalog = window.FRONTIER_RECIPES || {};
 const recipeYieldCatalog = window.FRONTIER_RECIPE_YIELDS || {};
@@ -99,6 +115,7 @@ const elements = {
   employeeUserList: document.querySelector("#employeeUserList"),
   auditEmployeeFilter: document.querySelector("#auditEmployeeFilter"),
   auditCategoryFilter: document.querySelector("#auditCategoryFilter"),
+  auditActionFilter: document.querySelector("#auditActionFilter"),
   auditSearch: document.querySelector("#auditSearchInput"),
   auditMeta: document.querySelector("#auditMetaText"),
   auditList: document.querySelector("#auditList"),
@@ -284,6 +301,7 @@ function wireEvents() {
   elements.employeeUserList.addEventListener("click", handleEmployeeAction);
   elements.auditEmployeeFilter.addEventListener("change", renderAudit);
   elements.auditCategoryFilter.addEventListener("change", renderAudit);
+  elements.auditActionFilter.addEventListener("change", renderAudit);
   elements.auditSearch.addEventListener("input", renderAudit);
   elements.refreshAudit.addEventListener("click", loadAuditEvents);
   elements.clockToggle.addEventListener("click", toggleTimeClock);
@@ -1703,7 +1721,8 @@ async function handleEmployeeAction(event) {
 }
 
 function renderAuditFilters() {
-  const selected = elements.auditEmployeeFilter.value;
+  const selectedEmployee = elements.auditEmployeeFilter.value;
+  const selectedAction = elements.auditActionFilter.value;
   const names = [...new Set([
     ...employeeUsers.map(user => user.fullName),
     ...auditEvents.flatMap(event => [event.subjectName, event.actorName])
@@ -1711,17 +1730,28 @@ function renderAuditFilters() {
   elements.auditEmployeeFilter.innerHTML = `<option value="">All employees</option>${names
     .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
     .join("")}`;
-  if (names.includes(selected)) elements.auditEmployeeFilter.value = selected;
+  if (names.includes(selectedEmployee)) elements.auditEmployeeFilter.value = selectedEmployee;
+
+  const actions = [...new Set(auditEvents
+    .map(event => String(event.action || "").trim())
+    .filter(Boolean))]
+    .sort((a, b) => auditActionLabel(a).localeCompare(auditActionLabel(b)));
+  elements.auditActionFilter.innerHTML = `<option value="">All event types</option>${actions
+    .map(action => `<option value="${escapeHtml(action)}">${escapeHtml(auditActionLabel(action))}</option>`)
+    .join("")}`;
+  if (actions.includes(selectedAction)) elements.auditActionFilter.value = selectedAction;
 }
 
 function renderAudit() {
   if (!elements.auditList || !isManagement()) return;
   const employee = normalize(elements.auditEmployeeFilter.value);
   const category = elements.auditCategoryFilter.value;
+  const action = elements.auditActionFilter.value;
   const search = normalize(elements.auditSearch.value);
   const filtered = auditEvents.filter(event => {
     if (employee && normalize(event.subjectName) !== employee && normalize(event.actorName) !== employee) return false;
     if (category && event.category !== category) return false;
+    if (action && event.action !== action) return false;
     if (search && !normalize(`${event.action} ${event.actorName} ${event.subjectName} ${JSON.stringify(event.details || {})}`).includes(search)) return false;
     return true;
   });
@@ -1732,22 +1762,7 @@ function renderAudit() {
 }
 
 function auditEventRow(event) {
-  const label = ({
-    "account.admin_created": "Admin account created",
-    "account.requested": "Access requested",
-    "account.approved": "Employee approved",
-    "account.reactivated": "Account reactivated",
-    "account.disabled": "Account disabled",
-    "account.rejected": "Access request rejected",
-    "account.role_changed": "Staff role changed",
-    "auth.login": "Signed in",
-    "auth.logout": "Signed out",
-    "clock.in": "Clocked in",
-    "clock.out": "Clocked out",
-    "operation.recorded": "Operation recorded",
-    "target.updated": "Storefront target updated",
-    "target.removed": "Storefront target removed"
-  })[event.action] || event.action;
+  const label = auditActionLabel(event.action);
   const subject = event.subjectName || event.actorName || "Unknown employee";
   const actor = event.actorName && event.actorName !== subject ? ` / by ${event.actorName}` : "";
   const details = formatAuditDetails(event);
@@ -1761,6 +1776,10 @@ function auditEventRow(event) {
       ${details ? `<small>${escapeHtml(details)}</small>` : ""}
     </div>
   `;
+}
+
+function auditActionLabel(action) {
+  return AUDIT_ACTION_LABELS[action] || action || "Unknown event";
 }
 
 function formatAuditDetails(event) {
