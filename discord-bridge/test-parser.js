@@ -13,6 +13,31 @@ const cases = [
     expected: { event_type: 'Stocking Movement', direction: 'Stock In', item_name: 'Test Rifle', quantity: 2, unit_price: 100 }
   },
   {
+    name: 'real Still Water Gun Cleaning Kit deposit',
+    input: {
+      id: 'still-water-cleaning-kit-deposit',
+      title: 'Deposit',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ ID: 23
+**Item Info:**
+Item name: guncleaningkit
+Item label: Gun Cleaning Kit
+Deposit Amount: 40
+Sell Price: $2.5`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'guncleaningkit',
+      discord_item_label: 'Gun Cleaning Kit',
+      item_name: 'Gun Cleaning Kit',
+      quantity: 40,
+      unit_price: 2.5,
+      webhook_id: 'still-water-cleaning-kit-deposit'
+    }
+  },
+  {
     name: 'real Still Water Navy Revolver deposit',
     input: {
       id: 'still-water-navy-deposit',
