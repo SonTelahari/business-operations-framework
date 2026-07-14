@@ -209,6 +209,17 @@ async function run() {
   const emptySupplyOrders = await getJson(`${baseUrl}/api/supply-orders`, managerCookie);
   assert.equal(emptySupplyOrders.response.status, 200);
   assert.deepEqual(emptySupplyOrders.body.orders, []);
+  const activatedSupplyOrder = await post(`${baseUrl}/api/supply-orders`, {
+    id: "supply-order-active",
+    producer: "Blackwater Textiles",
+    status: "Draft",
+    notes: "Planning materials before placing the order",
+    lines: []
+  }, managerCookie);
+  assert.equal(activatedSupplyOrder.response.status, 200);
+  assert.equal(activatedSupplyOrder.body.order.status, "Active");
+  assert.equal(activatedSupplyOrder.body.order.lines.length, 0);
+  assert(activatedSupplyOrder.body.orders.some(order => order.id === "supply-order-active" && order.status === "Active"));
   const savedSupplyOrder = await post(`${baseUrl}/api/supply-orders`, {
     id: "supply-order-1",
     producer: "Van Horn Foundry",
@@ -340,7 +351,9 @@ async function run() {
   assert.equal(removedSupplyOrder.response.status, 200);
   const removedFailedOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-failed`, managerCookie);
   assert.equal(removedFailedOrder.response.status, 200);
-  assert.deepEqual(removedFailedOrder.body.orders, []);
+  const removedActiveOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-active`, managerCookie);
+  assert.equal(removedActiveOrder.response.status, 200);
+  assert.deepEqual(removedActiveOrder.body.orders, []);
 
   const demoted = await post(`${baseUrl}/api/admin/users/${pendingUser.id}/demote`, {}, ownerCookie);
   assert.equal(demoted.response.status, 200);

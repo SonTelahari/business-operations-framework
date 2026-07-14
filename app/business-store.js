@@ -2,7 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Ordered", "Partially Received", "Received", "Cancelled"]);
+const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially Received", "Received", "Cancelled"]);
 
 class BusinessStore {
   constructor({ filePath }) {
@@ -91,7 +91,12 @@ class BusinessStore {
     try {
       const parsed = JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
       if (!Array.isArray(parsed.supplyOrders)) parsed.supplyOrders = [];
-      return { version: 1, supplyOrders: parsed.supplyOrders };
+      return {
+        version: 1,
+        supplyOrders: parsed.supplyOrders
+          .filter(order => order && typeof order === "object")
+          .map(order => order.status === "Draft" ? { ...order, status: "Active" } : order)
+      };
     } catch (error) {
       if (error.code === "ENOENT") return { version: 1, supplyOrders: [] };
       throw new Error(`Unable to read business store: ${error.message}`);
@@ -110,6 +115,7 @@ function cleanSupplyOrder(input, actor, { id, now, existing }) {
   if (!producer) throw businessError("Producer is required", 400, "producer_required");
 
   let status = SUPPLY_ORDER_STATUSES.has(input.status) ? input.status : "Draft";
+  if (status === "Draft") status = "Active";
   const existingLines = new Map((existing?.lines || []).map(line => [line.id, line]));
   const lines = Array.isArray(input.lines)
     ? input.lines.slice(0, 100).map(line => cleanSupplyLine(line, existingLines.get(line.id)))
@@ -120,7 +126,7 @@ function cleanSupplyOrder(input, actor, { id, now, existing }) {
   if (removedReceivedLine) {
     throw businessError("Received supply lines cannot be removed", 409, "received_line_locked");
   }
-  if (status !== "Draft" && !lines.length) {
+  if (new Set(["Ordered", "Partially Received", "Received"]).has(status) && !lines.length) {
     throw businessError("Add at least one material before placing the order", 400, "lines_required");
   }
   if (status !== "Cancelled" && lines.some(line => line.receivedQuantity > 0)) {

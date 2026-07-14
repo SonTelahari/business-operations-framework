@@ -2,7 +2,7 @@ const STORAGE_KEY = "frontier_still_water_work_orders_v1";
 const TIME_CLOCK_KEY = "frontier_still_water_time_clock_v1";
 const OPERATIONS_KEY = "frontier_still_water_manual_operations_v1";
 const TARGETS_KEY = "frontier_still_water_storefront_targets_v1";
-const SUPPLY_ACTIVE_STATUSES = new Set(["Draft", "Ordered", "Partially Received"]);
+const SUPPLY_ACTIVE_STATUSES = new Set(["Active", "Ordered", "Partially Received"]);
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
@@ -627,6 +627,7 @@ async function loadSupplyOrders({ silent = false } = {}) {
 
 async function saveSupplyOrder() {
   updateSupplyFromInputs();
+  const wasDraft = activeSupplyOrder.status === "Draft";
   if (!activeSupplyOrder.producer) {
     elements.supplyDataStatus.textContent = "Choose a producer before saving";
     elements.supplyProducer.focus();
@@ -644,7 +645,8 @@ async function saveSupplyOrder() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     activeSupplyOrder = structuredClone(result.order);
     supplyOrders = result.orders || [];
-    elements.supplyDataStatus.textContent = `Saved for ${activeSupplyOrder.producer}`;
+    if (wasDraft) elements.supplyFilter.value = "Active";
+    elements.supplyDataStatus.textContent = `Saved as ${activeSupplyOrder.status} for ${activeSupplyOrder.producer}`;
     seedProducerOptions();
     renderSupplyWorkspace();
   } catch (error) {

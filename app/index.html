@@ -357,7 +357,8 @@
               <p id="supplyOrderMeta">Draft</p>
             </div>
             <select id="supplyStatusSelect" aria-label="Supply order status">
-              <option value="Draft">Draft</option>
+              <option value="Draft" disabled>Draft (unsaved)</option>
+              <option value="Active">Active</option>
               <option value="Ordered">Ordered</option>
               <option value="Partially Received" disabled>Partially Received</option>
               <option value="Received" disabled>Received</option>
@@ -736,6 +737,6 @@
     <datalist id="supplyMaterialOptions"></datalist>
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
-    <script src="app.js?v=20260714-audit"></script>
+    <script src="app.js?v=20260714-supply-active"></script>
   </body>
 </html>
