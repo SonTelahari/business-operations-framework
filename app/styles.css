@@ -520,6 +520,17 @@ h2 {
   font-size: 0.84rem;
 }
 
+.telegram-copy-button {
+  grid-column: 1 / -1;
+}
+
+#supplySummaryPreview {
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  font-size: 0.74rem;
+}
+
 .producer-order-groups {
   display: grid;
   gap: 22px;

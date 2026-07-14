@@ -26,6 +26,7 @@ const itemCatalog = window.FRONTIER_ITEMS || [];
 const recipeCatalog = window.FRONTIER_RECIPES || {};
 const recipeYieldCatalog = window.FRONTIER_RECIPE_YIELDS || {};
 const pricingCatalog = window.FRONTIER_PRICING || { materials: {} };
+const { buildSupplyQuoteTelegram } = window.FRONTIER_SUPPLY_TELEGRAM;
 const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
 
@@ -101,6 +102,7 @@ const elements = {
   supplySavedCount: document.querySelector("#supplySavedCount"),
   supplyDataStatus: document.querySelector("#supplyDataStatus"),
   supplyOrdersList: document.querySelector("#supplyOrdersList"),
+  copySupplyTelegram: document.querySelector("#copySupplyTelegramButton"),
   receiveSupply: document.querySelector("#receiveSupplyButton"),
   producerOptions: document.querySelector("#producerOptions"),
   newDocument: document.querySelector("#newOrderButton"),
@@ -322,6 +324,7 @@ function wireEvents() {
   document.querySelector("#addSupplyLineButton").addEventListener("click", addSupplyLine);
   document.querySelector("#addMissingSupplyButton").addEventListener("click", addMissingSupplyLines);
   document.querySelector("#copySupplyOrderButton").addEventListener("click", copySupplyOrder);
+  elements.copySupplyTelegram.addEventListener("click", copySupplyTelegram);
   document.querySelector("#orderSupplyButton").addEventListener("click", () => setSupplyStatus("Ordered"));
   elements.receiveSupply.addEventListener("click", receiveSupplyOrder);
   document.querySelector("#deleteSupplyOrderButton").addEventListener("click", removeActiveSupplyOrder);
@@ -738,6 +741,18 @@ async function copySupplyOrder() {
   elements.supplySummary.textContent = `${summary}\n\nCopied.`;
 }
 
+async function copySupplyTelegram() {
+  updateSupplyFromInputs();
+  const telegram = buildSupplyQuoteTelegram(activeSupplyOrder, {
+    name: currentUser?.fullName || activeSupplyOrder.requestedBy,
+    title: currentRole === "admin" ? "Owner/proprietor" : "Manager",
+    business: "Frontier Firearms, Van Horn"
+  });
+  await navigator.clipboard.writeText(telegram);
+  elements.supplySummary.textContent = `${telegram}\n\nCopied to clipboard.`;
+  elements.supplyDataStatus.textContent = `Quotation telegram copied for ${activeSupplyOrder.producer}`;
+}
+
 function materialUnitPrice(name) {
   return Number(pricingCatalog.materials[name]?.midpoint || 0);
 }
@@ -804,6 +819,8 @@ function renderSupplyWorkspace() {
   elements.supplyNotes.value = activeSupplyOrder.notes;
   elements.supplyOrderMeta.textContent = `${activeSupplyOrder.status} / ${activeSupplyOrder.producer || "Producer not selected"} / ${formatDate(activeSupplyOrder.updatedAt)}`;
   const hasRemaining = activeSupplyOrder.lines.some(line => Number(line.quantity || 0) > Number(line.receivedQuantity || 0));
+  const isSaved = supplyOrders.some(order => order.id === activeSupplyOrder.id);
+  elements.copySupplyTelegram.disabled = !isSaved || !activeSupplyOrder.lines.length;
   elements.receiveSupply.disabled = supplyReceiptPending || !hasRemaining || !new Set(["Ordered", "Partially Received"]).has(activeSupplyOrder.status);
   renderSupplyLines();
   renderSupplySummary();

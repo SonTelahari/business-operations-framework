@@ -444,7 +444,8 @@
           </div>
 
           <div class="action-grid">
-            <button id="copySupplyOrderButton" class="primary-button" type="button">Copy Order</button>
+            <button id="copySupplyTelegramButton" class="primary-button telegram-copy-button" type="button" disabled>Copy Telegram</button>
+            <button id="copySupplyOrderButton" class="ghost-button" type="button">Copy Summary</button>
             <button id="orderSupplyButton" class="ghost-button" type="button">Mark Ordered</button>
             <button id="receiveSupplyButton" class="ghost-button" type="button">Receive Items</button>
             <button id="deleteSupplyOrderButton" class="danger-button" type="button">Remove</button>
@@ -737,6 +738,7 @@
     <datalist id="supplyMaterialOptions"></datalist>
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
-    <script src="app.js?v=20260714-supply-active"></script>
+    <script src="supply-telegram.js?v=20260714-telegram"></script>
+    <script src="app.js?v=20260714-telegram"></script>
   </body>
 </html>
