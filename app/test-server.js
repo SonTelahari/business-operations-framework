@@ -196,6 +196,15 @@ async function run() {
   const employeeSupplierAttempt = await getJson(`${baseUrl}/api/suppliers`, employeeCookie);
   assert.equal(employeeSupplierAttempt.response.status, 403);
 
+  const sheetHealth = await getJson(`${baseUrl}/health/sheet`);
+  assert.equal(sheetHealth.response.status, 200);
+  assert.equal(sheetHealth.body.ok, true);
+  assert.equal(sheetHealth.body.ledgerAvailable, true);
+  assert.deepEqual(
+    sheetHealth.body.inventoryFields.sort(),
+    ["buyOrderPurchases", "ledger", "materials", "products", "storage"].sort()
+  );
+
   const protectedSync = await post(`${baseUrl}/api/sync`, {
     action: "stock_target",
     target: { itemName: "Navy Revolver", target: 2 }

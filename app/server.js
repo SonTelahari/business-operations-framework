@@ -47,6 +47,19 @@ const publicFiles = new Set([
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
+    if (url.pathname === "/health/sheet") {
+      const snapshot = await readSheetSnapshot();
+      const inventory = snapshot?.inventory;
+      sendJson(response, {
+        ok: Boolean(snapshot?.ok),
+        error: snapshot?.error || "",
+        schemaVersion: snapshot?.schemaVersion || null,
+        generatedAt: snapshot?.generatedAt || "",
+        inventoryFields: inventory && typeof inventory === "object" ? Object.keys(inventory) : [],
+        ledgerAvailable: Number.isFinite(Number(inventory?.ledger?.balance))
+      });
+      return;
+    }
     if (url.pathname === "/health") {
       sendJson(response, {
         ok: true,
