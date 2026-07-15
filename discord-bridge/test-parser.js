@@ -580,6 +580,23 @@ Sell Price: $2.25`
     }
   },
   {
+    name: 'multi-item customer purchase total price',
+    input: {
+      id: 'multi-sale-example',
+      title: 'Bought Item',
+      description: 'Shop Ledger: $1,009.50\nItem label: Repeater Ammo Express\nAmount Bought: 10\nSell Price: $22.50\nCurrent Item Total: 5'
+    },
+    expected: {
+      event_type: 'Sale',
+      direction: 'Stock Out',
+      item_name: 'Repeater Ammo Express',
+      quantity: 10,
+      unit_price: 2.25,
+      shop_ledger: 1009.5,
+      current_item_total: 5
+    }
+  },
+  {
     name: 'buy order fill',
     input: {
       id: 'buy-order-example',

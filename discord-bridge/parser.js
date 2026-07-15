@@ -43,8 +43,9 @@ function parseStillWaterEmbed(message) {
     ? boughtAmount
     : (isBuyOrderFill ? soldAmount : (isWithdraw ? withdrawnAmount : depositAmount));
 
-  const unitPrice = isBuyOrderFill && soldAmount > 1 && sellPrice
-    ? sellPrice / soldAmount
+  const pricedQuantity = isBought ? boughtAmount : (isBuyOrderFill ? soldAmount : 1);
+  const unitPrice = (isBought || isBuyOrderFill) && pricedQuantity > 1 && sellPrice
+    ? sellPrice / pricedQuantity
     : sellPrice || buyPrice;
 
   return {
