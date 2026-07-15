@@ -14,6 +14,10 @@ const storageCounts = new Map([["iron", 12]]);
 let failNextReceiverWrite = false;
 const mockReceiver = http.createServer(async (request, response) => {
   if (request.method === "GET") {
+    const materials = [...storageCounts.entries()].map(([key, storageCount]) => ({
+      ingredient: key === "softwood" ? "Softwood" : key.replace(/^./, character => character.toUpperCase()),
+      storageCount
+    }));
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       ok: true,
@@ -24,10 +28,15 @@ const mockReceiver = http.createServer(async (request, response) => {
           { itemName: "Navy Revolver", itemLabel: "Navy Revolver", target: 5, currentStock: 1 },
           { itemName: "Boltaction Rifle", itemLabel: "BoltAction Rifle", target: 5, currentStock: 3 }
         ],
-        materials: [...storageCounts.entries()].map(([key, storageCount]) => ({
-          ingredient: key === "softwood" ? "Softwood" : key.replace(/^./, character => character.toUpperCase()),
-          storageCount
-        }))
+        materials,
+        storage: [...materials, { ingredient: "Navy Revolver", storageCount: 2, countedAt: "2026-07-13T03:20:00.000Z" }],
+        ledger: {
+          balance: 6025,
+          countedBalance: 6000,
+          countedAt: "2026-07-13T03:00:00.000Z",
+          netMovementSinceCount: 25,
+          lastActivityAt: "2026-07-13T03:25:00.000Z"
+        }
       }
     }));
     return;
@@ -116,6 +125,7 @@ async function run() {
   assert.match(authenticatedHtml, /Employee Accounts/);
   assert.match(authenticatedHtml, /Employee Audit/);
   assert.match(authenticatedHtml, /Supplier Directory/);
+  assert.match(authenticatedHtml, /Store Overview/);
 
   const inventoryResolver = await fetch(`${baseUrl}/inventory-counts.js`, { headers: { cookie: ownerCookie } });
   assert.equal(inventoryResolver.status, 200);
@@ -131,6 +141,8 @@ async function run() {
   assert.equal(bootstrap.body.sheet.inventory.products[0].currentStock, 1);
   assert.equal(bootstrap.body.sheet.inventory.products[1].target, 5);
   assert.equal(bootstrap.body.sheet.inventory.materials[0].storageCount, 12);
+  assert.equal(bootstrap.body.sheet.inventory.storage[1].storageCount, 2);
+  assert.equal(bootstrap.body.sheet.inventory.ledger.balance, 6025);
 
   const registration = await post(`${baseUrl}/api/auth/register`, {
     fullName: "Ada Employee",

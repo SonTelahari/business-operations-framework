@@ -414,7 +414,7 @@ function firstEmptyRow(sheet, startRow, column) {
   return nextRow;
 }
 
-// Public bootstrap exposes workbook structure, never payroll or transaction rows.
+// Public bootstrap exposes workbook structure and operational totals, never detailed payroll or transaction rows.
 function readWorkbookSnapshot() {
   const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheets = spreadsheet.getSheets().map(sheet => {
@@ -439,10 +439,11 @@ function readWorkbookSnapshot() {
   };
 }
 
-// Exposes operational stock totals only; transaction and payroll rows stay private.
+// Exposes operational totals only; transaction and payroll rows stay private.
 function readInventorySnapshot(spreadsheet) {
   const productsSheet = requireSheet(spreadsheet, PRODUCTS_SHEET);
   const materialsSheet = requireSheet(spreadsheet, 'Materials');
+  const latestStorefrontCounts = readLatestStockCounts(spreadsheet, 'Storefront');
   const latestStorageCounts = readLatestStockCounts(spreadsheet, 'Storage');
   const productRowCount = Math.max(0, productsSheet.getLastRow() - 1);
   const materialRowCount = Math.max(0, materialsSheet.getLastRow() - 1);
@@ -453,16 +454,19 @@ function readInventorySnapshot(spreadsheet) {
     ? materialsSheet.getRange(2, 1, materialRowCount, 3).getValues()
     : [];
 
-  return {
-    products: productRows
+  const products = productRows
       .filter(row => row[0])
-      .map(row => ({
-        itemName: String(row[0]),
-        itemLabel: String(row[1] || row[0]),
-        target: numberOrZero(row[5]),
-        currentStock: numberOrZero(row[6])
-      })),
-    materials: materialRows
+      .map(row => {
+        const latestCount = latestStorefrontCounts[inventoryKey(row[0])];
+        return {
+          itemName: String(row[0]),
+          itemLabel: String(row[1] || row[0]),
+          target: numberOrZero(row[5]),
+          currentStock: latestCount ? latestCount.quantity : numberOrZero(row[6]),
+          countedAt: latestCount ? latestCount.countedAt : ''
+        };
+      });
+  const materials = materialRows
       .filter(row => row[0])
       .map(row => {
         const latestCount = latestStorageCounts[inventoryKey(row[0])];
@@ -471,8 +475,100 @@ function readInventorySnapshot(spreadsheet) {
           storageCount: latestCount ? latestCount.quantity : numberOrZero(row[2]),
           countedAt: latestCount ? latestCount.countedAt : ''
         };
-      })
+      });
+  const storageByKey = {};
+
+  materials.forEach(material => {
+    storageByKey[inventoryKey(material.ingredient)] = material;
+  });
+  Object.keys(latestStorageCounts).forEach(key => {
+    const latestCount = latestStorageCounts[key];
+    if (storageByKey[key]) return;
+    storageByKey[key] = {
+      ingredient: latestCount.itemName,
+      storageCount: latestCount.quantity,
+      countedAt: latestCount.countedAt
+    };
+  });
+
+  return {
+    products,
+    materials,
+    storage: Object.keys(storageByKey).map(key => storageByKey[key]),
+    ledger: readLedgerSnapshot(spreadsheet)
   };
+}
+
+function readLedgerSnapshot(spreadsheet) {
+  const baseline = readLatestLedgerCount(spreadsheet);
+  let balance = baseline ? baseline.balance : 0;
+  let netMovementSinceCount = 0;
+  let lastActivityAt = baseline ? baseline.countedAt : '';
+  const baselineTime = baseline ? baseline.sortTime : Number.NEGATIVE_INFINITY;
+
+  function applyMovement(dateValue, amount) {
+    const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    const sortTime = isNaN(date.getTime()) ? 0 : date.getTime();
+    if (sortTime <= baselineTime || !amount) return;
+    balance += amount;
+    netMovementSinceCount += amount;
+    if (!lastActivityAt || sortTime >= new Date(lastActivityAt).getTime()) {
+      lastActivityAt = sortTime ? date.toISOString() : lastActivityAt;
+    }
+  }
+
+  applyCashFlowRows(requireSheet(spreadsheet, TRANSACTION_SHEET), applyMovement);
+  applyCashFlowRows(requireSheet(spreadsheet, MANUAL_MOVEMENT_SHEET), applyMovement);
+
+  const payrollSheet = requireSheet(spreadsheet, PAYROLL_PAYMENT_SHEET);
+  const payrollRows = Math.max(0, payrollSheet.getLastRow() - 1);
+  if (payrollRows) {
+    payrollSheet.getRange(2, 1, payrollRows, 6).getValues().forEach(row => {
+      if (inventoryKey(row[5]) !== 'ledger') return;
+      applyMovement(row[0], -Math.abs(numberOrZero(row[4])));
+    });
+  }
+
+  return {
+    balance,
+    countedBalance: baseline ? baseline.balance : null,
+    countedAt: baseline ? baseline.countedAt : '',
+    netMovementSinceCount,
+    lastActivityAt,
+    source: baseline ? 'Latest ledger count plus subsequent cash movements' : 'Cash movements since records began'
+  };
+}
+
+function readLatestLedgerCount(spreadsheet) {
+  const sheet = requireSheet(spreadsheet, CASH_COUNTS_SHEET);
+  const rowCount = Math.max(0, sheet.getLastRow() - 1);
+  if (!rowCount) return null;
+
+  let latest = null;
+  sheet.getRange(2, 1, rowCount, 3).getValues().forEach(row => {
+    if (inventoryKey(row[1]) !== 'store ledger') return;
+    const countedDate = row[0] instanceof Date ? row[0] : new Date(row[0]);
+    const sortTime = isNaN(countedDate.getTime()) ? 0 : countedDate.getTime();
+    if (latest && latest.sortTime > sortTime) return;
+    latest = {
+      balance: numberOrZero(row[2]),
+      countedAt: sortTime ? countedDate.toISOString() : '',
+      sortTime
+    };
+  });
+  return latest;
+}
+
+function applyCashFlowRows(sheet, applyMovement) {
+  const rowCount = Math.max(0, sheet.getLastRow() - 1);
+  if (!rowCount) return;
+
+  sheet.getRange(2, 1, rowCount, 7).getValues().forEach(row => {
+    const type = inventoryKey(row[2]);
+    const amount = Math.abs(numberOrZero(row[5]) * numberOrZero(row[6]));
+    if (type === 'sale') applyMovement(row[0], amount);
+    if (type === 'purchase') applyMovement(row[0], -amount);
+  });
 }
 
 function readLatestStockCounts(spreadsheet, location) {
@@ -489,6 +585,7 @@ function readLatestStockCounts(spreadsheet, location) {
     const sortTime = isNaN(countedDate.getTime()) ? 0 : countedDate.getTime();
     if (latest[key] && latest[key].sortTime > sortTime) return;
     latest[key] = {
+      itemName: String(row[2]),
       quantity: numberOrZero(row[3]),
       countedAt: sortTime ? countedDate.toISOString() : '',
       sortTime
@@ -498,7 +595,8 @@ function readLatestStockCounts(spreadsheet, location) {
 }
 
 function inventoryKey(value) {
-  return String(value || '').trim().toLowerCase();
+  const key = String(value || '').trim().toLowerCase();
+  return key === 'wood' || key === 'soft wood' || key === 'softwood' ? 'softwood' : key;
 }
 
 function jsonResponse(data) {

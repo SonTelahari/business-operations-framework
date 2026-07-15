@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { normalizeKey, selectLatestCounts } = require("./inventory-counts");
+const { normalizeKey, selectLatestCounts, selectCurrentLedger } = require("./inventory-counts");
 const pricing = require("./pricing");
 
 global.window = {};
@@ -71,5 +71,59 @@ const crossDeviceCount = selectLatestCounts({
   operations: []
 });
 assert.equal(crossDeviceCount.get("shell casing"), 1000, "shared Sheet counts must work without browser history");
+
+const completeStorageCount = selectLatestCounts({
+  location: "Storage",
+  inventory: {
+    materials: [{ ingredient: "Iron", storageCount: 20 }],
+    storage: [
+      { ingredient: "Iron", storageCount: 25 },
+      { ingredient: "Navy Revolver", storageCount: 2 }
+    ]
+  },
+  operations: []
+});
+assert.equal(completeStorageCount.get("iron"), 25, "the complete storage snapshot must take precedence over materials-only data");
+assert.equal(completeStorageCount.get("navy revolver"), 2, "counted finished goods in storage must be preserved");
+
+const ledgerWithPendingMovement = selectCurrentLedger({
+  ledger: {
+    balance: 1000,
+    countedBalance: 900,
+    countedAt: "2026-07-13T10:00:00.000Z",
+    netMovementSinceCount: 100,
+    lastActivityAt: "2026-07-13T10:15:00.000Z"
+  },
+  snapshotGeneratedAt: "2026-07-13T10:20:00.000Z",
+  operations: [
+    { kind: "Cash In", amount: 50, createdAt: "2026-07-13T10:21:00.000Z", syncStatus: "Pending sheet sync" },
+    { kind: "Cash In", amount: 25, createdAt: "2026-07-13T10:05:00.000Z", syncedAt: "2026-07-13T10:21:00.000Z", syncStatus: "Synced" },
+    { kind: "Cash In", amount: 500, createdAt: "2026-07-13T10:10:00.000Z", syncStatus: "Synced" }
+  ]
+});
+assert.equal(ledgerWithPendingMovement.balance, 1075, "only cash movements not represented by the snapshot may be applied locally");
+assert.equal(ledgerWithPendingMovement.netMovementSinceCount, 175);
+
+const ledgerWithLocalCount = selectCurrentLedger({
+  ledger: { balance: 1000, countedBalance: 900, netMovementSinceCount: 100 },
+  snapshotGeneratedAt: "2026-07-13T10:20:00.000Z",
+  operations: [
+    { kind: "Cash Out", amount: 200, createdAt: "2026-07-13T10:22:00.000Z", syncStatus: "Pending sheet sync" },
+    { kind: "Ledger Count", amount: 1200, createdAt: "2026-07-13T10:21:00.000Z", syncStatus: "Pending sheet sync" }
+  ]
+});
+assert.equal(ledgerWithLocalCount.balance, 1000, "a newer local ledger count must reset the balance before later movements");
+assert.equal(ledgerWithLocalCount.countedBalance, 1200);
+assert.equal(ledgerWithLocalCount.netMovementSinceCount, -200);
+
+const payrollLedger = selectCurrentLedger({
+  ledger: { balance: 1000 },
+  snapshotGeneratedAt: "2026-07-13T10:20:00.000Z",
+  operations: [
+    { kind: "Payroll Payment", amount: 150, paymentMethod: "Ledger", createdAt: "2026-07-13T10:21:00.000Z", syncStatus: "Pending sheet sync" },
+    { kind: "Payroll Payment", amount: 300, paymentMethod: "Cash", createdAt: "2026-07-13T10:22:00.000Z", syncStatus: "Pending sheet sync" }
+  ]
+});
+assert.equal(payrollLedger.balance, 850, "ledger payroll must reduce the ledger while cash payroll remains separate");
 
 console.log("Inventory count precedence checks passed.");

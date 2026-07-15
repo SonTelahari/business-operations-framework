@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Frontier Firearms - Still Water</title>
     <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png?v=20260713-van-horn">
-    <link rel="stylesheet" href="styles.css?v=20260714-audit">
+    <link rel="stylesheet" href="styles.css?v=20260715-store-overview">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -30,6 +30,7 @@
 
       <nav class="section-tabs" aria-label="Main sections">
         <button class="section-button active" data-section="dashboard" type="button">Dashboard</button>
+        <button class="section-button" data-section="store" type="button">Store</button>
         <button class="section-button" data-section="restock" type="button">Restock</button>
         <button class="section-button management-only" data-section="supplies" type="button">Supplies</button>
         <button class="section-button" data-section="workbench" type="button">Workbench</button>
@@ -158,6 +159,86 @@
           <div class="dashboard-list" id="attentionList"></div>
         </section>
 
+      </main>
+
+      <main class="store-overview workspace-section hidden" id="storeSection">
+        <section class="panel store-overview-hero">
+          <div class="panel-header store-overview-heading">
+            <div>
+              <p class="eyebrow">Store Ledger</p>
+              <h2>Store Overview</h2>
+              <p id="storeOverviewMeta">Loading the latest shared counts</p>
+            </div>
+            <label class="store-overview-search">
+              Search Inventory
+              <input id="storeOverviewSearchInput" type="search" autocomplete="off" placeholder="Item, category, or material">
+            </label>
+          </div>
+          <div class="store-overview-stats">
+            <div>
+              <span>Storefront Units</span>
+              <strong id="storefrontOverviewUnits">0</strong>
+            </div>
+            <div>
+              <span>Storage Units</span>
+              <strong id="storageOverviewUnits">0</strong>
+            </div>
+            <div class="management-only">
+              <span>Store Ledger</span>
+              <strong id="ledgerOverviewBalance">Unavailable</strong>
+              <small id="ledgerOverviewDetail">Awaiting a shared ledger count</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel inventory-overview-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Storefront Stock</h2>
+              <p>Finished goods and current stock targets</p>
+            </div>
+            <strong class="inventory-row-count" id="storefrontOverviewCount">0 lines</strong>
+          </div>
+          <div class="line-table-wrap inventory-overview-table-wrap">
+            <table class="line-table inventory-overview-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Category</th>
+                  <th>In Store</th>
+                  <th>Target</th>
+                </tr>
+              </thead>
+              <tbody id="storefrontOverviewBody">
+                <tr><td colspan="4" class="empty-line">Loading storefront counts</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel inventory-overview-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Storage Stock</h2>
+              <p>Materials, parts, tools, and finished goods</p>
+            </div>
+            <strong class="inventory-row-count" id="storageOverviewCount">0 lines</strong>
+          </div>
+          <div class="line-table-wrap inventory-overview-table-wrap">
+            <table class="line-table inventory-overview-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Type</th>
+                  <th>In Storage</th>
+                </tr>
+              </thead>
+              <tbody id="storageOverviewBody">
+                <tr><td colspan="3" class="empty-line">Loading storage counts</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </main>
 
       <main class="restock workspace-section hidden" id="restockSection">
@@ -852,7 +933,7 @@
     <script src="pricing.js?v=20260714-kits"></script>
     <script src="items.js?v=20260714-kits"></script>
     <script src="recipes.js?v=20260714-kits"></script>
-    <script src="inventory-counts.js?v=20260713-softwood"></script>
+    <script src="inventory-counts.js?v=20260715-store-overview"></script>
     <datalist id="supplyMaterialOptions"></datalist>
     <datalist id="supplierCategoryOptions">
       <option value="Blacksmith"></option>
@@ -866,6 +947,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260714-suppliers"></script>
+    <script src="app.js?v=20260715-store-overview"></script>
   </body>
 </html>

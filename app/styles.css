@@ -2035,6 +2035,97 @@ body.auth-page {
   color: var(--muted);
 }
 
+.store-overview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.store-overview-hero {
+  grid-column: 1 / -1;
+  padding: 18px;
+}
+
+.store-overview-heading {
+  align-items: end;
+}
+
+.store-overview-search {
+  width: min(100%, 360px);
+}
+
+.store-overview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.store-overview-stats > div {
+  min-height: 104px;
+  padding: 14px;
+  background: rgba(84, 113, 124, 0.09);
+  border: 1px solid rgba(78, 104, 113, 0.46);
+}
+
+.store-overview-stats span,
+.store-overview-stats small,
+.inventory-row-count {
+  display: block;
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.store-overview-stats strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 1.75rem;
+}
+
+.store-overview-stats small {
+  margin-top: 6px;
+  line-height: 1.35;
+  text-transform: none;
+}
+
+.inventory-overview-panel {
+  min-width: 0;
+  padding: 18px;
+}
+
+.inventory-overview-table-wrap {
+  max-height: 560px;
+  overflow: auto;
+}
+
+.inventory-overview-table {
+  min-width: 520px;
+}
+
+.inventory-overview-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.inventory-overview-table th:nth-last-child(-n + 2),
+.inventory-overview-table td:nth-last-child(-n + 2) {
+  width: 92px;
+  text-align: right;
+}
+
+.inventory-overview-table td strong {
+  display: block;
+}
+
+.inventory-overview-table .inventory-zero {
+  color: var(--muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .workspace-section {
     animation: none;
@@ -2056,6 +2147,10 @@ body.auth-page {
     background-image:
       linear-gradient(90deg, rgba(70, 45, 28, 0.1), transparent 7%, transparent 93%, rgba(70, 45, 28, 0.08)),
       repeating-linear-gradient(to bottom, transparent 0, transparent 31px, rgba(71, 113, 132, 0.13) 32px, transparent 33px);
+  }
+
+  .store-overview {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -2129,6 +2224,41 @@ body.auth-page {
     align-items: flex-start;
     flex-direction: column;
     gap: 3px;
+  }
+
+  .store-overview-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .store-overview-search {
+    width: 100%;
+  }
+
+  .store-overview-hero,
+  .inventory-overview-panel {
+    padding: 14px 10px;
+  }
+
+  .inventory-overview-table {
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  .inventory-overview-table th:nth-child(2),
+  .inventory-overview-table td:nth-child(2) {
+    display: none;
+  }
+
+  .inventory-overview-table th,
+  .inventory-overview-table td {
+    padding-right: 7px;
+    padding-left: 7px;
+  }
+
+  .inventory-overview-table th:nth-last-child(-n + 2),
+  .inventory-overview-table td:nth-last-child(-n + 2) {
+    width: 58px;
   }
 
   .auth-page {

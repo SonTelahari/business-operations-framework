@@ -152,6 +152,7 @@ const elements = {
   newDocument: document.querySelector("#newOrderButton"),
   saveDocument: document.querySelector("#saveOrderButton"),
   dashboardSection: document.querySelector("#dashboardSection"),
+  storeSection: document.querySelector("#storeSection"),
   restockSection: document.querySelector("#restockSection"),
   workbenchSection: document.querySelector("#workbenchSection"),
   operationsSection: document.querySelector("#operationsSection"),
@@ -167,6 +168,16 @@ const elements = {
   auditList: document.querySelector("#auditList"),
   refreshAudit: document.querySelector("#refreshAuditButton"),
   dataStatus: document.querySelector("#dataStatusText"),
+  storeOverviewSearch: document.querySelector("#storeOverviewSearchInput"),
+  storeOverviewMeta: document.querySelector("#storeOverviewMeta"),
+  storefrontOverviewUnits: document.querySelector("#storefrontOverviewUnits"),
+  storageOverviewUnits: document.querySelector("#storageOverviewUnits"),
+  ledgerOverviewBalance: document.querySelector("#ledgerOverviewBalance"),
+  ledgerOverviewDetail: document.querySelector("#ledgerOverviewDetail"),
+  storefrontOverviewCount: document.querySelector("#storefrontOverviewCount"),
+  storageOverviewCount: document.querySelector("#storageOverviewCount"),
+  storefrontOverviewBody: document.querySelector("#storefrontOverviewBody"),
+  storageOverviewBody: document.querySelector("#storageOverviewBody"),
   stockAlertList: document.querySelector("#stockAlertList"),
   missingStockCount: document.querySelector("#missingStockCount"),
   materialShortageCount: document.querySelector("#materialShortageCount"),
@@ -408,6 +419,7 @@ function wireEvents() {
   elements.addSupplierEmployee.addEventListener("click", addSupplierEmployee);
   elements.supplierProduct.addEventListener("input", updateSupplierProductDefaults);
   elements.supplierSearch.addEventListener("input", renderSupplierDirectory);
+  elements.storeOverviewSearch.addEventListener("input", renderStoreOverview);
   [
     elements.supplierName,
     elements.supplierCategory,
@@ -1163,6 +1175,7 @@ function render() {
   renderSupplierWorkspace();
   renderView();
   renderDashboard();
+  renderStoreOverview();
   renderTimeClock();
   renderOperations();
   renderEmployees();
@@ -1378,6 +1391,7 @@ function renderSection() {
     button.classList.toggle("active", button.dataset.section === activeSection);
   });
   elements.dashboardSection.classList.toggle("hidden", activeSection !== "dashboard");
+  elements.storeSection.classList.toggle("hidden", activeSection !== "store");
   elements.restockSection.classList.toggle("hidden", activeSection !== "restock");
   elements.supplySection.classList.toggle("hidden", activeSection !== "supplies");
   elements.workbenchSection.classList.toggle("hidden", activeSection !== "workbench");
@@ -1433,6 +1447,149 @@ function renderDashboard() {
       renderSection();
       window.scrollTo({ top: 0, behavior: "smooth" });
     }));
+}
+
+function renderStoreOverview() {
+  const storefrontCounts = getLatestCounts("Storefront");
+  const storageCounts = getLatestCounts("Storage");
+  const query = normalize(elements.storeOverviewSearch.value);
+  const targetByKey = new Map(stockTargets
+    .filter(target => !target.deleting)
+    .map(target => [inventoryOverviewKey(target), Number(target.target || 0)]));
+  const storefrontRows = buildInventoryOverviewRows(itemCatalog, storefrontCounts, "Storefront")
+    .map(row => ({ ...row, target: targetByKey.get(row.key) || 0 }));
+  const storageRows = buildInventoryOverviewRows([...ingredientCatalog, ...itemCatalog], storageCounts, "Storage");
+  const visibleStorefront = filterInventoryOverviewRows(storefrontRows, query);
+  const visibleStorage = filterInventoryOverviewRows(storageRows, query);
+
+  elements.storefrontOverviewUnits.textContent = formatNumber(sumInventoryCounts(storefrontCounts));
+  elements.storageOverviewUnits.textContent = formatNumber(sumInventoryCounts(storageCounts));
+  elements.storefrontOverviewCount.textContent = inventoryLineCountText(visibleStorefront.length, storefrontRows.length, query);
+  elements.storageOverviewCount.textContent = inventoryLineCountText(visibleStorage.length, storageRows.length, query);
+  elements.storefrontOverviewBody.innerHTML = renderInventoryOverviewRows(visibleStorefront, true);
+  elements.storageOverviewBody.innerHTML = renderInventoryOverviewRows(visibleStorage, false);
+
+  const sheetGeneratedAt = backendSnapshot?.sheet?.generatedAt;
+  elements.storeOverviewMeta.textContent = sheetGeneratedAt
+    ? `Shared counts as of ${formatDateTime(sheetGeneratedAt)}`
+    : "Shared sheet snapshot unavailable / local counts shown";
+
+  const ledger = window.FRONTIER_INVENTORY_COUNTS.selectCurrentLedger({
+    ledger: backendSnapshot?.sheet?.inventory?.ledger,
+    operations,
+    snapshotGeneratedAt: sheetGeneratedAt
+  });
+  if (!ledger.available) {
+    elements.ledgerOverviewBalance.textContent = "Unavailable";
+    elements.ledgerOverviewDetail.textContent = "Awaiting a shared ledger count";
+    return;
+  }
+
+  elements.ledgerOverviewBalance.textContent = `$${formatNumber(ledger.balance)}`;
+  const movement = Number(ledger.netMovementSinceCount || 0);
+  const movementText = `${movement >= 0 ? "+" : "-"}$${formatNumber(Math.abs(movement))}`;
+  elements.ledgerOverviewDetail.textContent = ledger.countedAt
+    ? `Counted ${formatDateTime(ledger.countedAt)} / ${movementText} since count`
+    : `Recorded cash movement ${movementText}`;
+}
+
+function buildInventoryOverviewRows(catalog, counts, location) {
+  const rows = [];
+  const rowsByKey = new Map();
+  const displayNames = inventoryOverviewDisplayNames(location);
+
+  catalog.forEach(item => {
+    const key = inventoryOverviewKey(item);
+    if (!key || rowsByKey.has(key)) return;
+    const isMaterial = item.category === "Recipe Ingredient";
+    const row = {
+      key,
+      label: item.label || item.name,
+      name: item.name,
+      category: isMaterial ? "Material" : (item.category || "Counted Item"),
+      quantity: Number(counts.get(key) || 0)
+    };
+    rowsByKey.set(key, row);
+    rows.push(row);
+  });
+
+  counts.forEach((quantity, key) => {
+    if (rowsByKey.has(key)) return;
+    const row = {
+      key,
+      label: displayNames.get(key) || titleCase(key),
+      name: displayNames.get(key) || titleCase(key),
+      category: "Counted Item",
+      quantity: Number(quantity || 0)
+    };
+    rowsByKey.set(key, row);
+    rows.push(row);
+  });
+
+  return rows;
+}
+
+function inventoryOverviewDisplayNames(location) {
+  const names = new Map();
+  const inventory = backendSnapshot?.sheet?.inventory || {};
+  const rows = location === "Storefront"
+    ? inventory.products
+    : Array.isArray(inventory.storage) ? inventory.storage : inventory.materials;
+
+  if (Array.isArray(rows)) {
+    rows.forEach(row => {
+      const key = inventoryOverviewKey(row);
+      const label = row.itemLabel || row.itemName || row.ingredient || row.name;
+      if (key && label) names.set(key, String(label));
+    });
+  }
+  operations
+    .filter(entry => entry.kind === "Stock Count" && entry.location === location)
+    .forEach(entry => {
+      const key = inventoryOverviewKey(entry);
+      const label = entry.itemLabel || entry.itemName;
+      if (key && label) names.set(key, String(label));
+    });
+  return names;
+}
+
+function filterInventoryOverviewRows(rows, query) {
+  if (!query) return rows;
+  return rows.filter(row => normalize(`${row.label} ${row.name} ${row.category}`).includes(query));
+}
+
+function renderInventoryOverviewRows(rows, showTarget) {
+  const columns = showTarget ? 4 : 3;
+  if (!rows.length) return `<tr><td colspan="${columns}" class="empty-line">No matching inventory lines</td></tr>`;
+  return rows.map(row => `
+    <tr>
+      <td>
+        <strong>${escapeHtml(row.label)}</strong>
+        ${row.name && normalize(row.name) !== normalize(row.label) ? `<span>${escapeHtml(row.name)}</span>` : ""}
+      </td>
+      <td>${escapeHtml(row.category)}</td>
+      <td class="${row.quantity ? "" : "inventory-zero"}">${formatNumber(row.quantity)}</td>
+      ${showTarget ? `<td class="${row.target ? "" : "inventory-zero"}">${row.target ? formatNumber(row.target) : "-"}</td>` : ""}
+    </tr>
+  `).join("");
+}
+
+function inventoryOverviewKey(entry) {
+  return window.FRONTIER_INVENTORY_COUNTS.normalizeKey(
+    entry?.itemName || entry?.itemLabel || entry?.ingredient || entry?.name
+  );
+}
+
+function sumInventoryCounts(counts) {
+  return [...counts.values()].reduce((total, quantity) => total + Number(quantity || 0), 0);
+}
+
+function inventoryLineCountText(visible, total, query) {
+  return `${query ? `${visible} of ${total}` : visible} ${visible === 1 ? "line" : "lines"}`;
+}
+
+function titleCase(value) {
+  return String(value || "").replace(/\b\w/g, character => character.toUpperCase());
 }
 
 function renderRole() {
@@ -1867,6 +2024,7 @@ function saveStockTarget() {
   elements.saveTarget.textContent = "Save Target";
   renderOperations();
   renderReplenishment();
+  renderStoreOverview();
   syncStockTarget(stockKey(nextTarget));
 }
 
@@ -1880,6 +2038,7 @@ function addOperation(entry) {
   operations.unshift(savedEntry);
   persistOperations();
   renderOperations();
+  renderStoreOverview();
   syncOperation(savedEntry.id);
 }
 
@@ -1969,6 +2128,7 @@ function removeStockTarget(targetKey) {
   persistStockTargets();
   renderOperations();
   renderReplenishment();
+  renderStoreOverview();
   syncStockTarget(targetKey);
 }
 
@@ -2248,8 +2408,10 @@ async function syncOperation(entryId) {
   if (!entry) return;
   const result = await syncToBackend("manual_operation", { entry });
   entry.syncStatus = result.ok ? "Synced" : "Pending sheet sync";
+  entry.syncedAt = result.ok ? new Date().toISOString() : "";
   persistOperations();
   renderOperations();
+  renderStoreOverview();
 }
 
 async function syncStockTarget(targetKey) {
@@ -2264,6 +2426,7 @@ async function syncStockTarget(targetKey) {
   persistStockTargets();
   renderOperations();
   renderReplenishment();
+  renderStoreOverview();
 }
 
 async function syncTimeClockEntry(entryId) {
@@ -2352,6 +2515,7 @@ async function performBackendRefresh({ silent = false } = {}) {
     if (sheetReady) {
       hydrateSheetInventory();
       renderDashboard();
+      renderStoreOverview();
       renderOperations();
       renderSupplyWorkspace();
       if (!silent) retryPendingSyncs();
