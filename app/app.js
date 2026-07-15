@@ -1747,7 +1747,13 @@ function renderStoreOverview() {
   });
   if (!ledger.available) {
     elements.ledgerOverviewBalance.textContent = "Unavailable";
-    elements.ledgerOverviewDetail.textContent = "Awaiting a shared ledger count";
+    const sheetError = backendSnapshot?.sheet?.error;
+    const inventory = backendSnapshot?.sheet?.inventory;
+    elements.ledgerOverviewDetail.textContent = sheetError
+      ? `Shared sheet sync failed: ${sheetError}`
+      : inventory && !Object.prototype.hasOwnProperty.call(inventory, "ledger")
+        ? "Apps Script deployment does not expose ledger data"
+        : "Awaiting a shared ledger count";
     return;
   }
 
@@ -2804,6 +2810,8 @@ async function performBackendRefresh({ silent = false } = {}) {
       renderSupplyWorkspace();
       renderStorefrontBuyOrderWorkspace();
       if (!silent) retryPendingSyncs();
+    } else {
+      renderStoreOverview();
     }
   } catch {
     if (previousSnapshot) {

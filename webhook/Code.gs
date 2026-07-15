@@ -509,6 +509,7 @@ function readWorkbookSnapshot() {
 
   return {
     ok: true,
+    schemaVersion: 3,
     spreadsheetId: SPREADSHEET_ID,
     generatedAt: new Date().toISOString(),
     sheets,

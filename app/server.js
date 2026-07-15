@@ -856,7 +856,7 @@ async function readSheetSnapshot() {
     url.searchParams.set("action", "bootstrap");
     const response = await fetch(url, {
       headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(45000)
     });
     if (!response.ok) return { ok: false, error: `Apps Script ${response.status}` };
     const text = await response.text();

@@ -85,6 +85,25 @@ assert.equal(context.manualStockDelta(
   "storage"
 ), 0);
 
+const ledgerAfterCashOut = plain(context.readLedgerSnapshot({
+  getSheetByName(name) {
+    if (name === "Cash Ledger Counts") {
+      return dataSheet([[new Date("2026-07-15T23:44:00.000Z"), "Store Ledger", 1094.25]]);
+    }
+    if (name === "Transactions") {
+      return dataSheet([[new Date("2026-07-15T23:44:00.000Z"), "", "Sale", "Stock Out", "Revolver Ammo Express", 5, 2.25]]);
+    }
+    if (name === "Manual Movements") {
+      return dataSheet([[new Date("2026-07-15T23:50:00.000Z"), "", "Purchase", "Stock Out", "Ledger Adjustment", 1, 94.25]]);
+    }
+    if (name === "Payroll Payments") return dataSheet([]);
+    return null;
+  }
+}));
+assert.equal(ledgerAfterCashOut.countedBalance, 1094.25);
+assert.equal(ledgerAfterCashOut.netMovementSinceCount, -94.25);
+assert.equal(ledgerAfterCashOut.balance, 1000, "cash taken after the latest storefront ledger control must reduce the displayed balance");
+
 function dataSheet(rows) {
   return {
     getLastRow: () => rows.length + 1,
