@@ -7,6 +7,8 @@ function parseStillWaterEmbed(message) {
 
   const itemName = matchLine(text, 'Item name');
   const itemLabel = matchLine(text, 'Item label');
+  const shopLedgerText = matchLine(text, 'Shop Ledger');
+  const currentItemTotalText = matchLine(text, 'Current Item Total');
   const depositAmount = numberValue(matchLine(text, 'Deposit Amount'));
   const withdrawnAmount = numberValue(matchLine(text, 'Amount Withdrawn'));
   const boughtAmount = numberValue(matchLine(text, 'Amount Bought'));
@@ -53,6 +55,8 @@ function parseStillWaterEmbed(message) {
     item_name: mapDiscordItem(itemName, itemLabel),
     quantity,
     unit_price: unitPrice,
+    shop_ledger: optionalMoneyValue(shopLedgerText),
+    current_item_total: optionalNumberValue(currentItemTotalText),
     buy_order_id: buyOrderId,
     webhook_id: message.id || buyOrderId || '',
     raw_payload: description
@@ -80,6 +84,14 @@ function numberValue(value) {
 function moneyValue(value) {
   const match = String(value || '').replace(/,/g, '').match(/-?(?:\d+(?:\.\d+)?|\.\d+)/);
   return match ? Number(match[0]) : 0;
+}
+
+function optionalNumberValue(value) {
+  return String(value || '').trim() ? numberValue(value) : null;
+}
+
+function optionalMoneyValue(value) {
+  return String(value || '').trim() ? moneyValue(value) : null;
 }
 
 function firstNumberValue(...values) {

@@ -52,8 +52,9 @@ function doPost(e) {
       });
     }
 
+    const occurredAt = eventDate(event);
     rawSheet.appendRow([
-      new Date(),
+      occurredAt,
       event.webhookId,
       event.type,
       event.direction,
@@ -69,11 +70,14 @@ function doPost(e) {
     if (event.item && event.qty) {
       writeTransaction(transactionSheet, event);
     }
+    const controls = writeWebhookControls(spreadsheet, event);
 
     return jsonResponse({
       ok: true,
       webhookId: event.webhookId,
-      transactionWritten: Boolean(event.item && event.qty)
+      transactionWritten: Boolean(event.item && event.qty),
+      stockControlWritten: controls.stock,
+      ledgerControlWritten: controls.ledger
     });
   } catch (error) {
     return jsonResponse({
@@ -185,14 +189,21 @@ function writeManualMovement(spreadsheet, entry, action) {
 
   const movement = normalizeManualMovement(entry);
   const row = firstEmptyRow(sheet, 2, 1);
-  sheet.getRange(row, 1, 1, 7).setValues([[
+  const isTransfer = String(entry.kind || '').includes('Transfer');
+  const signedQtyFormula = isTransfer
+    ? 0
+    : `=IF(E${row}="";"";IF(OR(D${row}="Stock In";D${row}="Purchase";D${row}="Return");F${row};-F${row}))`;
+  const cashFlowFormula = `=IF(E${row}="";"";IF(C${row}="Sale";F${row}*G${row};IF(C${row}="Purchase";-F${row}*G${row};0)))`;
+  sheet.getRange(row, 1, 1, 9).setValues([[
     new Date(),
     GUI_SOURCE_NAME,
     movement.type,
     movement.direction,
     movement.item,
     movement.quantity,
-    movement.unitPrice
+    movement.unitPrice,
+    signedQtyFormula,
+    cashFlowFormula
   ]]);
   sheet.getRange(row, 10, 1, 3).setValues([[
     joinNotes(
@@ -210,7 +221,8 @@ function writeManualMovement(spreadsheet, entry, action) {
 function normalizeManualMovement(entry) {
   const kind = String(entry.kind || 'Correction');
   const quantity = Math.max(0, numberOrZero(entry.quantity));
-  const totalAmount = Math.abs(numberOrZero(entry.amount));
+  const signedAmount = numberOrZero(entry.amount);
+  const totalAmount = Math.abs(signedAmount);
   const item = entry.itemName || entry.itemLabel || (kind === 'Payroll Payout' ? 'Payroll Payout' : 'Ledger Adjustment');
   const stockQuantity = item === 'Ledger Adjustment' || item === 'Payroll Payout' ? 1 : quantity;
   const unitPrice = stockQuantity ? totalAmount / stockQuantity : 0;
@@ -221,11 +233,22 @@ function normalizeManualMovement(entry) {
   if (kind === 'P2P Purchase' || kind === 'Cash Out' || kind === 'Payroll Payout') {
     return { type: 'Purchase', direction: 'Purchase', item, quantity: stockQuantity, unitPrice };
   }
+  if (kind === 'Correction') {
+    return signedAmount >= 0
+      ? { type: 'Sale', direction: 'Stock Out', item, quantity: stockQuantity, unitPrice }
+      : { type: 'Purchase', direction: 'Purchase', item, quantity: stockQuantity, unitPrice };
+  }
   if (kind === 'Production Use' || kind === 'Correction Out') {
     return { type: 'Stocking Movement', direction: 'Stock Out', item, quantity, unitPrice: 0 };
   }
   if (kind === 'Storefront Transfer' || kind === 'Storage Transfer') {
-    return { type: 'Adjustment', direction: 'Stock In', item, quantity: 0, unitPrice: 0 };
+    return {
+      type: 'Adjustment',
+      direction: kind === 'Storefront Transfer' ? 'Transfer to Storefront' : 'Transfer to Storage',
+      item,
+      quantity,
+      unitPrice: 0
+    };
   }
   return { type: 'Adjustment', direction: 'Stock In', item, quantity, unitPrice: 0 };
 }
@@ -338,6 +361,9 @@ function normalizeEvent(payload) {
     item: String(firstValue(payload, ['item_name', 'item', 'name', 'product', 'product_name']) || ''),
     qty: Number(firstValue(payload, ['qty', 'quantity', 'count', 'amount']) || 0),
     unitPrice: Number(firstValue(payload, ['unit_price', 'price', 'sale_price', 'buy_price']) || 0),
+    currentItemTotal: nullableNumber(firstValue(payload, ['current_item_total', 'current_stock', 'stock_total'])),
+    ledgerBalance: nullableNumber(firstValue(payload, ['shop_ledger', 'ledger_balance', 'current_ledger'])),
+    occurredAt: String(firstValue(payload, ['timestamp', 'occurred_at', 'created_at']) || ''),
     actor: String(firstValue(payload, ['actor', 'customer', 'buyer', 'seller', 'player']) || ''),
     orderId: String(firstValue(payload, ['order_id', 'buy_order_id', 'receipt_id', 'transaction_id']) || '')
   };
@@ -350,6 +376,17 @@ function firstValue(object, keys) {
     }
   }
   return '';
+}
+
+function nullableNumber(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  const number = Number(String(value).replace(/[$,]/g, '').trim());
+  return Number.isFinite(number) ? number : null;
+}
+
+function eventDate(event) {
+  const parsed = new Date(event && event.occurredAt ? event.occurredAt : '');
+  return isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
 function normalizeType(value) {
@@ -385,7 +422,7 @@ function writeTransaction(sheet, event) {
   const cashFlowFormula = `=IF(E${row}="";"";IF(C${row}="Sale";F${row}*G${row};IF(C${row}="Purchase";-F${row}*G${row};0)))`;
 
   sheet.getRange(row, 1, 1, 11).setValues([[
-    new Date(),
+    eventDate(event),
     SOURCE_NAME,
     event.type,
     event.direction,
@@ -398,6 +435,46 @@ function writeTransaction(sheet, event) {
     event.webhookId
   ]]);
   formatTimestampCell(sheet, row);
+}
+
+function writeWebhookControls(spreadsheet, event) {
+  const result = { stock: false, ledger: false };
+  const occurredAt = eventDate(event);
+
+  if (event.item && event.currentItemTotal !== null) {
+    const stockSheet = requireSheet(spreadsheet, STOCK_COUNTS_SHEET);
+    const row = firstEmptyRow(stockSheet, 2, 1);
+    stockSheet.getRange(row, 1, 1, 4).setValues([[
+      occurredAt,
+      'Storefront',
+      event.item,
+      event.currentItemTotal
+    ]]);
+    stockSheet.getRange(row, 7, 1, 2).setValues([[
+      false,
+      joinNotes('Storefront reported current item total', '[Webhook ' + event.webhookId + ']')
+    ]]);
+    formatTimestampCell(stockSheet, row);
+    result.stock = true;
+  }
+
+  if (event.ledgerBalance !== null) {
+    const ledgerSheet = requireSheet(spreadsheet, CASH_COUNTS_SHEET);
+    const row = firstEmptyRow(ledgerSheet, 2, 1);
+    ledgerSheet.getRange(row, 1, 1, 3).setValues([[
+      occurredAt,
+      'Store Ledger',
+      event.ledgerBalance
+    ]]);
+    ledgerSheet.getRange(row, 6, 1, 2).setValues([[
+      false,
+      joinNotes('Storefront reported current ledger', '[Webhook ' + event.webhookId + ']')
+    ]]);
+    formatTimestampCell(ledgerSheet, row);
+    result.ledger = true;
+  }
+
+  return result;
 }
 
 function formatTimestampCell(sheet, row) {
@@ -445,6 +522,8 @@ function readInventorySnapshot(spreadsheet) {
   const materialsSheet = requireSheet(spreadsheet, 'Materials');
   const latestStorefrontCounts = readLatestStockCounts(spreadsheet, 'Storefront');
   const latestStorageCounts = readLatestStockCounts(spreadsheet, 'Storage');
+  const storefrontMovements = readStockMovementDeltas(spreadsheet, 'Storefront', latestStorefrontCounts);
+  const storageMovements = readStockMovementDeltas(spreadsheet, 'Storage', latestStorageCounts);
   const productRowCount = Math.max(0, productsSheet.getLastRow() - 1);
   const materialRowCount = Math.max(0, materialsSheet.getLastRow() - 1);
   const productRows = productRowCount
@@ -457,22 +536,32 @@ function readInventorySnapshot(spreadsheet) {
   const products = productRows
       .filter(row => row[0])
       .map(row => {
-        const latestCount = latestStorefrontCounts[inventoryKey(row[0])];
+        const key = inventoryKey(row[0]);
+        const latestCount = latestStorefrontCounts[key];
         return {
           itemName: String(row[0]),
           itemLabel: String(row[1] || row[0]),
           target: numberOrZero(row[5]),
-          currentStock: latestCount ? latestCount.quantity : numberOrZero(row[6]),
+          currentStock: Math.max(
+            0,
+            (latestCount ? latestCount.quantity : numberOrZero(row[6]))
+              + numberOrZero(storefrontMovements.deltas[key])
+          ),
           countedAt: latestCount ? latestCount.countedAt : ''
         };
       });
   const materials = materialRows
       .filter(row => row[0])
       .map(row => {
-        const latestCount = latestStorageCounts[inventoryKey(row[0])];
+        const key = inventoryKey(row[0]);
+        const latestCount = latestStorageCounts[key];
         return {
           ingredient: String(row[0]),
-          storageCount: latestCount ? latestCount.quantity : numberOrZero(row[2]),
+          storageCount: Math.max(
+            0,
+            (latestCount ? latestCount.quantity : numberOrZero(row[2]))
+              + numberOrZero(storageMovements.deltas[key])
+          ),
           countedAt: latestCount ? latestCount.countedAt : ''
         };
       });
@@ -486,8 +575,16 @@ function readInventorySnapshot(spreadsheet) {
     if (storageByKey[key]) return;
     storageByKey[key] = {
       ingredient: latestCount.itemName,
-      storageCount: latestCount.quantity,
+      storageCount: Math.max(0, latestCount.quantity + numberOrZero(storageMovements.deltas[key])),
       countedAt: latestCount.countedAt
+    };
+  });
+  Object.keys(storageMovements.deltas).forEach(key => {
+    if (storageByKey[key]) return;
+    storageByKey[key] = {
+      ingredient: storageMovements.names[key] || key,
+      storageCount: Math.max(0, numberOrZero(storageMovements.deltas[key])),
+      countedAt: ''
     };
   });
 
@@ -569,6 +666,86 @@ function applyCashFlowRows(sheet, applyMovement) {
     if (type === 'sale') applyMovement(row[0], amount);
     if (type === 'purchase') applyMovement(row[0], -amount);
   });
+}
+
+function readStockMovementDeltas(spreadsheet, location, latestCounts) {
+  const deltas = {};
+  const names = {};
+  const wantedLocation = inventoryKey(location);
+
+  function applyMovement(dateValue, itemValue, quantityDelta, baselineRequired) {
+    const key = inventoryKey(itemValue);
+    if (!key) return;
+    names[key] = String(itemValue || names[key] || key);
+    const baseline = latestCounts[key];
+    if ((baselineRequired && !baseline) || !quantityDelta) return;
+    const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    const sortTime = isNaN(date.getTime()) ? 0 : date.getTime();
+    if (baseline && sortTime <= baseline.sortTime) return;
+    deltas[key] = numberOrZero(deltas[key]) + quantityDelta;
+  }
+
+  if (wantedLocation === 'storefront') {
+    const transactionSheet = requireSheet(spreadsheet, TRANSACTION_SHEET);
+    const transactionRows = Math.max(0, transactionSheet.getLastRow() - 1);
+    if (transactionRows) {
+      transactionSheet.getRange(2, 1, transactionRows, 6).getValues().forEach(row => {
+        const quantity = Math.abs(numberOrZero(row[5]));
+        const direction = inventoryKey(row[3]);
+        const delta = direction === 'stock in' || direction === 'purchase' || direction === 'return'
+          ? quantity
+          : -quantity;
+        applyMovement(row[0], row[4], delta, true);
+      });
+    }
+  }
+
+  const movementSheet = requireSheet(spreadsheet, MANUAL_MOVEMENT_SHEET);
+  const movementRows = Math.max(0, movementSheet.getLastRow() - 1);
+  if (movementRows) {
+    movementSheet.getRange(2, 1, movementRows, 10).getValues().forEach(row => {
+      const delta = manualStockDelta(row, wantedLocation);
+      applyMovement(row[0], row[4], delta, false);
+    });
+  }
+
+  return { deltas, names };
+}
+
+function manualStockDelta(row, location) {
+  const transferredMatch = String(row[9] || '').match(/Transferred qty:\s*(-?(?:\d+(?:\.\d+)?|\.\d+))/i);
+  const transferredQuantity = transferredMatch ? numberOrZero(transferredMatch[1]) : 0;
+  const quantity = Math.abs(numberOrZero(row[5]) || transferredQuantity);
+  if (!quantity) return 0;
+  const kind = guiMovementKind(row[9]);
+
+  if (location === 'storefront') {
+    if (kind === 'Storefront Transfer') return quantity;
+    if (kind === 'Storage Transfer') return -quantity;
+    return 0;
+  }
+
+  if (kind === 'P2P Sale' || kind === 'Production Use' || kind === 'Correction Out' || kind === 'Storefront Transfer') {
+    return -quantity;
+  }
+  if (kind === 'P2P Purchase' || kind === 'Correction In' || kind === 'Storage Transfer') {
+    return quantity;
+  }
+  if (kind === 'Cash In' || kind === 'Cash Out' || kind === 'Payroll Payout' || kind === 'Correction') return 0;
+
+  const type = inventoryKey(row[2]);
+  const direction = inventoryKey(row[3]);
+  if (type === 'sale') return -quantity;
+  if (type === 'purchase') return quantity;
+  if (type === 'stocking movement' || type === 'adjustment') {
+    return direction === 'stock out' ? -quantity : quantity;
+  }
+  return 0;
+}
+
+function guiMovementKind(notes) {
+  const match = String(notes || '').match(/(?:^|\|)\s*GUI type:\s*([^|]+)/i);
+  return match ? String(match[1] || '').trim() : '';
 }
 
 function readLatestStockCounts(spreadsheet, location) {

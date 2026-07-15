@@ -22,7 +22,7 @@
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
-  function selectLatestCounts({ location, inventory = {}, operations = [] }) {
+  function selectLatestCounts({ location, inventory = {}, operations = [], snapshotGeneratedAt = "" }) {
     const backendCounts = new Map();
     const sourceRows = location === "Storefront"
       ? inventory.products
@@ -39,40 +39,62 @@
       });
     }
 
-    const manualCounts = new Map();
-    operations.forEach((entry, index) => {
-      if (entry?.kind !== "Stock Count" || entry.location !== location) return;
-      const key = stockKey(entry);
-      if (!key) return;
+    const snapshotTime = timestamp(snapshotGeneratedAt);
+    operations
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => !operationIsRepresented(entry, snapshotTime))
+      .sort((a, b) => timestamp(a.entry?.createdAt) - timestamp(b.entry?.createdAt) || b.index - a.index)
+      .forEach(({ entry }) => {
+        const key = stockKey(entry);
+        if (!key) return;
 
-      const candidate = {
-        quantity: numberOrZero(entry.quantity),
-        countedAt: entry.createdAt || "",
-        order: index
-      };
-      const current = manualCounts.get(key);
-      const candidateTime = timestamp(candidate.countedAt);
-      const currentTime = timestamp(current?.countedAt);
-      if (!current || candidateTime > currentTime || (candidateTime === currentTime && candidate.order < current.order)) {
-        manualCounts.set(key, candidate);
-      }
-    });
+        const current = backendCounts.get(key) || { quantity: 0, countedAt: "" };
+        const eventTime = timestamp(entry?.createdAt);
+        const countedTime = timestamp(current.countedAt);
 
-    manualCounts.forEach((manual, key) => {
-      const backend = backendCounts.get(key);
-      if (!backend) {
-        backendCounts.set(key, manual);
-        return;
-      }
+        if (entry?.kind === "Stock Count") {
+          if (entry.location !== location || eventTime < countedTime) return;
+          backendCounts.set(key, {
+            quantity: numberOrZero(entry.quantity),
+            countedAt: entry.createdAt || ""
+          });
+          return;
+        }
 
-      const manualTime = timestamp(manual.countedAt);
-      const backendTime = timestamp(backend.countedAt);
-      if (backendTime === Number.NEGATIVE_INFINITY || manualTime >= backendTime) {
-        backendCounts.set(key, manual);
-      }
-    });
+        const movement = stockMovementDelta(entry, location);
+        if (!movement || eventTime <= countedTime) return;
+        backendCounts.set(key, {
+          quantity: Math.max(0, numberOrZero(current.quantity) + movement),
+          countedAt: current.countedAt || ""
+        });
+      });
 
-    return new Map([...backendCounts].map(([key, value]) => [key, value.quantity]));
+    return new Map([...backendCounts].map(([key, value]) => [key, Math.max(0, numberOrZero(value.quantity))]));
+  }
+
+  function operationIsRepresented(entry, snapshotTime) {
+    if (snapshotTime === Number.NEGATIVE_INFINITY || entry?.syncStatus !== "Synced") return false;
+    return timestamp(entry.syncedAt || entry.createdAt) <= snapshotTime;
+  }
+
+  function stockMovementDelta(entry, location) {
+    const quantity = Math.abs(numberOrZero(entry?.quantity));
+    if (!quantity) return 0;
+
+    const kind = String(entry?.kind || "");
+    if (location === "Storefront") {
+      if (kind === "Storefront Transfer") return quantity;
+      if (kind === "Storage Transfer") return -quantity;
+      return 0;
+    }
+
+    if (kind === "P2P Sale" || kind === "Production Use" || kind === "Correction Out" || kind === "Storefront Transfer") {
+      return -quantity;
+    }
+    if (kind === "P2P Purchase" || kind === "Correction In" || kind === "Storage Transfer") {
+      return quantity;
+    }
+    return 0;
   }
 
   function selectCurrentLedger({ ledger = null, operations = [], snapshotGeneratedAt = "" }) {
@@ -114,6 +136,7 @@
         }
         if (kind === "P2P Sale" || kind === "Cash In") movement = amount;
         if (kind === "P2P Purchase" || kind === "Cash Out" || kind === "Payroll Payout") movement = -amount;
+        if (kind === "Correction") movement = numberOrZero(entry.amount);
         if (kind === "Payroll Payment" && String(entry.paymentMethod || "Ledger") === "Ledger") movement = -amount;
         if (!movement) return;
 

@@ -567,9 +567,17 @@ Sell Price: $2.25`
     input: {
       id: 'sale-example',
       title: 'Bought Item',
-      description: 'Item label: Test Rifle\nAmount Bought: 1\nSell Price: $100'
+      description: 'Shop Ledger: $6,025.50\nItem label: Test Rifle\nAmount Bought: 1\nSell Price: $100\nCurrent Item Total: 9'
     },
-    expected: { event_type: 'Sale', direction: 'Stock Out', item_name: 'Test Rifle', quantity: 1, unit_price: 100 }
+    expected: {
+      event_type: 'Sale',
+      direction: 'Stock Out',
+      item_name: 'Test Rifle',
+      quantity: 1,
+      unit_price: 100,
+      shop_ledger: 6025.5,
+      current_item_total: 9
+    }
   },
   {
     name: 'buy order fill',
@@ -585,9 +593,17 @@ Sell Price: $2.25`
     input: {
       id: 'sold-example',
       title: 'Item Sold to Shop',
-      description: 'Item name: iron\nItem label: Iron\nSold Amount: 10\nSell Price: $10'
+      description: 'Shop Ledger: $0\nItem name: iron\nItem label: Iron\nSold Amount: 10\nSell Price: $10'
     },
-    expected: { event_type: 'Purchase', direction: 'Purchase', item_name: 'Iron', quantity: 10, unit_price: 1 }
+    expected: {
+      event_type: 'Purchase',
+      direction: 'Purchase',
+      item_name: 'Iron',
+      quantity: 10,
+      unit_price: 1,
+      shop_ledger: 0,
+      current_item_total: null
+    }
   }
 ];
 

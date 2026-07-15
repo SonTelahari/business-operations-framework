@@ -1927,9 +1927,15 @@ function saveManualMovement() {
 }
 
 function saveLedgerAdjustment() {
-  const amount = Number(elements.ledgerAmount.value || 0);
+  const kind = elements.ledgerType.value;
+  const enteredAmount = Number(elements.ledgerAmount.value || 0);
+  const amount = kind === "Correction" ? enteredAmount : Math.abs(enteredAmount);
+  if (!Number.isFinite(amount) || (kind !== "Ledger Count" && amount === 0)) {
+    elements.ledgerAmount.focus();
+    return;
+  }
   addOperation({
-    kind: elements.ledgerType.value,
+    kind,
     location: "Ledger",
     itemName: "",
     itemLabel: "",
@@ -2680,7 +2686,8 @@ function getLatestCounts(location) {
   return window.FRONTIER_INVENTORY_COUNTS.selectLatestCounts({
     location,
     inventory: backendSnapshot?.sheet?.inventory || {},
-    operations
+    operations,
+    snapshotGeneratedAt: backendSnapshot?.sheet?.generatedAt || ""
   });
 }
 

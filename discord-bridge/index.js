@@ -124,7 +124,15 @@ async function forwardToSheet(payload) {
     throw new Error(`Apps Script rejected payload: ${result.error || resultText}`);
   }
 
-  logInfo(`Forwarded ${payload.event_type} for ${payload.item_name} x${payload.quantity}: ${resultText}`);
+  const controls = [
+    payload.current_item_total !== null && payload.current_item_total !== undefined
+      ? `stock control=${payload.current_item_total}`
+      : "",
+    payload.shop_ledger !== null && payload.shop_ledger !== undefined
+      ? `ledger control=$${payload.shop_ledger}`
+      : ""
+  ].filter(Boolean).join(", ");
+  logInfo(`Forwarded ${payload.event_type} for ${payload.item_name} x${payload.quantity}${controls ? ` / ${controls}` : ""}: ${resultText}`);
 }
 
 function startHealthServer() {

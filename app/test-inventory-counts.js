@@ -86,6 +86,68 @@ const completeStorageCount = selectLatestCounts({
 assert.equal(completeStorageCount.get("iron"), 25, "the complete storage snapshot must take precedence over materials-only data");
 assert.equal(completeStorageCount.get("navy revolver"), 2, "counted finished goods in storage must be preserved");
 
+const pendingTransferStorefront = selectLatestCounts({
+  location: "Storefront",
+  inventory: { products: [{ itemName: "Navy Revolver", currentStock: 5, countedAt: "2026-07-13T10:00:00.000Z" }] },
+  snapshotGeneratedAt: "2026-07-13T10:00:30.000Z",
+  operations: [{
+    kind: "Storefront Transfer",
+    itemName: "Navy Revolver",
+    quantity: 2,
+    createdAt: "2026-07-13T10:01:00.000Z",
+    syncStatus: "Pending sheet sync"
+  }]
+});
+assert.equal(pendingTransferStorefront.get("navy revolver"), 7, "a pending storefront transfer must appear immediately");
+
+const pendingTransferStorage = selectLatestCounts({
+  location: "Storage",
+  inventory: { storage: [{ ingredient: "Navy Revolver", storageCount: 1, countedAt: "2026-07-13T10:00:00.000Z" }] },
+  snapshotGeneratedAt: "2026-07-13T10:00:30.000Z",
+  operations: [{
+    kind: "Storefront Transfer",
+    itemName: "Navy Revolver",
+    quantity: 2,
+    createdAt: "2026-07-13T10:01:00.000Z",
+    syncStatus: "Pending sheet sync"
+  }]
+});
+assert.equal(pendingTransferStorage.get("navy revolver"), 0, "a pending storefront transfer must reduce storage without going negative");
+
+const pendingProductionAndPurchase = selectLatestCounts({
+  location: "Storage",
+  inventory: { materials: [{ ingredient: "Iron", storageCount: 20, countedAt: "2026-07-13T10:00:00.000Z" }] },
+  snapshotGeneratedAt: "2026-07-13T10:00:30.000Z",
+  operations: [
+    { kind: "P2P Purchase", itemName: "Iron", quantity: 3, createdAt: "2026-07-13T10:02:00.000Z", syncStatus: "Pending sheet sync" },
+    { kind: "Production Use", itemName: "Iron", quantity: 5, createdAt: "2026-07-13T10:01:00.000Z", syncStatus: "Pending sheet sync" }
+  ]
+});
+assert.equal(pendingProductionAndPurchase.get("iron"), 18, "production and P2P stock movements must be applied in order");
+
+const snapshotBoundary = selectLatestCounts({
+  location: "Storage",
+  inventory: { materials: [{ ingredient: "Iron", storageCount: 20, countedAt: "2026-07-13T10:00:00.000Z" }] },
+  snapshotGeneratedAt: "2026-07-13T10:20:00.000Z",
+  operations: [
+    { kind: "P2P Purchase", itemName: "Iron", quantity: 4, createdAt: "2026-07-13T10:05:00.000Z", syncedAt: "2026-07-13T10:19:00.000Z", syncStatus: "Synced" },
+    { kind: "P2P Purchase", itemName: "Iron", quantity: 3, createdAt: "2026-07-13T10:06:00.000Z", syncedAt: "2026-07-13T10:21:00.000Z", syncStatus: "Synced" }
+  ]
+});
+assert.equal(snapshotBoundary.get("iron"), 23, "only synced operations newer than the snapshot may be applied locally");
+
+const countResetsMovements = selectLatestCounts({
+  location: "Storage",
+  inventory: { materials: [{ ingredient: "Iron", storageCount: 20, countedAt: "2026-07-13T10:00:00.000Z" }] },
+  snapshotGeneratedAt: "2026-07-13T10:00:30.000Z",
+  operations: [
+    { kind: "Correction Out", itemName: "Iron", quantity: 2, createdAt: "2026-07-13T10:04:00.000Z", syncStatus: "Pending sheet sync" },
+    { kind: "Stock Count", location: "Storage", itemName: "Iron", quantity: 50, createdAt: "2026-07-13T10:03:00.000Z", syncStatus: "Pending sheet sync" },
+    { kind: "Production Use", itemName: "Iron", quantity: 5, createdAt: "2026-07-13T10:02:00.000Z", syncStatus: "Pending sheet sync" }
+  ]
+});
+assert.equal(countResetsMovements.get("iron"), 48, "a count must reset earlier movements while later movements continue from it");
+
 const ledgerWithPendingMovement = selectCurrentLedger({
   ledger: {
     balance: 1000,
@@ -125,5 +187,15 @@ const payrollLedger = selectCurrentLedger({
   ]
 });
 assert.equal(payrollLedger.balance, 850, "ledger payroll must reduce the ledger while cash payroll remains separate");
+
+const correctedLedger = selectCurrentLedger({
+  ledger: { balance: 1000 },
+  snapshotGeneratedAt: "2026-07-13T10:20:00.000Z",
+  operations: [
+    { kind: "Correction", amount: -35, createdAt: "2026-07-13T10:21:00.000Z", syncStatus: "Pending sheet sync" },
+    { kind: "Correction", amount: 10, createdAt: "2026-07-13T10:22:00.000Z", syncStatus: "Pending sheet sync" }
+  ]
+});
+assert.equal(correctedLedger.balance, 975, "signed corrections must support both additions and deductions");
 
 console.log("Inventory count precedence checks passed.");
