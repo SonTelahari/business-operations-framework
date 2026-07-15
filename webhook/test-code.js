@@ -123,4 +123,21 @@ const controlledMovements = plain(context.readStockMovementDeltas({
 }));
 assert.equal(controlledMovements.deltas["navy revolver"], 1, "the control event must be excluded while later movements continue");
 
+const buyOrderPurchases = plain(context.readBuyOrderPurchases({
+  getSheetByName(name) {
+    if (name !== "Transactions") return null;
+    return dataSheet([
+      [new Date("2026-07-15T10:00:00.000Z"), "", "Purchase", "Purchase", "Nitrite", 25, 1, 25, -25, "", "purchase-1"],
+      [new Date("2026-07-15T10:01:00.000Z"), "", "Sale", "Stock Out", "Navy Revolver", 1, 105, -1, 105, "", "sale-1"]
+    ]);
+  }
+}));
+assert.deepEqual(buyOrderPurchases, [{
+  eventId: "purchase-1",
+  occurredAt: "2026-07-15T10:00:00.000Z",
+  itemName: "Nitrite",
+  quantity: 25,
+  unitPrice: 1
+}]);
+
 console.log("Apps Script reconciliation checks passed.");

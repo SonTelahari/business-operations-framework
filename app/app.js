@@ -4,6 +4,7 @@ const OPERATIONS_KEY = "frontier_still_water_manual_operations_v1";
 const TARGETS_KEY = "frontier_still_water_storefront_targets_v1";
 const SUPPLY_ACTIVE_STATUSES = new Set(["Active", "Ordered", "Partially Received"]);
 const SUPPLY_DELIVERY_STATUSES = new Set(["Ordered", "Partially Received"]);
+const BUY_ORDER_OPEN_STATUSES = new Set(["Active", "Paused"]);
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
@@ -37,7 +38,10 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "target.updated": "Storefront target updated",
   "target.removed": "Storefront target removed",
   "supplier.saved": "Supplier record saved",
-  "supplier.removed": "Supplier record removed"
+  "supplier.removed": "Supplier record removed",
+  "storefront_buy_order.saved": "Storefront buy order saved",
+  "storefront_buy_order.fill_adjusted": "Buy order fill adjusted",
+  "storefront_buy_order.removed": "Storefront buy order removed"
 });
 const itemCatalog = window.FRONTIER_ITEMS || [];
 const recipeCatalog = window.FRONTIER_RECIPES || {};
@@ -52,6 +56,7 @@ let timeClock = { current: null, entries: [] };
 let operations = loadOperations();
 let stockTargets = loadStockTargets();
 let supplyOrders = [];
+let storefrontBuyOrders = [];
 let suppliers = [];
 let currentUser = null;
 let currentRole = "employee";
@@ -64,6 +69,7 @@ let lastBackendRefreshAt = 0;
 let supplyReceiptPending = false;
 let activeOrder = newOrder();
 let activeSupplyOrder = newSupplyOrder();
+let activeStorefrontBuyOrder = newStorefrontBuyOrder();
 let activeSupplier = newSupplier();
 let activeView = "quote";
 let activeSection = "dashboard";
@@ -103,6 +109,27 @@ const elements = {
   productionMaterialsList: document.querySelector("#productionMaterialsList"),
   missingRecipes: document.querySelector("#missingRecipes"),
   supplySection: document.querySelector("#supplySection"),
+  buyOrdersSection: document.querySelector("#buyOrdersSection"),
+  buyOrderMeta: document.querySelector("#buyOrderMeta"),
+  buyOrderStatus: document.querySelector("#buyOrderStatusInput"),
+  buyOrderItem: document.querySelector("#buyOrderItemInput"),
+  buyOrderItemOptions: document.querySelector("#buyOrderItemOptions"),
+  buyOrderPostedAt: document.querySelector("#buyOrderPostedAtInput"),
+  buyOrderQuantity: document.querySelector("#buyOrderQuantityInput"),
+  buyOrderUnitPrice: document.querySelector("#buyOrderUnitPriceInput"),
+  buyOrderNotes: document.querySelector("#buyOrderNotesInput"),
+  buyOrderFilled: document.querySelector("#buyOrderFilledInput"),
+  buyOrderActiveCount: document.querySelector("#buyOrderActiveCount"),
+  buyOrderOutstandingCount: document.querySelector("#buyOrderOutstandingCount"),
+  buyOrderCommittedValue: document.querySelector("#buyOrderCommittedValue"),
+  buyOrderDataStatus: document.querySelector("#buyOrderDataStatus"),
+  buyOrderSavedCount: document.querySelector("#buyOrderSavedCount"),
+  buyOrderFilter: document.querySelector("#buyOrderFilterInput"),
+  buyOrderList: document.querySelector("#buyOrderList"),
+  newBuyOrder: document.querySelector("#newBuyOrderButton"),
+  saveBuyOrder: document.querySelector("#saveBuyOrderButton"),
+  deleteBuyOrder: document.querySelector("#deleteBuyOrderButton"),
+  adjustBuyOrderFill: document.querySelector("#adjustBuyOrderFillButton"),
   supplyOrderMeta: document.querySelector("#supplyOrderMeta"),
   supplyStatus: document.querySelector("#supplyStatusSelect"),
   supplyProducer: document.querySelector("#supplyProducerInput"),
@@ -271,6 +298,24 @@ function newSupplyOrder() {
   };
 }
 
+function newStorefrontBuyOrder() {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    itemName: "",
+    itemLabel: "",
+    quantity: 1,
+    unitPrice: 0,
+    postedAt: now,
+    status: "Active",
+    notes: "",
+    filledQuantity: 0,
+    fillEvents: [],
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
 function newSupplier() {
   const now = new Date().toISOString();
   return {
@@ -350,6 +395,7 @@ function seedDatalist() {
     .map(item => `<option value="${escapeHtml(item.label)}">${escapeHtml(item.name)} - $${formatNumber(item.price)}</option>`)
     .join("");
   elements.stockOptions.innerHTML = stockOptionMarkup(stockCatalog);
+  elements.buyOrderItemOptions.innerHTML = stockOptionMarkup([...ingredientCatalog, ...itemCatalog]);
   seedSupplyMaterialOptions();
   seedCountDatalist();
 }
@@ -412,6 +458,10 @@ function wireEvents() {
   document.querySelector("#orderSupplyButton").addEventListener("click", () => setSupplyStatus("Ordered"));
   elements.receiveSupply.addEventListener("click", receiveSupplyOrder);
   document.querySelector("#deleteSupplyOrderButton").addEventListener("click", removeActiveSupplyOrder);
+  elements.newBuyOrder.addEventListener("click", startNewStorefrontBuyOrder);
+  elements.saveBuyOrder.addEventListener("click", saveStorefrontBuyOrder);
+  elements.deleteBuyOrder.addEventListener("click", removeActiveStorefrontBuyOrder);
+  elements.adjustBuyOrderFill.addEventListener("click", adjustStorefrontBuyOrderFill);
   elements.newSupplier.addEventListener("click", startNewSupplier);
   elements.saveSupplier.addEventListener("click", saveSupplier);
   elements.deleteSupplier.addEventListener("click", removeActiveSupplier);
@@ -462,6 +512,7 @@ function wireEvents() {
         loadSupplyOrders({ silent: true });
         loadSuppliers({ silent: true });
       }
+      if (activeSection === "buy-orders" && isManagement()) loadStorefrontBuyOrders({ silent: true });
     });
   });
 
@@ -487,9 +538,13 @@ function wireEvents() {
   elements.supplyProducer.addEventListener("change", updateSupplyMaterialDefaults);
 
   elements.supplyMaterial.addEventListener("input", updateSupplyMaterialDefaults);
+  [elements.buyOrderItem, elements.buyOrderPostedAt, elements.buyOrderQuantity, elements.buyOrderUnitPrice, elements.buyOrderStatus, elements.buyOrderNotes]
+    .forEach(field => ["input", "change"].forEach(eventName => field.addEventListener(eventName, updateStorefrontBuyOrderFromInputs)));
+  elements.buyOrderItem.addEventListener("input", updateStorefrontBuyOrderItemDefaults);
 
   elements.filter.addEventListener("change", renderOrdersList);
   elements.supplyFilter.addEventListener("change", renderSupplyOrdersList);
+  elements.buyOrderFilter.addEventListener("change", renderStorefrontBuyOrders);
 }
 
 function startNewDocument() {
@@ -499,6 +554,10 @@ function startNewDocument() {
     elements.supplyProducer.focus();
     return;
   }
+  if (activeSection === "buy-orders") {
+    startNewStorefrontBuyOrder();
+    return;
+  }
   activeOrder = newOrder();
   activeSection = "workbench";
   render();
@@ -506,6 +565,7 @@ function startNewDocument() {
 
 function saveCurrentDocument() {
   if (activeSection === "supplies") return saveSupplyOrder();
+  if (activeSection === "buy-orders") return saveStorefrontBuyOrder();
   saveActiveOrder();
 }
 
@@ -739,6 +799,209 @@ async function loadSupplyOrders({ silent = false } = {}) {
   } catch (error) {
     if (!silent) elements.supplyDataStatus.textContent = `Unable to load producer orders: ${error.message}`;
   }
+}
+
+function startNewStorefrontBuyOrder() {
+  activeStorefrontBuyOrder = newStorefrontBuyOrder();
+  renderStorefrontBuyOrderWorkspace();
+  elements.buyOrderItem.focus();
+}
+
+function updateStorefrontBuyOrderFromInputs() {
+  const item = resolveStockItem(elements.buyOrderItem.value);
+  activeStorefrontBuyOrder.itemName = item.name;
+  activeStorefrontBuyOrder.itemLabel = item.label || item.name;
+  activeStorefrontBuyOrder.quantity = Math.max(1, Number(elements.buyOrderQuantity.value || 1));
+  activeStorefrontBuyOrder.unitPrice = Math.max(0, Number(elements.buyOrderUnitPrice.value || 0));
+  activeStorefrontBuyOrder.postedAt = fromDateTimeLocalValue(elements.buyOrderPostedAt.value)
+    || activeStorefrontBuyOrder.postedAt;
+  activeStorefrontBuyOrder.status = elements.buyOrderStatus.value;
+  activeStorefrontBuyOrder.notes = elements.buyOrderNotes.value.trim();
+}
+
+function updateStorefrontBuyOrderItemDefaults() {
+  const item = resolveStockItem(elements.buyOrderItem.value);
+  if (!item.name) return;
+  const currentName = normalize(activeStorefrontBuyOrder.itemName);
+  activeStorefrontBuyOrder.itemName = item.name;
+  activeStorefrontBuyOrder.itemLabel = item.label || item.name;
+  if (currentName !== normalize(item.name) && Number(elements.buyOrderUnitPrice.value || 0) === 0) {
+    const price = preferredSupplyUnitPrice(item.name);
+    elements.buyOrderUnitPrice.value = price || 0;
+    activeStorefrontBuyOrder.unitPrice = price || 0;
+  }
+}
+
+async function loadStorefrontBuyOrders({ silent = false } = {}) {
+  if (!isManagement()) return;
+  try {
+    const response = await fetch("/api/storefront-buy-orders", { headers: { accept: "application/json" } });
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    storefrontBuyOrders = Array.isArray(result.orders) ? result.orders : [];
+    const refreshed = storefrontBuyOrders.find(order => order.id === activeStorefrontBuyOrder.id);
+    if (refreshed) activeStorefrontBuyOrder = structuredClone(refreshed);
+    elements.buyOrderDataStatus.textContent = `${storefrontBuyOrders.length} shared buy ${storefrontBuyOrders.length === 1 ? "order" : "orders"} loaded`;
+    renderStorefrontBuyOrderWorkspace();
+  } catch (error) {
+    if (!silent) elements.buyOrderDataStatus.textContent = `Unable to load buy orders: ${error.message}`;
+  }
+}
+
+async function saveStorefrontBuyOrder() {
+  updateStorefrontBuyOrderFromInputs();
+  if (!activeStorefrontBuyOrder.itemName) {
+    elements.buyOrderDataStatus.textContent = "Select a material or item";
+    elements.buyOrderItem.focus();
+    return;
+  }
+  elements.saveBuyOrder.disabled = true;
+  elements.buyOrderDataStatus.textContent = "Saving storefront buy order";
+  try {
+    const response = await fetch("/api/storefront-buy-orders", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(activeStorefrontBuyOrder)
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    activeStorefrontBuyOrder = structuredClone(result.order);
+    storefrontBuyOrders = result.orders || [];
+    elements.buyOrderDataStatus.textContent = `${activeStorefrontBuyOrder.itemLabel} saved as ${activeStorefrontBuyOrder.status}`;
+    renderStorefrontBuyOrderWorkspace();
+  } catch (error) {
+    elements.buyOrderDataStatus.textContent = `Save failed: ${error.message}`;
+  } finally {
+    elements.saveBuyOrder.disabled = false;
+  }
+}
+
+async function adjustStorefrontBuyOrderFill() {
+  const isSaved = storefrontBuyOrders.some(order => order.id === activeStorefrontBuyOrder.id);
+  if (!isSaved) return;
+  const filledQuantity = Number(elements.buyOrderFilled.value || 0);
+  elements.adjustBuyOrderFill.disabled = true;
+  try {
+    const response = await fetch(`/api/storefront-buy-orders/${encodeURIComponent(activeStorefrontBuyOrder.id)}/fill`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ filledQuantity })
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    activeStorefrontBuyOrder = structuredClone(result.order);
+    storefrontBuyOrders = result.orders || [];
+    elements.buyOrderDataStatus.textContent = `Fill adjusted to ${formatNumber(activeStorefrontBuyOrder.filledQuantity)}`;
+    renderStorefrontBuyOrderWorkspace();
+  } catch (error) {
+    elements.buyOrderDataStatus.textContent = `Adjustment failed: ${error.message}`;
+  } finally {
+    elements.adjustBuyOrderFill.disabled = false;
+  }
+}
+
+async function removeActiveStorefrontBuyOrder() {
+  const isSaved = storefrontBuyOrders.some(order => order.id === activeStorefrontBuyOrder.id);
+  if (!isSaved) return startNewStorefrontBuyOrder();
+  if (!window.confirm(`Remove the buy order for ${activeStorefrontBuyOrder.itemLabel}?`)) return;
+  try {
+    const response = await fetch(`/api/storefront-buy-orders/${encodeURIComponent(activeStorefrontBuyOrder.id)}`, {
+      method: "DELETE",
+      headers: { accept: "application/json" }
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    storefrontBuyOrders = result.orders || [];
+    activeStorefrontBuyOrder = newStorefrontBuyOrder();
+    elements.buyOrderDataStatus.textContent = "Buy order removed";
+    renderStorefrontBuyOrderWorkspace();
+  } catch (error) {
+    elements.buyOrderDataStatus.textContent = `Remove failed: ${error.message}`;
+  }
+}
+
+function loadStorefrontBuyOrder(orderId) {
+  const order = storefrontBuyOrders.find(candidate => candidate.id === orderId);
+  if (!order) return;
+  activeStorefrontBuyOrder = structuredClone(order);
+  renderStorefrontBuyOrderWorkspace();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function renderStorefrontBuyOrderWorkspace() {
+  if (!elements.buyOrdersSection) return;
+  const isSaved = storefrontBuyOrders.some(order => order.id === activeStorefrontBuyOrder.id);
+  const filled = Math.max(0, Number(activeStorefrontBuyOrder.filledQuantity || 0));
+  elements.buyOrderItem.value = activeStorefrontBuyOrder.itemLabel || activeStorefrontBuyOrder.itemName;
+  elements.buyOrderPostedAt.value = toDateTimeLocalValue(activeStorefrontBuyOrder.postedAt);
+  elements.buyOrderQuantity.value = activeStorefrontBuyOrder.quantity;
+  elements.buyOrderUnitPrice.value = activeStorefrontBuyOrder.unitPrice;
+  elements.buyOrderStatus.value = activeStorefrontBuyOrder.status;
+  elements.buyOrderNotes.value = activeStorefrontBuyOrder.notes || "";
+  elements.buyOrderFilled.value = filled;
+  elements.buyOrderFilled.max = activeStorefrontBuyOrder.quantity;
+  elements.buyOrderMeta.textContent = isSaved
+    ? `${activeStorefrontBuyOrder.status} / posted ${formatDateTime(activeStorefrontBuyOrder.postedAt)}`
+    : "New order";
+  elements.deleteBuyOrder.disabled = !isSaved || filled > 0;
+  elements.adjustBuyOrderFill.disabled = !isSaved;
+
+  const openOrders = storefrontBuyOrders.filter(order => BUY_ORDER_OPEN_STATUSES.has(order.status));
+  const outstanding = openOrders.reduce((sum, order) => sum + Math.max(0, Number(order.quantity || 0) - Number(order.filledQuantity || 0)), 0);
+  const committed = openOrders.reduce((sum, order) => {
+    const remaining = Math.max(0, Number(order.quantity || 0) - Number(order.filledQuantity || 0));
+    return sum + remaining * Number(order.unitPrice || 0);
+  }, 0);
+  const nearFilled = openOrders.filter(order => Number(order.filledQuantity || 0) > 0
+    && Number(order.filledQuantity || 0) / Number(order.quantity || 1) >= 0.8).length;
+  const filledOrders = storefrontBuyOrders.filter(order => order.status === "Filled").length;
+  elements.buyOrderActiveCount.textContent = formatNumber(openOrders.filter(order => order.status === "Active").length);
+  elements.buyOrderOutstandingCount.textContent = formatNumber(outstanding);
+  elements.buyOrderCommittedValue.textContent = `$${formatNumber(committed)}`;
+  elements.buyOrderSavedCount.textContent = `${storefrontBuyOrders.length} tracked / ${nearFilled} near filled / ${filledOrders} filled`;
+  renderStorefrontBuyOrders();
+}
+
+function renderStorefrontBuyOrders() {
+  const filter = elements.buyOrderFilter.value;
+  const visible = storefrontBuyOrders.filter(order =>
+    filter === "All" || (filter === "Open" ? BUY_ORDER_OPEN_STATUSES.has(order.status) : order.status === filter)
+  );
+  if (!visible.length) {
+    elements.buyOrderList.innerHTML = `<div class="empty-card">No storefront buy orders in this view</div>`;
+    return;
+  }
+  elements.buyOrderList.innerHTML = visible.map(order => {
+    const quantity = Math.max(1, Number(order.quantity || 1));
+    const filled = Math.max(0, Number(order.filledQuantity || 0));
+    const remaining = Math.max(0, quantity - filled);
+    const percent = Math.min(100, Math.round(filled / quantity * 100));
+    const status = order.status === "Active" && percent >= 80 && percent < 100 ? "Near filled" : order.status;
+    return `
+      <button class="buy-order-card ${order.id === activeStorefrontBuyOrder.id ? "active" : ""}" data-buy-order-id="${escapeHtml(order.id)}" data-status="${escapeHtml(order.status)}" type="button">
+        <span class="buy-order-card-header">
+          <strong>${escapeHtml(order.itemLabel || order.itemName)}</strong>
+          <span class="buy-order-status">${escapeHtml(status)}</span>
+        </span>
+        <span class="buy-order-progress" aria-label="${percent}% filled"><span style="width:${percent}%"></span></span>
+        <span class="buy-order-card-numbers">
+          <span>${formatNumber(filled)} / ${formatNumber(quantity)} received</span>
+          <span>${formatNumber(remaining)} remaining</span>
+        </span>
+        <span class="buy-order-card-footer">
+          <span>$${formatNumber(order.unitPrice)} each</span>
+          <span>${formatDateTime(order.postedAt)}</span>
+        </span>
+      </button>
+    `;
+  }).join("");
+  elements.buyOrderList.querySelectorAll("[data-buy-order-id]").forEach(button => {
+    button.addEventListener("click", () => loadStorefrontBuyOrder(button.dataset.buyOrderId));
+  });
 }
 
 async function loadSuppliers({ silent = false } = {}) {
@@ -1172,6 +1435,7 @@ function render() {
   renderMeta();
   renderProduction();
   renderSupplyWorkspace();
+  renderStorefrontBuyOrderWorkspace();
   renderSupplierWorkspace();
   renderView();
   renderDashboard();
@@ -1393,13 +1657,15 @@ function renderSection() {
   elements.dashboardSection.classList.toggle("hidden", activeSection !== "dashboard");
   elements.storeSection.classList.toggle("hidden", activeSection !== "store");
   elements.restockSection.classList.toggle("hidden", activeSection !== "restock");
+  elements.buyOrdersSection.classList.toggle("hidden", activeSection !== "buy-orders");
   elements.supplySection.classList.toggle("hidden", activeSection !== "supplies");
   elements.workbenchSection.classList.toggle("hidden", activeSection !== "workbench");
   elements.operationsSection.classList.toggle("hidden", activeSection !== "operations");
   elements.employeesSection.classList.toggle("hidden", activeSection !== "employees");
   const supplyMode = activeSection === "supplies";
-  elements.newDocument.textContent = supplyMode ? "New Supply" : "New Sale";
-  elements.saveDocument.textContent = supplyMode ? "Save Supply" : "Save Sale";
+  const buyOrderMode = activeSection === "buy-orders";
+  elements.newDocument.textContent = supplyMode ? "New Supply" : buyOrderMode ? "New Buy Order" : "New Sale";
+  elements.saveDocument.textContent = supplyMode ? "Save Supply" : buyOrderMode ? "Save Buy Order" : "Save Sale";
 }
 
 function renderDashboard() {
@@ -1603,7 +1869,7 @@ function renderRole() {
     activeSection = "dashboard";
     renderSection();
   }
-  if (!isManagement() && (activeSection === "operations" || activeSection === "supplies")) {
+  if (!isManagement() && (activeSection === "operations" || activeSection === "supplies" || activeSection === "buy-orders")) {
     activeSection = "dashboard";
     renderSection();
   }
@@ -2404,6 +2670,10 @@ function formatAuditDetails(event) {
   if (event.action === "target.updated" || event.action === "target.removed") {
     return [details.item, event.action === "target.updated" ? `Target ${details.target}` : "Removed"].filter(Boolean).join(" / ");
   }
+  if (String(event.action || "").startsWith("storefront_buy_order.")) {
+    return [details.status, details.quantity !== undefined ? `Ordered ${details.quantity}` : "", details.filledQuantity !== undefined ? `Filled ${details.filledQuantity}` : "", details.unitPrice !== undefined ? `$${formatNumber(details.unitPrice)} each` : ""]
+      .filter(Boolean).join(" / ");
+  }
   if (event.action === "account.role_changed") return `${details.previousRole} to ${details.role}`;
   if (details.previousStatus || details.status) return [details.previousStatus, details.status].filter(Boolean).join(" to ");
   return "";
@@ -2482,7 +2752,9 @@ function startBackendRefreshLoop() {
 function refreshBackendIfStale() {
   if (!currentUser || Date.now() - lastBackendRefreshAt < FOCUS_REFRESH_STALE_MS) return;
   loadBackendSnapshot({ silent: true });
-  if (isManagement()) loadSupplyOrders({ silent: true });
+  if (isManagement()) {
+    loadSupplyOrders({ silent: true });
+  }
 }
 
 async function loadBackendSnapshot(options = {}) {
@@ -2511,6 +2783,12 @@ async function performBackendRefresh({ silent = false } = {}) {
       return;
     }
     backendSnapshot = nextSnapshot;
+    if (isManagement() && Array.isArray(nextSnapshot.storefrontBuyOrders)) {
+      storefrontBuyOrders = nextSnapshot.storefrontBuyOrders;
+      const refreshedBuyOrder = storefrontBuyOrders.find(order => order.id === activeStorefrontBuyOrder.id);
+      if (refreshedBuyOrder) activeStorefrontBuyOrder = structuredClone(refreshedBuyOrder);
+      elements.buyOrderDataStatus.textContent = `${storefrontBuyOrders.length} shared buy ${storefrontBuyOrders.length === 1 ? "order" : "orders"} loaded`;
+    }
     lastBackendRefreshAt = Date.now();
     const sheetText = sheetReady
       ? ` / ${backendSnapshot.sheet.sheets.length} sheet tabs`
@@ -2524,6 +2802,7 @@ async function performBackendRefresh({ silent = false } = {}) {
       renderStoreOverview();
       renderOperations();
       renderSupplyWorkspace();
+      renderStorefrontBuyOrderWorkspace();
       if (!silent) retryPendingSyncs();
     }
   } catch {
@@ -2798,6 +3077,19 @@ function formatDelivery(value) {
 function formatDateTime(value) {
   if (!value) return "";
   return DATE_TIME_FORMATTER.format(new Date(value));
+}
+
+function toDateTimeLocalValue(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function fromDateTimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
 function formatDuration(minutes) {

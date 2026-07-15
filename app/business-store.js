@@ -3,11 +3,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially Received", "Received", "Cancelled"]);
+const STOREFRONT_BUY_ORDER_STATUSES = new Set(["Active", "Paused", "Filled", "Cancelled"]);
 
 class BusinessStore {
   constructor({ filePath }) {
     this.filePath = filePath;
-    this.data = { version: 2, supplyOrders: [], suppliers: [] };
+    this.data = { version: 3, supplyOrders: [], suppliers: [], storefrontBuyOrders: [] };
     this.writeQueue = Promise.resolve();
   }
 
@@ -24,6 +25,17 @@ class BusinessStore {
 
   getSupplyOrder(orderId) {
     const order = this.data.supplyOrders.find(candidate => candidate.id === cleanText(orderId, 100));
+    return order ? structuredClone(order) : null;
+  }
+
+  listStorefrontBuyOrders() {
+    return this.data.storefrontBuyOrders
+      .map(order => structuredClone(order))
+      .sort((a, b) => new Date(b.postedAt) - new Date(a.postedAt));
+  }
+
+  getStorefrontBuyOrder(orderId) {
+    const order = this.data.storefrontBuyOrders.find(candidate => candidate.id === cleanText(orderId, 100));
     return order ? structuredClone(order) : null;
   }
 
@@ -86,6 +98,89 @@ class BusinessStore {
     });
   }
 
+  async saveStorefrontBuyOrder(input, actor) {
+    return this.mutate(async () => {
+      const now = new Date().toISOString();
+      const id = cleanText(input.id, 100) || crypto.randomUUID();
+      const existingIndex = this.data.storefrontBuyOrders.findIndex(order => order.id === id);
+      const existing = existingIndex >= 0 ? this.data.storefrontBuyOrders[existingIndex] : null;
+      const saved = cleanStorefrontBuyOrder(input, actor, { id, now, existing });
+      if (existingIndex >= 0) this.data.storefrontBuyOrders[existingIndex] = saved;
+      else this.data.storefrontBuyOrders.unshift(saved);
+      return structuredClone(saved);
+    });
+  }
+
+  async removeStorefrontBuyOrder(orderId) {
+    return this.mutate(async () => {
+      const id = cleanText(orderId, 100);
+      const existing = this.data.storefrontBuyOrders.find(order => order.id === id);
+      if (!existing) throw businessError("Storefront buy order not found", 404, "not_found");
+      if (Number(existing.filledQuantity || 0) > 0) {
+        throw businessError("Buy orders with recorded fills must be cancelled instead of removed", 409, "filled_order_locked");
+      }
+      this.data.storefrontBuyOrders = this.data.storefrontBuyOrders.filter(order => order.id !== id);
+      return structuredClone(existing);
+    });
+  }
+
+  async setStorefrontBuyOrderFill(orderId, filledQuantity, actor) {
+    return this.mutate(async () => {
+      const order = this.data.storefrontBuyOrders.find(candidate => candidate.id === cleanText(orderId, 100));
+      if (!order) throw businessError("Storefront buy order not found", 404, "not_found");
+      const matchedQuantity = matchedBuyOrderQuantity(order);
+      const requested = finiteNumber(filledQuantity, -1);
+      if (requested < matchedQuantity || requested > Number(order.quantity || 0)) {
+        throw businessError(`Filled quantity must be between ${matchedQuantity} and ${order.quantity}`, 400, "invalid_filled_quantity");
+      }
+      order.manualFilledQuantity = requested - matchedQuantity;
+      refreshStorefrontBuyOrder(order, actor);
+      return structuredClone(order);
+    });
+  }
+
+  async reconcileStorefrontBuyOrders(events) {
+    const incoming = Array.isArray(events) ? events : [];
+    if (!incoming.length) return this.listStorefrontBuyOrders();
+    return this.mutate(async () => {
+      const usedEventIds = new Set(this.data.storefrontBuyOrders.flatMap(order =>
+        (order.fillEvents || []).map(event => event.eventId)
+      ));
+      const orders = this.data.storefrontBuyOrders
+        .filter(order => order.status === "Active")
+        .sort((a, b) => new Date(a.postedAt) - new Date(b.postedAt));
+
+      incoming
+        .map(cleanBuyOrderPurchaseEvent)
+        .filter(event => event.eventId && event.quantity > 0 && !usedEventIds.has(event.eventId))
+        .sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt))
+        .forEach(event => {
+          let remainingEventQuantity = event.quantity;
+          orders
+            .filter(order => order.status === "Active"
+              && normalizeKey(order.itemName) === normalizeKey(event.itemName)
+              && new Date(order.postedAt).getTime() <= new Date(event.occurredAt).getTime())
+            .forEach(order => {
+              if (remainingEventQuantity <= 0) return;
+              const remainingOrderQuantity = Math.max(0, Number(order.quantity || 0) - storefrontBuyOrderFilled(order));
+              if (!remainingOrderQuantity) return;
+              const appliedQuantity = Math.min(remainingEventQuantity, remainingOrderQuantity);
+              order.fillEvents.push({
+                eventId: event.eventId,
+                occurredAt: event.occurredAt,
+                quantity: appliedQuantity,
+                unitPrice: event.unitPrice
+              });
+              remainingEventQuantity -= appliedQuantity;
+              refreshStorefrontBuyOrder(order, { fullName: "Discord Bridge" }, event.occurredAt);
+            });
+          usedEventIds.add(event.eventId);
+        });
+
+      return this.listStorefrontBuyOrders();
+    });
+  }
+
   async receiveSupplyLine(orderId, lineId, quantity, actor) {
     return this.mutate(async () => {
       const order = this.data.supplyOrders.find(candidate => candidate.id === cleanText(orderId, 100));
@@ -128,8 +223,9 @@ class BusinessStore {
       const parsed = JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
       if (!Array.isArray(parsed.supplyOrders)) parsed.supplyOrders = [];
       if (!Array.isArray(parsed.suppliers)) parsed.suppliers = [];
+      if (!Array.isArray(parsed.storefrontBuyOrders)) parsed.storefrontBuyOrders = [];
       return {
-        version: 2,
+        version: 3,
         supplyOrders: parsed.supplyOrders
           .filter(order => order && typeof order === "object")
           .map(order => order.status === "Draft" ? { ...order, status: "Active" } : order),
@@ -139,10 +235,13 @@ class BusinessStore {
             ...supplier,
             employees: Array.isArray(supplier.employees) ? supplier.employees.slice(0, 5) : [],
             products: Array.isArray(supplier.products) ? supplier.products.slice(0, 100) : []
-          }))
+          })),
+        storefrontBuyOrders: parsed.storefrontBuyOrders
+          .filter(order => order && typeof order === "object")
+          .map(order => cleanStoredStorefrontBuyOrder(order))
       };
     } catch (error) {
-      if (error.code === "ENOENT") return { version: 2, supplyOrders: [], suppliers: [] };
+      if (error.code === "ENOENT") return { version: 3, supplyOrders: [], suppliers: [], storefrontBuyOrders: [] };
       throw new Error(`Unable to read business store: ${error.message}`);
     }
   }
@@ -152,6 +251,88 @@ class BusinessStore {
     await fs.promises.writeFile(temporaryPath, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
     await fs.promises.rename(temporaryPath, this.filePath);
   }
+}
+
+function cleanStorefrontBuyOrder(input, actor, { id, now, existing }) {
+  const itemName = cleanText(input.itemName || input.itemLabel, 100);
+  if (!itemName) throw businessError("Item is required", 400, "item_required");
+  const matchedQuantity = matchedBuyOrderQuantity(existing);
+  const manualFilledQuantity = Math.max(0, finiteNumber(existing?.manualFilledQuantity, 0));
+  const quantity = Math.max(1, finiteNumber(input.quantity, 1));
+  if (quantity < matchedQuantity + manualFilledQuantity) {
+    throw businessError("Ordered quantity cannot be lower than the amount already filled", 409, "quantity_below_filled");
+  }
+  let status = STOREFRONT_BUY_ORDER_STATUSES.has(input.status) ? input.status : "Active";
+  if (matchedQuantity + manualFilledQuantity >= quantity) status = "Filled";
+  if (status === "Filled" && matchedQuantity + manualFilledQuantity < quantity) status = "Active";
+
+  return {
+    id,
+    itemName,
+    itemLabel: cleanText(input.itemLabel || itemName, 100),
+    quantity,
+    unitPrice: Math.max(0, finiteNumber(input.unitPrice, 0)),
+    postedAt: cleanDateTime(input.postedAt) || existing?.postedAt || now,
+    status,
+    notes: cleanText(input.notes, 1500),
+    fillEvents: Array.isArray(existing?.fillEvents) ? existing.fillEvents.slice(0, 500) : [],
+    manualFilledQuantity,
+    filledQuantity: matchedQuantity + manualFilledQuantity,
+    createdAt: existing?.createdAt || now,
+    createdBy: existing?.createdBy || cleanText(actor?.fullName, 100),
+    updatedAt: now,
+    updatedBy: cleanText(actor?.fullName, 100)
+  };
+}
+
+function cleanStoredStorefrontBuyOrder(order) {
+  const fillEvents = (Array.isArray(order.fillEvents) ? order.fillEvents : [])
+    .map(cleanBuyOrderPurchaseEvent)
+    .filter(event => event.eventId && event.quantity > 0)
+    .slice(0, 500);
+  const cleaned = {
+    ...order,
+    itemName: cleanText(order.itemName || order.itemLabel, 100),
+    itemLabel: cleanText(order.itemLabel || order.itemName, 100),
+    quantity: Math.max(1, finiteNumber(order.quantity, 1)),
+    unitPrice: Math.max(0, finiteNumber(order.unitPrice, 0)),
+    postedAt: cleanDateTime(order.postedAt) || cleanDateTime(order.createdAt) || new Date().toISOString(),
+    status: STOREFRONT_BUY_ORDER_STATUSES.has(order.status) ? order.status : "Active",
+    notes: cleanText(order.notes, 1500),
+    fillEvents,
+    manualFilledQuantity: Math.max(0, finiteNumber(order.manualFilledQuantity, 0))
+  };
+  cleaned.filledQuantity = storefrontBuyOrderFilled(cleaned);
+  if (cleaned.filledQuantity >= cleaned.quantity && cleaned.status !== "Cancelled") cleaned.status = "Filled";
+  return cleaned;
+}
+
+function cleanBuyOrderPurchaseEvent(event) {
+  return {
+    eventId: cleanText(event?.eventId, 100),
+    occurredAt: cleanDateTime(event?.occurredAt) || new Date(0).toISOString(),
+    itemName: cleanText(event?.itemName || event?.itemLabel, 100),
+    quantity: Math.max(0, finiteNumber(event?.quantity, 0)),
+    unitPrice: Math.max(0, finiteNumber(event?.unitPrice, 0))
+  };
+}
+
+function matchedBuyOrderQuantity(order) {
+  return (order?.fillEvents || []).reduce((sum, event) => sum + Math.max(0, finiteNumber(event.quantity, 0)), 0);
+}
+
+function storefrontBuyOrderFilled(order) {
+  return Math.min(
+    Number(order?.quantity || Number.MAX_SAFE_INTEGER),
+    matchedBuyOrderQuantity(order) + Math.max(0, finiteNumber(order?.manualFilledQuantity, 0))
+  );
+}
+
+function refreshStorefrontBuyOrder(order, actor, at = new Date().toISOString()) {
+  order.filledQuantity = storefrontBuyOrderFilled(order);
+  if (order.status !== "Cancelled" && order.filledQuantity >= Number(order.quantity || 0)) order.status = "Filled";
+  order.updatedAt = cleanDateTime(at) || new Date().toISOString();
+  order.updatedBy = cleanText(actor?.fullName, 100);
 }
 
 function cleanSupplier(input, actor, { id, now, existing }) {
@@ -262,6 +443,12 @@ function cleanDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "";
 }
 
+function cleanDateTime(value) {
+  const text = cleanText(value, 40);
+  const date = new Date(text);
+  return text && !Number.isNaN(date.getTime()) ? date.toISOString() : "";
+}
+
 function cleanText(value, limit) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, limit);
 }
@@ -282,4 +469,4 @@ function businessError(message, status, code) {
   return error;
 }
 
-module.exports = { BusinessStore, SUPPLY_ORDER_STATUSES, businessError };
+module.exports = { BusinessStore, SUPPLY_ORDER_STATUSES, STOREFRONT_BUY_ORDER_STATUSES, businessError };

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Frontier Firearms - Still Water</title>
     <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png?v=20260713-van-horn">
-    <link rel="stylesheet" href="styles.css?v=20260715-store-overview">
+    <link rel="stylesheet" href="styles.css?v=20260715-buy-orders">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -32,6 +32,7 @@
         <button class="section-button active" data-section="dashboard" type="button">Dashboard</button>
         <button class="section-button" data-section="store" type="button">Store</button>
         <button class="section-button" data-section="restock" type="button">Restock</button>
+        <button class="section-button management-only" data-section="buy-orders" type="button">Buy Orders</button>
         <button class="section-button management-only" data-section="supplies" type="button">Supplies</button>
         <button class="section-button" data-section="workbench" type="button">Workbench</button>
         <button class="section-button management-only" data-section="operations" type="button">Operations</button>
@@ -440,6 +441,97 @@
             </select>
           </div>
           <div class="orders-list" id="ordersList"></div>
+        </section>
+      </main>
+
+      <main class="buy-orders workspace-section hidden management-only" id="buyOrdersSection">
+        <section class="panel buy-order-editor">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Storefront Procurement</p>
+              <h2>Buy Order</h2>
+              <p id="buyOrderMeta">New order</p>
+            </div>
+            <select id="buyOrderStatusInput" aria-label="Buy order status">
+              <option value="Active">Active</option>
+              <option value="Paused">Paused</option>
+              <option value="Filled">Filled</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          <div class="form-grid buy-order-fields">
+            <label>
+              Material or Item
+              <input id="buyOrderItemInput" list="buyOrderItemOptions" autocomplete="off" placeholder="Search stock">
+            </label>
+            <label>
+              Posted At
+              <input id="buyOrderPostedAtInput" type="datetime-local">
+            </label>
+            <label>
+              Requested Qty
+              <input id="buyOrderQuantityInput" type="number" min="1" step="1" value="1">
+            </label>
+            <label>
+              Buy Price / Unit
+              <input id="buyOrderUnitPriceInput" type="number" min="0" step="0.01" value="0">
+            </label>
+          </div>
+
+          <label>
+            Notes
+            <textarea id="buyOrderNotesInput" rows="3" placeholder="Posting details or collection notes"></textarea>
+          </label>
+
+          <div class="buy-order-actions">
+            <button id="newBuyOrderButton" class="ghost-button" type="button">New</button>
+            <button id="saveBuyOrderButton" class="primary-button" type="button">Save Order</button>
+            <button id="deleteBuyOrderButton" class="danger-button" type="button">Remove</button>
+          </div>
+        </section>
+
+        <aside class="panel buy-order-summary">
+          <div class="dashboard-stats buy-order-stats">
+            <div>
+              <span>Active</span>
+              <strong id="buyOrderActiveCount">0</strong>
+            </div>
+            <div>
+              <span>Outstanding</span>
+              <strong id="buyOrderOutstandingCount">0</strong>
+            </div>
+            <div>
+              <span>Committed</span>
+              <strong id="buyOrderCommittedValue">$0</strong>
+            </div>
+          </div>
+          <div class="buy-order-manual-fill">
+            <label>
+              Counted Filled Qty
+              <input id="buyOrderFilledInput" type="number" min="0" step="1" value="0">
+            </label>
+            <button id="adjustBuyOrderFillButton" class="ghost-button" type="button">Adjust Fill</button>
+          </div>
+          <p class="supply-data-status" id="buyOrderDataStatus">Loading shared buy orders</p>
+        </aside>
+
+        <section class="panel saved-panel buy-order-list-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Order Overview</h2>
+              <p id="buyOrderSavedCount">0 tracked orders</p>
+            </div>
+            <select id="buyOrderFilterInput" aria-label="Filter storefront buy orders">
+              <option value="Open">Open</option>
+              <option value="All">All</option>
+              <option value="Active">Active</option>
+              <option value="Paused">Paused</option>
+              <option value="Filled">Filled</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div class="buy-order-list" id="buyOrderList"></div>
         </section>
       </main>
 
@@ -935,6 +1027,7 @@
     <script src="recipes.js?v=20260714-kits"></script>
     <script src="inventory-counts.js?v=20260715-store-overview"></script>
     <datalist id="supplyMaterialOptions"></datalist>
+    <datalist id="buyOrderItemOptions"></datalist>
     <datalist id="supplierCategoryOptions">
       <option value="Blacksmith"></option>
       <option value="Carpenter"></option>
@@ -947,6 +1040,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260715-store-overview"></script>
+    <script src="app.js?v=20260715-buy-orders"></script>
   </body>
 </html>

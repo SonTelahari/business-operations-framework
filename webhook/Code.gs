@@ -592,8 +592,29 @@ function readInventorySnapshot(spreadsheet) {
     products,
     materials,
     storage: Object.keys(storageByKey).map(key => storageByKey[key]),
-    ledger: readLedgerSnapshot(spreadsheet)
+    ledger: readLedgerSnapshot(spreadsheet),
+    buyOrderPurchases: readBuyOrderPurchases(spreadsheet)
   };
+}
+
+// Sends only the purchase fields needed to reconcile storefront buy orders.
+function readBuyOrderPurchases(spreadsheet) {
+  const sheet = requireSheet(spreadsheet, TRANSACTION_SHEET);
+  const rowCount = Math.max(0, sheet.getLastRow() - 1);
+  if (!rowCount) return [];
+
+  return sheet.getRange(2, 1, rowCount, 11).getValues()
+    .filter(row => inventoryKey(row[2]) === 'purchase' && row[4] && numberOrZero(row[5]) > 0 && row[10])
+    .map(row => {
+      const occurredAt = row[0] instanceof Date ? row[0] : new Date(row[0]);
+      return {
+        eventId: String(row[10]),
+        occurredAt: isNaN(occurredAt.getTime()) ? '' : occurredAt.toISOString(),
+        itemName: String(row[4]),
+        quantity: Math.abs(numberOrZero(row[5])),
+        unitPrice: Math.max(0, numberOrZero(row[6]))
+      };
+    });
 }
 
 function readLedgerSnapshot(spreadsheet) {

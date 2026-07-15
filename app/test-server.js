@@ -11,6 +11,7 @@ const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "still-water-auth-")
 const receiverPayloads = [];
 const receiverOperationIds = new Set();
 const storageCounts = new Map([["iron", 12]]);
+const buyOrderPurchases = [];
 let failNextReceiverWrite = false;
 const mockReceiver = http.createServer(async (request, response) => {
   if (request.method === "GET") {
@@ -36,7 +37,8 @@ const mockReceiver = http.createServer(async (request, response) => {
           countedAt: "2026-07-13T03:00:00.000Z",
           netMovementSinceCount: 25,
           lastActivityAt: "2026-07-13T03:25:00.000Z"
-        }
+        },
+        buyOrderPurchases
       }
     }));
     return;
@@ -189,6 +191,8 @@ async function run() {
   assert.equal(employeeAuditAttempt.response.status, 403);
   const employeeSupplyAttempt = await getJson(`${baseUrl}/api/supply-orders`, employeeCookie);
   assert.equal(employeeSupplyAttempt.response.status, 403);
+  const employeeBuyOrderAttempt = await getJson(`${baseUrl}/api/storefront-buy-orders`, employeeCookie);
+  assert.equal(employeeBuyOrderAttempt.response.status, 403);
   const employeeSupplierAttempt = await getJson(`${baseUrl}/api/suppliers`, employeeCookie);
   assert.equal(employeeSupplierAttempt.response.status, 403);
 
@@ -273,6 +277,52 @@ async function run() {
   const emptySupplyOrders = await getJson(`${baseUrl}/api/supply-orders`, managerCookie);
   assert.equal(emptySupplyOrders.response.status, 200);
   assert.deepEqual(emptySupplyOrders.body.orders, []);
+
+  const emptyBuyOrders = await getJson(`${baseUrl}/api/storefront-buy-orders`, managerCookie);
+  assert.equal(emptyBuyOrders.response.status, 200);
+  assert.deepEqual(emptyBuyOrders.body.orders, []);
+  const savedBuyOrder = await post(`${baseUrl}/api/storefront-buy-orders`, {
+    id: "buy-order-nitrite",
+    itemName: "Nitrite",
+    itemLabel: "Nitrite",
+    quantity: 10,
+    unitPrice: 1,
+    postedAt: "2026-07-13T03:00:00.000Z",
+    status: "Active",
+    notes: "Storefront posting"
+  }, managerCookie);
+  assert.equal(savedBuyOrder.response.status, 200);
+  assert.equal(savedBuyOrder.body.order.filledQuantity, 0);
+  buyOrderPurchases.push({
+    eventId: "buy-fill-1",
+    occurredAt: "2026-07-13T04:00:00.000Z",
+    itemName: "Nitrite",
+    quantity: 4,
+    unitPrice: 1
+  });
+  const partiallyFilledBuyOrders = await getJson(`${baseUrl}/api/storefront-buy-orders`, managerCookie);
+  assert.equal(partiallyFilledBuyOrders.body.orders[0].filledQuantity, 4);
+  assert.equal(partiallyFilledBuyOrders.body.orders[0].status, "Active");
+  const repeatedBuyOrderRead = await getJson(`${baseUrl}/api/storefront-buy-orders`, managerCookie);
+  assert.equal(repeatedBuyOrderRead.body.orders[0].filledQuantity, 4, "a webhook purchase must only fill once");
+  const manualBuyOrderFill = await post(`${baseUrl}/api/storefront-buy-orders/buy-order-nitrite/fill`, {
+    filledQuantity: 6
+  }, managerCookie);
+  assert.equal(manualBuyOrderFill.response.status, 200);
+  assert.equal(manualBuyOrderFill.body.order.filledQuantity, 6);
+  buyOrderPurchases.push({
+    eventId: "buy-fill-2",
+    occurredAt: "2026-07-13T05:00:00.000Z",
+    itemName: "Nitrite",
+    quantity: 4,
+    unitPrice: 1
+  });
+  const completedBuyOrders = await getJson(`${baseUrl}/api/storefront-buy-orders`, managerCookie);
+  assert.equal(completedBuyOrders.body.orders[0].filledQuantity, 10);
+  assert.equal(completedBuyOrders.body.orders[0].status, "Filled");
+  const filledBuyOrderRemoval = await remove(`${baseUrl}/api/storefront-buy-orders/buy-order-nitrite`, managerCookie);
+  assert.equal(filledBuyOrderRemoval.response.status, 409);
+  assert.equal(filledBuyOrderRemoval.body.code, "filled_order_locked");
   const activatedSupplyOrder = await post(`${baseUrl}/api/supply-orders`, {
     id: "supply-order-active",
     producer: "Blackwater Textiles",
@@ -426,6 +476,8 @@ async function run() {
   assert(managerAudit.body.events.some(event => event.action === "supply_order.received" && event.details.quantity === 7));
   assert(managerAudit.body.events.some(event => event.action === "supplier.saved" && event.subjectName === "Van Horn Foundry"));
   assert(managerAudit.body.events.some(event => event.action === "supplier.removed" && event.subjectName === "Van Horn Foundry"));
+  assert(managerAudit.body.events.some(event => event.action === "storefront_buy_order.saved" && event.subjectName === "Nitrite"));
+  assert(managerAudit.body.events.some(event => event.action === "storefront_buy_order.fill_adjusted" && event.details.filledQuantity === 6));
   assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
 
   const removedSupplyOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-1`, managerCookie);

@@ -2126,6 +2126,153 @@ body.auth-page {
   color: var(--muted);
 }
 
+.buy-orders {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.8fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.buy-order-editor,
+.buy-order-summary,
+.buy-order-list-panel {
+  min-width: 0;
+  padding: 18px;
+}
+
+.buy-order-editor { order: 1; }
+.buy-order-summary { order: 2; }
+.buy-order-list-panel { order: 3; }
+
+.buy-order-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.buy-order-actions,
+.buy-order-manual-fill {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+  margin-top: 14px;
+}
+
+.buy-order-actions .danger-button {
+  margin-left: auto;
+}
+
+.buy-order-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.buy-order-stats > div {
+  min-width: 0;
+  padding: 10px;
+}
+
+.buy-order-stats strong {
+  font-size: 1.35rem;
+  overflow-wrap: anywhere;
+}
+
+.buy-order-manual-fill label {
+  flex: 1;
+}
+
+.buy-order-summary .supply-data-status {
+  margin: 14px 0 0;
+}
+
+.buy-order-list-panel {
+  grid-area: auto;
+  grid-column: 1 / -1;
+}
+
+.buy-order-list-panel .panel-header > div {
+  flex: 0 0 260px;
+}
+
+.buy-order-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.buy-order-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  color: inherit;
+  text-align: left;
+  background: rgba(255, 252, 239, 0.34);
+  border: 1px solid rgba(86, 65, 43, 0.42);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.buy-order-card:hover,
+.buy-order-card:focus-visible,
+.buy-order-card.active {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+  outline: none;
+}
+
+.buy-order-card-header,
+.buy-order-card-numbers,
+.buy-order-card-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.buy-order-card-header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.buy-order-status {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.buy-order-progress {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  background: rgba(80, 67, 48, 0.16);
+  border: 1px solid rgba(80, 67, 48, 0.32);
+}
+
+.buy-order-progress > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+}
+
+.buy-order-card[data-status="Filled"] .buy-order-progress > span {
+  background: #3f704f;
+}
+
+.buy-order-card[data-status="Paused"] .buy-order-progress > span,
+.buy-order-card[data-status="Cancelled"] .buy-order-progress > span {
+  background: var(--muted);
+}
+
+.buy-order-card-numbers,
+.buy-order-card-footer {
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.78rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .workspace-section {
     animation: none;
@@ -2151,6 +2298,14 @@ body.auth-page {
 
   .store-overview {
     grid-template-columns: 1fr;
+  }
+
+  .buy-orders {
+    grid-template-columns: 1fr;
+  }
+
+  .buy-order-list-panel {
+    grid-column: auto;
   }
 }
 
@@ -2259,6 +2414,25 @@ body.auth-page {
   .inventory-overview-table th:nth-last-child(-n + 2),
   .inventory-overview-table td:nth-last-child(-n + 2) {
     width: 58px;
+  }
+
+  .buy-order-fields,
+  .buy-order-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .buy-order-actions,
+  .buy-order-manual-fill {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .buy-order-actions .danger-button {
+    margin-left: 0;
+  }
+
+  .buy-order-list-panel .panel-header > div {
+    flex-basis: auto;
   }
 
   .auth-page {

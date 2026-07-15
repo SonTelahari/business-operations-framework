@@ -57,6 +57,7 @@ const server = http.createServer(async (request, response) => {
         persistentAccountStore: accountAuthEnabled && Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
         persistentBusinessStore: Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
         supplyReceipts: true,
+        storefrontBuyOrders: true,
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -79,6 +80,7 @@ const server = http.createServer(async (request, response) => {
       }
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
+      if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(user));
         return;
@@ -131,6 +133,7 @@ const server = http.createServer(async (request, response) => {
       }
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
+      if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(null));
         return;
@@ -341,6 +344,53 @@ async function handleSupplyOrderRoute(request, response, url, user) {
   return true;
 }
 
+async function handleStorefrontBuyOrderRoute(request, response, url, user) {
+  if (!url.pathname.startsWith("/api/storefront-buy-orders")) return false;
+  if (!requireManagement(response, user)) return true;
+
+  try {
+    if (url.pathname === "/api/storefront-buy-orders" && request.method === "GET") {
+      await reconcileStorefrontBuyOrdersFromSheet();
+      sendJson(response, { ok: true, orders: businessStore.listStorefrontBuyOrders() });
+      return true;
+    }
+    if (url.pathname === "/api/storefront-buy-orders" && request.method === "POST") {
+      const order = await businessStore.saveStorefrontBuyOrder(await readJsonBody(request), user);
+      await recordStorefrontBuyOrderAudit("storefront_buy_order.saved", order, user);
+      sendJson(response, { ok: true, order, orders: businessStore.listStorefrontBuyOrders() });
+      return true;
+    }
+    const fillRoute = url.pathname.match(/^\/api\/storefront-buy-orders\/([^/]+)\/fill$/);
+    if (fillRoute && request.method === "POST") {
+      const orderId = decodeURIComponent(fillRoute[1]);
+      const payload = await readJsonBody(request);
+      const order = await businessStore.setStorefrontBuyOrderFill(orderId, payload.filledQuantity, user);
+      await recordStorefrontBuyOrderAudit("storefront_buy_order.fill_adjusted", order, user);
+      sendJson(response, { ok: true, order, orders: businessStore.listStorefrontBuyOrders() });
+      return true;
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/storefront-buy-orders/")) {
+      const orderId = decodeURIComponent(url.pathname.slice("/api/storefront-buy-orders/".length));
+      const order = await businessStore.removeStorefrontBuyOrder(orderId);
+      await recordStorefrontBuyOrderAudit("storefront_buy_order.removed", order, user);
+      sendJson(response, { ok: true, order, orders: businessStore.listStorefrontBuyOrders() });
+      return true;
+    }
+    sendJson(response, { ok: false, error: "Storefront buy order route not found", code: "not_found" }, 404);
+    return true;
+  } catch (error) {
+    sendJson(response, { ok: false, error: error.message, code: error.code || "storefront_buy_order_failed" }, error.status || 500);
+    return true;
+  }
+}
+
+async function reconcileStorefrontBuyOrdersFromSheet(sheetSnapshot = null) {
+  const snapshot = sheetSnapshot || await readSheetSnapshot();
+  const purchases = snapshot?.inventory?.buyOrderPurchases;
+  if (Array.isArray(purchases)) await businessStore.reconcileStorefrontBuyOrders(purchases);
+  return snapshot;
+}
+
 async function receiveSupplyOrder(orderId, payload, user) {
   const requestedReceipts = Array.isArray(payload.receipts) ? payload.receipts.slice(0, 100) : [];
   if (!requestedReceipts.length) {
@@ -478,6 +528,24 @@ async function recordSupplyOrderAudit(action, order, user) {
       status: order.status,
       lineCount: order.lines.length,
       total: order.lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0)
+    }
+  });
+}
+
+async function recordStorefrontBuyOrderAudit(action, order, user) {
+  if (!accountStore) return;
+  await accountStore.recordAudit({
+    category: "procurement",
+    action,
+    actorId: user.id,
+    actorName: user.fullName,
+    subjectId: order.id,
+    subjectName: order.itemLabel || order.itemName,
+    details: {
+      status: order.status,
+      quantity: order.quantity,
+      filledQuantity: order.filledQuantity,
+      unitPrice: order.unitPrice
     }
   });
 }
@@ -753,6 +821,9 @@ function readJsonBody(request) {
 async function getBootstrapData(user) {
   const data = readCatalogFiles();
   const sheetSnapshot = await readSheetSnapshot();
+  const canManage = !user || isManagementRole(user);
+  if (canManage) await reconcileStorefrontBuyOrdersFromSheet(sheetSnapshot);
+  if (sheetSnapshot?.inventory) delete sheetSnapshot.inventory.buyOrderPurchases;
   return {
     source: sheetSnapshot ? "apps-script-and-local-app-files" : "local-app-files",
     generatedAt: new Date().toISOString(),
@@ -764,13 +835,15 @@ async function getBootstrapData(user) {
     recipeCount: Object.keys(data.recipes).length,
     recipes: data.recipes,
     recipeYields: data.recipeYields,
+    storefrontBuyOrders: canManage ? businessStore.listStorefrontBuyOrders() : [],
     syncTargets: {
       stockCounts: "/api/sync",
       manualMovements: "/api/sync",
       ledgerAdjustments: "/api/sync",
       stockTargets: "/api/sync",
       timeClock: "/api/sync",
-      supplyOrders: "/api/supply-orders"
+      supplyOrders: "/api/supply-orders",
+      storefrontBuyOrders: "/api/storefront-buy-orders"
     }
   };
 }
