@@ -324,6 +324,31 @@ Weapon ID: 647`
     }
   },
   {
+    name: 'customized Remington 1858 sale maps to Navy Crossover Revolver',
+    input: {
+      id: 'still-water-remington-1858-sale',
+      title: 'Bought Item',
+      description: `**Shop Info:**
+Shop name: Frontier Firearms
+ID: 23
+Shop Ledger: $1870.0
+**Item Info:**
+Item label: Remington 1858
+Amount Bought: 1
+Sell Price: $105.0`
+    },
+    expected: {
+      event_type: 'Sale',
+      direction: 'Stock Out',
+      discord_item_label: 'Remington 1858',
+      item_name: 'Navy Crossover Revolver',
+      quantity: 1,
+      unit_price: 105,
+      shop_ledger: 1870,
+      webhook_id: 'still-water-remington-1858-sale'
+    }
+  },
+  {
     name: 'real Still Water Schofield Revolver deposit',
     input: {
       id: 'still-water-schofield-deposit',

@@ -36,7 +36,7 @@ const FRONTIER_ITEMS = [
   { name: "Double Action Gambler Revolver", label: "Double Action Gambler Revolver", tag: "", category: "Revolvers", price: 0 },
   { name: "Cattleman Mexican Revolver", label: "Cattleman Mexican Revolver", tag: "", category: "Revolvers", price: 0 },
   { name: "Cattleman Revolver", label: "Cattleman Revolver", tag: "", category: "Revolvers", price: 0 },
-  { name: "Navy Crossover Revolver", label: "Revolver Navy Crossover", tag: "WEAPON_REVOLVER_NAVY_CROSSOVER", category: "Revolvers", price: 105 },
+  { name: "Navy Crossover Revolver", label: "Revolver Navy Crossover", aliases: ["Remington 1858"], tag: "WEAPON_REVOLVER_NAVY_CROSSOVER", category: "Revolvers", price: 105 },
   { name: "Navy Revolver", label: "Revolver Navy", tag: "WEAPON_REVOLVER_NAVY", category: "Revolvers", price: 105 },
   { name: "Schofield Revolver", label: "Revolver Schofield", tag: "WEAPON_REVOLVER_SCHOFIELD", category: "Revolvers", price: 55 },
   { name: "Volcanic Pistol", label: "Volcanic Pistol", tag: "", category: "Pistols", price: 0 },

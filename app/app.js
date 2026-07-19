@@ -622,13 +622,13 @@ function findCatalogItem(value) {
   const needle = normalize(value);
   if (!needle) return null;
 
-  const exactMatch = itemCatalog.find(item => [item.name, item.label, item.tag]
+  const exactMatch = itemCatalog.find(item => [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])]
     .map(normalize)
     .includes(needle));
   if (exactMatch) return exactMatch;
 
   return itemCatalog.find(item => {
-    const fields = [item.name, item.label, item.tag, item.category].map(normalize);
+    const fields = [item.name, item.label, item.tag, item.category, ...(Array.isArray(item.aliases) ? item.aliases : [])].map(normalize);
     return fields.some(field => field.includes(needle));
   });
 }
@@ -2422,7 +2422,7 @@ function resolveStockItem(value) {
   if (!trimmed) return { name: "", label: "", tag: "" };
   const needle = normalize(trimmed);
   const item = stockCatalog.find(entry => {
-    const haystack = normalize(`${entry.name} ${entry.label || ""} ${entry.tag || ""} ${entry.category || ""}`);
+    const haystack = normalize(`${entry.name} ${entry.label || ""} ${entry.tag || ""} ${entry.category || ""} ${(entry.aliases || []).join(" ")}`);
     return haystack.includes(needle);
   });
   return item || { name: trimmed, label: trimmed, tag: "", category: "Manual" };

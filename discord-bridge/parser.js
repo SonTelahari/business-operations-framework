@@ -142,8 +142,10 @@ const ITEM_NAME_MAP = itemCatalog.reduce((map, item) => {
 }, {});
 
 const ITEM_LABEL_MAP = itemCatalog.reduce((map, item) => {
-  const key = normalizeCatalogText(item.label);
-  if (key && !map[key]) map[key] = item.name;
+  [item.name, item.label, ...(Array.isArray(item.aliases) ? item.aliases : [])].forEach(value => {
+    const key = normalizeCatalogText(value);
+    if (key && !map[key]) map[key] = item.name;
+  });
   return map;
 }, {});
 
