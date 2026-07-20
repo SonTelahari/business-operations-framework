@@ -35,6 +35,9 @@
         <button class="section-button management-only" data-section="buy-orders" type="button">Buy Orders</button>
         <button class="section-button management-only" data-section="supplies" type="button">Supplies</button>
         <button class="section-button" data-section="workbench" type="button">Workbench</button>
+        <button class="section-button production-tab-button" data-section="production" type="button">
+          Production <span class="nav-count hidden" id="productionNavCount">0</span>
+        </button>
         <button class="section-button management-only" data-section="operations" type="button">Operations</button>
         <button class="section-button management-only review-tab-button" data-section="review" type="button">
           Review <span class="nav-count hidden" id="exceptionNavCount">0</span>
@@ -256,6 +259,7 @@
               <h2>Storefront Replenishment</h2>
               <p id="replenishmentMeta">Set admin stock targets to generate a standing order</p>
             </div>
+            <button class="primary-button management-only" id="queueRestockButton" type="button">Queue Missing Stock</button>
           </div>
           <div class="replenishment-grid compact-replenishment">
             <div>
@@ -388,7 +392,10 @@
                 <h3>Production</h3>
                 <p id="productionMeta">No craftable lines yet</p>
               </div>
-              <button class="ghost-button" id="copyProductionButton" type="button">Copy Materials</button>
+              <div class="production-header-actions">
+                <button class="ghost-button" id="copyProductionButton" type="button">Copy Materials</button>
+                <button class="primary-button management-only" id="queueOrderProductionButton" type="button">Queue Production</button>
+              </div>
             </div>
             <div class="production-grid">
               <div class="production-card">
@@ -448,6 +455,87 @@
             </select>
           </div>
           <div class="orders-list" id="ordersList"></div>
+        </section>
+      </main>
+
+      <main class="production-ledger workspace-section hidden" id="productionSection">
+        <section class="panel production-overview-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Workshop Ledger</p>
+              <h2>Production Queue</h2>
+              <p id="productionDataStatus">Loading shared batches</p>
+            </div>
+            <button class="ghost-button" id="refreshProductionButton" type="button">Refresh</button>
+          </div>
+          <div class="production-stats">
+            <div><span>Active</span><strong id="productionActiveCount">0</strong></div>
+            <div><span>Due Today</span><strong id="productionDueCount">0</strong></div>
+            <div><span>Ready</span><strong id="productionReadyCount">0</strong></div>
+            <div><span>Material Shorts</span><strong id="productionShortCount">0</strong></div>
+          </div>
+        </section>
+
+        <section class="panel production-queue-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Batch Register</h2>
+              <p>Shared work queued from customer orders and storefront targets</p>
+            </div>
+            <select id="productionFilterInput" aria-label="Filter production batches">
+              <option value="Active">Active</option>
+              <option value="All">All</option>
+              <option value="Planned">Planned</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div class="production-batch-list" id="productionBatchList"></div>
+        </section>
+
+        <section class="panel production-detail-panel">
+          <div class="panel-header production-detail-heading">
+            <div>
+              <p class="eyebrow" id="productionDetailSource">Select a batch</p>
+              <h2 id="productionDetailTitle">No production batch selected</h2>
+              <p id="productionDetailMeta">Choose a batch from the register</p>
+            </div>
+            <span class="status-pill" id="productionDetailStatus">Waiting</span>
+          </div>
+
+          <dl class="production-detail-facts">
+            <div><dt>Due</dt><dd id="productionDetailDue">-</dd></div>
+            <div><dt>Assigned</dt><dd id="productionDetailAssigned">-</dd></div>
+            <div><dt>Created By</dt><dd id="productionDetailCreatedBy">-</dd></div>
+            <div><dt>Updated</dt><dd id="productionDetailUpdated">-</dd></div>
+          </dl>
+
+          <div class="production-detail-grid">
+            <section>
+              <div class="subsection-heading">
+                <h3>Craft Lines</h3>
+                <span>Enter total craft cycles completed</span>
+              </div>
+              <div class="production-progress-lines" id="productionProgressLines"></div>
+            </section>
+            <section>
+              <div class="subsection-heading">
+                <h3>Remaining Materials</h3>
+                <span>Checked against shared storage</span>
+              </div>
+              <div class="production-material-status" id="productionMaterialStatus"></div>
+            </section>
+          </div>
+
+          <div class="production-detail-actions">
+            <p id="productionActionStatus">Select a batch to begin</p>
+            <div>
+              <button class="ghost-button" id="startProductionButton" type="button">Start Batch</button>
+              <button class="primary-button" id="recordProductionButton" type="button">Record Progress</button>
+              <button class="danger-button management-only" id="cancelProductionButton" type="button">Cancel Batch</button>
+            </div>
+          </div>
         </section>
       </main>
 
@@ -1121,6 +1209,7 @@
                 <option value="time_clock">Clock activity</option>
                 <option value="operations">Counts and adjustments</option>
                 <option value="webhook">Webhook review</option>
+                <option value="production">Production</option>
                 <option value="staff">Staff changes</option>
                 <option value="account">Access requests</option>
               </select>
@@ -1160,6 +1249,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260720-webhook-review"></script>
+    <script src="app.js?v=20260720-production-batches"></script>
   </body>
 </html>

@@ -10,8 +10,8 @@ Employees request access with their in-game character name and a password. No re
 
 Roles are intentionally separated:
 
-- Employees can use orders, production planning, restock information, and their time clock.
-- Managers can also run counts and adjustments, maintain storefront targets, approve or disable employee accounts, and review the employee audit ledger.
+- Employees can use orders, restock information, the shared production queue, and their time clock. They can start batches and record completed craft cycles.
+- Managers can also queue or cancel production, run counts and adjustments, maintain storefront targets, approve or disable employee accounts, and review the employee audit ledger.
 - Admins can additionally run payroll and promote or demote managers.
 
 The server-side audit ledger records account requests, successful sign-ins and sign-outs, staff actions, time-clock events, counts, adjustments, and storefront target changes. It does not record passwords, IP addresses, or real-life identity data.
@@ -48,7 +48,13 @@ The base catalog uses Still Water's native item tag and label. Names, descriptio
 
 ## Discord Parser Status
 
-The Still Water bridge is capture-only by default for a safe first deployment. The current parser suite covers 26 event formats, including 20 captured Still Water storefront events. Production forwarding is enabled explicitly with `CAPTURE_ONLY=0`; capture mode remains available for collecting unfamiliar future formats without writing them to Google Sheets.
+The Still Water bridge is capture-only by default for a safe first deployment. The current parser suite covers 28 event formats, including 20 captured Still Water storefront events. Production forwarding is enabled explicitly with `CAPTURE_ONLY=0`; capture mode remains available for collecting unfamiliar future formats without writing them to Google Sheets.
+
+## Production Batches
+
+Managers can turn customer orders or uncovered storefront targets into shared production batches. The server snapshots each product recipe when the batch is created, reserves materials by expedite status and due date, and lets employees record total craft cycles as work is completed. Each progress update writes material consumption and finished goods into shared Storage; finished goods can then be moved to the Storefront with the existing transfer workflow.
+
+Interrupted Sheet writes remain attached to the batch and can be retried without consuming materials or adding finished stock twice.
 
 ## Safety
 

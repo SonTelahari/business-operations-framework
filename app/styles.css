@@ -2658,6 +2658,285 @@ body.auth-page {
   }
 }
 
+.production-header-actions,
+.production-detail-actions > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.production-tab-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.production-ledger {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.72fr) minmax(0, 1.5fr);
+  grid-template-areas:
+    "overview overview"
+    "queue detail";
+  gap: 14px;
+}
+
+.production-overview-panel {
+  grid-area: overview;
+  padding: 18px;
+}
+
+.production-queue-panel {
+  grid-area: queue;
+  min-width: 0;
+  padding: 18px;
+}
+
+.production-detail-panel {
+  grid-area: detail;
+  min-width: 0;
+  padding: 18px;
+}
+
+.production-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.production-stats div {
+  min-width: 0;
+  padding: 13px;
+  background: rgba(84, 113, 124, 0.09);
+  border: 1px solid rgba(78, 104, 113, 0.46);
+}
+
+.production-stats span {
+  display: block;
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.production-stats strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.75rem;
+}
+
+.production-batch-list {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  max-height: 660px;
+  padding-right: 5px;
+  overflow-y: auto;
+}
+
+.production-batch-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  color: inherit;
+  text-align: left;
+  background: rgba(255, 250, 232, 0.52);
+  border: 1px solid rgba(119, 99, 70, 0.42);
+  border-radius: 2px;
+}
+
+.production-batch-row:hover,
+.production-batch-row:focus-visible,
+.production-batch-row.active {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+  outline: none;
+}
+
+.production-batch-row strong,
+.production-batch-row span:not(.status-pill),
+.production-batch-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.production-batch-row strong {
+  align-self: center;
+}
+
+.production-batch-row span:not(.status-pill),
+.production-batch-row small {
+  grid-column: 2;
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.76rem;
+}
+
+.production-detail-heading .status-pill {
+  flex: 0 0 auto;
+}
+
+.production-detail-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+  padding: 12px 0;
+  border-top: 1px solid rgba(86, 65, 43, 0.36);
+  border-bottom: 1px solid rgba(86, 65, 43, 0.36);
+}
+
+.production-detail-facts div {
+  min-width: 0;
+}
+
+.production-detail-facts dt,
+.production-detail-facts dd {
+  overflow-wrap: anywhere;
+}
+
+.production-detail-facts dt {
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.production-detail-facts dd {
+  margin: 4px 0 0;
+}
+
+.production-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(240px, 0.85fr);
+  gap: 22px;
+}
+
+.production-detail-grid > section {
+  min-width: 0;
+}
+
+.subsection-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.subsection-heading h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.subsection-heading span {
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.production-progress-lines,
+.production-material-status {
+  display: grid;
+  align-content: start;
+}
+
+.production-progress-row,
+.production-material-row {
+  display: grid;
+  gap: 6px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(77, 113, 128, 0.32);
+}
+
+.production-progress-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.production-progress-row > div:first-child,
+.production-material-row {
+  min-width: 0;
+}
+
+.production-progress-row span,
+.production-material-row span,
+.production-material-row small {
+  display: block;
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
+.production-cycle-control {
+  display: grid;
+  grid-template-columns: auto 72px;
+  align-items: center;
+  gap: 8px;
+}
+
+.production-cycle-control input {
+  width: 72px;
+  min-width: 0;
+  text-align: center;
+}
+
+.production-material-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.production-material-row span {
+  grid-column: 1;
+}
+
+.production-material-row small {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: #3f704f;
+  font-weight: 700;
+}
+
+.production-material-row.short small {
+  color: var(--red);
+}
+
+.production-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(86, 65, 43, 0.36);
+}
+
+.production-detail-actions p {
+  margin: 0;
+  color: var(--muted);
+}
+
+@media (max-width: 1050px) {
+  .production-ledger {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "overview"
+      "queue"
+      "detail";
+  }
+
+  .production-batch-list {
+    max-height: 340px;
+  }
+}
+
 @media (max-width: 900px) {
   .admin-view .dashboard-hero:first-child .dashboard-stats,
   .manager-view .dashboard-hero:first-child .dashboard-stats,
@@ -2686,6 +2965,15 @@ body.auth-page {
   .review-correction-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .production-stats,
+  .production-detail-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .production-detail-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 560px) {
@@ -2703,5 +2991,30 @@ body.auth-page {
   .review-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .production-stats,
+  .production-detail-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .production-header-actions,
+  .production-detail-actions,
+  .production-detail-actions > div,
+  .subsection-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .subsection-heading span {
+    text-align: left;
+  }
+
+  .production-progress-row {
+    grid-template-columns: 1fr;
+  }
+
+  .production-cycle-control {
+    grid-template-columns: minmax(0, 1fr) 72px;
   }
 }

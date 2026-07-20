@@ -5,6 +5,7 @@ const TARGETS_KEY = "frontier_still_water_storefront_targets_v1";
 const SUPPLY_ACTIVE_STATUSES = new Set(["Active", "Ordered", "Partially Received"]);
 const SUPPLY_DELIVERY_STATUSES = new Set(["Ordered", "Partially Received"]);
 const BUY_ORDER_OPEN_STATUSES = new Set(["Active", "Paused"]);
+const PRODUCTION_ACTIVE_STATUSES = new Set(["Planned", "In Progress"]);
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
@@ -42,6 +43,11 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "storefront_buy_order.saved": "Storefront buy order saved",
   "storefront_buy_order.fill_adjusted": "Buy order fill adjusted",
   "storefront_buy_order.removed": "Storefront buy order removed",
+  "production_batch.created": "Production batch created",
+  "production_batch.started": "Production batch started",
+  "production_batch.progressed": "Production progress recorded",
+  "production_batch.completed": "Production batch completed",
+  "production_batch.cancelled": "Production batch cancelled",
   "webhook_exception.resolved": "Webhook exception resolved",
   "webhook_exception.ignored": "Webhook exception ignored"
 });
@@ -61,6 +67,7 @@ let supplyOrders = [];
 let storefrontBuyOrders = [];
 let suppliers = [];
 let reviewExceptions = [];
+let productionBatches = [];
 let currentUser = null;
 let currentRole = "employee";
 let employeeUsers = [];
@@ -70,11 +77,13 @@ let backendRefreshTimer = null;
 let backendRefreshPromise = null;
 let lastBackendRefreshAt = 0;
 let supplyReceiptPending = false;
+let productionActionPending = false;
 let activeOrder = newOrder();
 let activeSupplyOrder = newSupplyOrder();
 let activeStorefrontBuyOrder = newStorefrontBuyOrder();
 let activeSupplier = newSupplier();
 let activeReviewExceptionId = "";
+let activeProductionBatchId = "";
 let activeView = "quote";
 let activeSection = "dashboard";
 
@@ -112,6 +121,32 @@ const elements = {
   productionBuildList: document.querySelector("#productionBuildList"),
   productionMaterialsList: document.querySelector("#productionMaterialsList"),
   missingRecipes: document.querySelector("#missingRecipes"),
+  queueOrderProduction: document.querySelector("#queueOrderProductionButton"),
+  queueRestock: document.querySelector("#queueRestockButton"),
+  productionSection: document.querySelector("#productionSection"),
+  productionNavCount: document.querySelector("#productionNavCount"),
+  productionDataStatus: document.querySelector("#productionDataStatus"),
+  productionActiveCount: document.querySelector("#productionActiveCount"),
+  productionDueCount: document.querySelector("#productionDueCount"),
+  productionReadyCount: document.querySelector("#productionReadyCount"),
+  productionShortCount: document.querySelector("#productionShortCount"),
+  productionFilter: document.querySelector("#productionFilterInput"),
+  productionBatchList: document.querySelector("#productionBatchList"),
+  refreshProduction: document.querySelector("#refreshProductionButton"),
+  productionDetailSource: document.querySelector("#productionDetailSource"),
+  productionDetailTitle: document.querySelector("#productionDetailTitle"),
+  productionDetailMeta: document.querySelector("#productionDetailMeta"),
+  productionDetailStatus: document.querySelector("#productionDetailStatus"),
+  productionDetailDue: document.querySelector("#productionDetailDue"),
+  productionDetailAssigned: document.querySelector("#productionDetailAssigned"),
+  productionDetailCreatedBy: document.querySelector("#productionDetailCreatedBy"),
+  productionDetailUpdated: document.querySelector("#productionDetailUpdated"),
+  productionProgressLines: document.querySelector("#productionProgressLines"),
+  productionMaterialStatus: document.querySelector("#productionMaterialStatus"),
+  productionActionStatus: document.querySelector("#productionActionStatus"),
+  startProduction: document.querySelector("#startProductionButton"),
+  recordProduction: document.querySelector("#recordProductionButton"),
+  cancelProduction: document.querySelector("#cancelProductionButton"),
   supplySection: document.querySelector("#supplySection"),
   buyOrdersSection: document.querySelector("#buyOrdersSection"),
   buyOrderMeta: document.querySelector("#buyOrderMeta"),
@@ -459,6 +494,13 @@ function wireEvents() {
   document.querySelector("#addItemButton").addEventListener("click", addItemLine);
   document.querySelector("#copySummaryButton").addEventListener("click", copySummary);
   document.querySelector("#copyProductionButton").addEventListener("click", copyProduction);
+  elements.queueOrderProduction.addEventListener("click", queueActiveOrderProduction);
+  elements.queueRestock.addEventListener("click", queueRestockProduction);
+  elements.productionFilter.addEventListener("change", renderProductionQueue);
+  elements.refreshProduction.addEventListener("click", () => loadProductionBatches());
+  elements.startProduction.addEventListener("click", startSelectedProductionBatch);
+  elements.recordProduction.addEventListener("click", recordSelectedProductionProgress);
+  elements.cancelProduction.addEventListener("click", cancelSelectedProductionBatch);
   elements.logout.addEventListener("click", logout);
   elements.pendingUserList.addEventListener("click", handleEmployeeAction);
   elements.employeeUserList.addEventListener("click", handleEmployeeAction);
@@ -550,6 +592,7 @@ function wireEvents() {
       }
       if (activeSection === "buy-orders" && isManagement()) loadStorefrontBuyOrders({ silent: true });
       if (activeSection === "review" && isManagement()) loadBackendSnapshot({ silent: true });
+      if (activeSection === "production") loadProductionBatches({ silent: true });
     });
   });
 
@@ -1474,6 +1517,7 @@ function render() {
   renderSupplyWorkspace();
   renderStorefrontBuyOrderWorkspace();
   renderSupplierWorkspace();
+  renderProductionQueue();
   renderView();
   renderDashboard();
   renderStoreOverview();
@@ -1698,6 +1742,7 @@ function renderSection() {
   elements.buyOrdersSection.classList.toggle("hidden", activeSection !== "buy-orders");
   elements.supplySection.classList.toggle("hidden", activeSection !== "supplies");
   elements.workbenchSection.classList.toggle("hidden", activeSection !== "workbench");
+  elements.productionSection.classList.toggle("hidden", activeSection !== "production");
   elements.operationsSection.classList.toggle("hidden", activeSection !== "operations");
   elements.reviewSection.classList.toggle("hidden", activeSection !== "review");
   elements.employeesSection.classList.toggle("hidden", activeSection !== "employees");
@@ -2132,6 +2177,10 @@ async function ignoreReviewException() {
 function renderReplenishment() {
   const plan = getReplenishmentPlan();
   const materialShortages = plan.materials.filter(line => line.shortage > 0);
+  const unqueuedCraftable = plan.missing.reduce((sum, line) => {
+    if (!recipeCatalog[line.itemName]) return sum;
+    return sum + Math.max(0, Number(line.missing || 0) - queuedProductionQuantity(line.itemName));
+  }, 0);
   elements.missingStockCount.textContent = plan.missing.length;
   elements.materialShortageCount.textContent = materialShortages.length;
   elements.replenishmentMeta.textContent = stockTargets.length
@@ -2139,12 +2188,15 @@ function renderReplenishment() {
     : "Set admin stock targets to generate a standing order";
 
   elements.replenishmentList.innerHTML = plan.missing.length
-    ? plan.missing.map(line => `
+    ? plan.missing.map(line => {
+      const queued = queuedProductionQuantity(line.itemName);
+      return `
       <div class="replenishment-row">
         <strong>${escapeHtml(line.label)}</strong>
-        <span>Have ${formatNumber(line.current)} / Target ${formatNumber(line.target)} / Make ${formatNumber(line.missing)}</span>
+        <span>Have ${formatNumber(line.current)} / Target ${formatNumber(line.target)} / Make ${formatNumber(line.missing)}${queued ? ` / ${formatNumber(queued)} queued` : ""}</span>
       </div>
-    `).join("")
+    `;
+    }).join("")
     : `<div class="empty-card">${stockTargets.length ? "Storefront targets are currently filled" : "No storefront targets set yet"}</div>`;
 
   const materialRows = materialShortages.map(line => `
@@ -2171,6 +2223,10 @@ function renderReplenishment() {
       </div>
     `).join("")
     : `<div class="empty-card">${stockTargets.length ? "All storefront targets are filled" : "No storefront targets set yet"}</div>`;
+  elements.queueRestock.disabled = productionActionPending || !isManagement() || unqueuedCraftable <= 0;
+  elements.queueRestock.textContent = unqueuedCraftable > 0
+    ? `Queue ${formatNumber(unqueuedCraftable)} Units`
+    : "Restock Covered";
 }
 
 function renderTimeClock() {
@@ -2251,6 +2307,11 @@ function renderProduction() {
   elements.missingRecipes.innerHTML = production.missing.length
     ? `<strong>No recipe attached:</strong> ${production.missing.map(escapeHtml).join(", ")}`
     : "";
+  const queued = productionBatches.some(batch => batch.sourceType === "Customer Order"
+    && batch.sourceId === activeOrder.id
+    && PRODUCTION_ACTIVE_STATUSES.has(batch.status));
+  elements.queueOrderProduction.disabled = productionActionPending || !isManagement() || !production.buildLines.length || queued;
+  elements.queueOrderProduction.textContent = queued ? "Already Queued" : "Queue Production";
 }
 
 function renderOrdersList() {
@@ -2352,6 +2413,322 @@ function buildProductionSummary(order) {
     `Estimated material cost: $${formatNumber(production.materialCost)}`,
     missing
   ].filter(line => line !== "").join("\n");
+}
+
+async function queueActiveOrderProduction() {
+  if (!isManagement() || productionActionPending) return;
+  updateActiveFromInputs();
+  const plan = getProductionPlan(activeOrder);
+  if (!plan.buildLines.length) {
+    elements.productionMeta.textContent = "Add at least one item with a recipe before queuing production";
+    return;
+  }
+  await createProductionBatch({
+    id: crypto.randomUUID(),
+    sourceType: "Customer Order",
+    sourceId: activeOrder.id,
+    reference: activeOrder.customer || "In-store order",
+    dueDate: activeOrder.deliveryDate,
+    priority: activeOrder.priority,
+    assignedTo: activeOrder.handler,
+    notes: activeOrder.notes,
+    lines: plan.buildLines.map(line => ({ itemName: line.name, requestedQuantity: line.quantity }))
+  }, "Customer order added to the production queue");
+}
+
+async function queueRestockProduction() {
+  if (!isManagement() || productionActionPending) return;
+  const plan = getReplenishmentPlan();
+  const lines = plan.missing.map(line => ({
+    itemName: line.itemName,
+    requestedQuantity: Math.max(0, Number(line.missing || 0) - queuedProductionQuantity(line.itemName))
+  })).filter(line => line.requestedQuantity > 0 && recipeCatalog[line.itemName]);
+  if (!lines.length) {
+    elements.replenishmentMeta.textContent = "All craftable storefront shortages are already covered by active batches";
+    return;
+  }
+  await createProductionBatch({
+    id: crypto.randomUUID(),
+    sourceType: "Storefront Restock",
+    sourceId: "",
+    reference: `Storefront restock ${formatDelivery(todayKey())}`,
+    dueDate: todayKey(),
+    priority: "Normal",
+    assignedTo: "",
+    notes: "Generated from current storefront targets",
+    lines
+  }, "Missing storefront stock added to the production queue");
+}
+
+async function createProductionBatch(payload, successMessage) {
+  productionActionPending = true;
+  elements.queueOrderProduction.disabled = true;
+  elements.queueRestock.disabled = true;
+  try {
+    const response = await fetch("/api/production-batches", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    productionBatches = Array.isArray(result.batches) ? result.batches : [];
+    activeProductionBatchId = result.batch.id;
+    activeSection = "production";
+    elements.productionActionStatus.textContent = successMessage;
+    render();
+  } catch (error) {
+    const status = activeSection === "restock" ? elements.replenishmentMeta : elements.productionMeta;
+    status.textContent = `Unable to queue production: ${error.message}`;
+  } finally {
+    productionActionPending = false;
+    renderProduction();
+    renderReplenishment();
+  }
+}
+
+async function loadProductionBatches({ silent = false } = {}) {
+  try {
+    const response = await fetch("/api/production-batches", { headers: { accept: "application/json" } });
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    productionBatches = Array.isArray(result.batches) ? result.batches : [];
+    if (!activeProductionBatchId || !productionBatches.some(batch => batch.id === activeProductionBatchId)) {
+      activeProductionBatchId = productionBatches.find(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status))?.id
+        || productionBatches[0]?.id
+        || "";
+    }
+    elements.productionDataStatus.textContent = `${productionBatches.length} shared ${productionBatches.length === 1 ? "batch" : "batches"} loaded`;
+    renderProductionQueue();
+    renderReplenishment();
+  } catch (error) {
+    if (!silent) elements.productionDataStatus.textContent = `Unable to load production: ${error.message}`;
+  }
+}
+
+function renderProductionQueue() {
+  if (!elements.productionSection) return;
+  const active = productionBatches.filter(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status));
+  const readinessPlans = getProductionReadinessPlans();
+  const readiness = active.map(batch => ({ batch, plan: readinessPlans.get(batch.id) || getProductionBatchMaterialPlan(batch) }));
+  const dueToday = active.filter(batch => batch.dueDate === todayKey());
+  const ready = readiness.filter(entry => entry.plan.shortageCount === 0);
+  const shortCount = readiness.reduce((sum, entry) => sum + Number(entry.plan.shortageCount || 0), 0);
+  elements.productionActiveCount.textContent = formatNumber(active.length);
+  elements.productionDueCount.textContent = formatNumber(dueToday.length);
+  elements.productionReadyCount.textContent = formatNumber(ready.length);
+  elements.productionShortCount.textContent = formatNumber(shortCount);
+  elements.productionNavCount.textContent = formatNumber(active.length);
+  elements.productionNavCount.classList.toggle("hidden", active.length === 0);
+
+  const filter = elements.productionFilter.value || "Active";
+  const visible = productionBatches.filter(batch => filter === "All"
+    || (filter === "Active" ? PRODUCTION_ACTIVE_STATUSES.has(batch.status) : batch.status === filter));
+  elements.productionBatchList.innerHTML = visible.length
+    ? visible.map(batch => {
+      const planned = batch.lines.reduce((sum, line) => sum + Number(line.plannedCrafts || 0), 0);
+      const completed = batch.lines.reduce((sum, line) => sum + Number(line.completedCrafts || 0), 0);
+      const materialPlan = readinessPlans.get(batch.id) || getProductionBatchMaterialPlan(batch);
+      return `
+        <button class="production-batch-row ${batch.id === activeProductionBatchId ? "active" : ""}" type="button" data-production-batch="${escapeHtml(batch.id)}">
+          <span class="status-pill ${statusClass(batch.status)}">${escapeHtml(batch.status)}</span>
+          <strong>${escapeHtml(batch.reference || batch.sourceType)}</strong>
+          <span>${escapeHtml(batch.sourceType)} / ${formatNumber(completed)} of ${formatNumber(planned)} craft cycles</span>
+          <small>${batch.dueDate ? formatDelivery(batch.dueDate) : "No due date"}${materialPlan.shortageCount ? ` / ${formatNumber(materialPlan.shortageCount)} material shorts` : " / Materials ready"}</small>
+        </button>
+      `;
+    }).join("")
+    : `<div class="empty-card">No production batches in this view</div>`;
+  elements.productionBatchList.querySelectorAll("[data-production-batch]").forEach(button => {
+    button.addEventListener("click", () => {
+      activeProductionBatchId = button.dataset.productionBatch;
+      renderProductionQueue();
+    });
+  });
+  renderProductionDetail(productionBatches.find(batch => batch.id === activeProductionBatchId));
+}
+
+function renderProductionDetail(batch) {
+  if (!batch) {
+    elements.productionDetailSource.textContent = "Select a batch";
+    elements.productionDetailTitle.textContent = "No production batch selected";
+    elements.productionDetailMeta.textContent = "Choose a batch from the register";
+    elements.productionDetailStatus.textContent = "Waiting";
+    elements.productionDetailStatus.className = "status-pill";
+    elements.productionDetailDue.textContent = "-";
+    elements.productionDetailAssigned.textContent = "-";
+    elements.productionDetailCreatedBy.textContent = "-";
+    elements.productionDetailUpdated.textContent = "-";
+    elements.productionProgressLines.innerHTML = `<div class="empty-card">No craft lines selected</div>`;
+    elements.productionMaterialStatus.innerHTML = `<div class="empty-card">No material plan selected</div>`;
+    elements.productionActionStatus.textContent = "Select a batch to begin";
+    elements.startProduction.disabled = true;
+    elements.recordProduction.disabled = true;
+    elements.cancelProduction.disabled = true;
+    return;
+  }
+
+  const closed = batch.status === "Completed" || batch.status === "Cancelled";
+  const pendingTargets = new Map((batch.pendingProgress?.targets || []).map(target => [target.lineId, target.completedCrafts]));
+  elements.productionDetailSource.textContent = batch.sourceType;
+  elements.productionDetailTitle.textContent = batch.reference || "Production batch";
+  elements.productionDetailMeta.textContent = `${batch.lines.length} ${batch.lines.length === 1 ? "line" : "lines"} / ${batch.priority}${batch.notes ? ` / ${batch.notes}` : ""}`;
+  elements.productionDetailStatus.textContent = batch.status;
+  elements.productionDetailStatus.className = `status-pill ${statusClass(batch.status)}`;
+  elements.productionDetailDue.textContent = batch.dueDate ? formatDelivery(batch.dueDate) : "No due date";
+  elements.productionDetailAssigned.textContent = batch.assignedTo || "Unassigned";
+  elements.productionDetailCreatedBy.textContent = batch.createdBy || "Unknown";
+  elements.productionDetailUpdated.textContent = formatDateTime(batch.updatedAt);
+  elements.productionProgressLines.innerHTML = batch.lines.map(line => {
+    const completedCrafts = Number(line.completedCrafts || 0);
+    const plannedCrafts = Number(line.plannedCrafts || 0);
+    const inputValue = pendingTargets.get(line.id) ?? completedCrafts;
+    return `
+      <div class="production-progress-row">
+        <div>
+          <strong>${escapeHtml(line.itemLabel || line.itemName)}</strong>
+          <span>${formatNumber(line.requestedQuantity)} requested / ${formatNumber(plannedCrafts * line.recipeYield)} planned output</span>
+        </div>
+        <div class="production-cycle-control">
+          <span>${formatNumber(completedCrafts)} / ${formatNumber(plannedCrafts)}</span>
+          <input data-production-progress-line="${escapeHtml(line.id)}" type="number" min="${completedCrafts}" max="${plannedCrafts}" step="1" value="${inputValue}" aria-label="Completed craft cycles for ${escapeHtml(line.itemLabel || line.itemName)}" ${closed ? "disabled" : ""}>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const materialPlan = getProductionBatchMaterialPlan(batch);
+  elements.productionMaterialStatus.innerHTML = materialPlan.materials.length
+    ? materialPlan.materials.map(material => `
+      <div class="production-material-row ${material.shortage > 0 ? "short" : "ready"}">
+        <strong>${escapeHtml(material.ingredient)}</strong>
+        <span>${formatNumber(material.available)} available / ${formatNumber(material.needed)} needed</span>
+        <small>${material.shortage > 0 ? `${formatNumber(material.shortage)} short` : "Ready"}</small>
+      </div>
+    `).join("")
+    : `<div class="empty-card">No remaining materials needed</div>`;
+  elements.productionActionStatus.textContent = batch.pendingProgress
+    ? "Sheet update paused. Record Progress will retry the saved movements safely."
+    : materialPlan.shortageCount
+      ? `${materialPlan.shortageCount} materials are short`
+      : closed ? batch.status : "Materials available for the remaining plan";
+  elements.startProduction.disabled = productionActionPending || closed || batch.status !== "Planned";
+  elements.recordProduction.disabled = productionActionPending || closed;
+  elements.cancelProduction.disabled = productionActionPending || closed || !isManagement();
+}
+
+function getProductionBatchMaterialPlan(batch) {
+  const reservedPlan = getProductionReadinessPlans().get(batch.id);
+  if (reservedPlan) return reservedPlan;
+  const storage = getLatestCounts("Storage");
+  const materials = getProductionBatchMaterialNeeds(batch).map(material => {
+    const available = Number(storage.get(material.key) || 0);
+    return { ...material, available, shortage: Math.max(0, material.needed - available) };
+  });
+  return { materials, shortageCount: materials.filter(material => material.shortage > 0).length };
+}
+
+function getProductionBatchMaterialNeeds(batch) {
+  const totals = new Map();
+  batch.lines.forEach(line => {
+    const remainingCrafts = Math.max(0, Number(line.plannedCrafts || 0) - Number(line.completedCrafts || 0));
+    line.recipe.forEach(component => {
+      const key = normalize(component.ingredient);
+      const current = totals.get(key) || { ingredient: component.ingredient, needed: 0 };
+      current.needed += remainingCrafts * Number(component.quantity || 0);
+      totals.set(key, current);
+    });
+  });
+  return [...totals.entries()].map(([key, material]) => ({ key, ...material }));
+}
+
+function getProductionReadinessPlans() {
+  const remaining = new Map(getLatestCounts("Storage"));
+  const plans = new Map();
+  productionBatches.filter(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status)).forEach(batch => {
+    const materials = getProductionBatchMaterialNeeds(batch).map(material => {
+      const available = Number(remaining.get(material.key) || 0);
+      const shortage = Math.max(0, material.needed - available);
+      remaining.set(material.key, Math.max(0, available - material.needed));
+      return { ...material, available, shortage };
+    }).sort((a, b) => b.shortage - a.shortage || a.ingredient.localeCompare(b.ingredient));
+    plans.set(batch.id, {
+      materials,
+      shortageCount: materials.filter(material => material.shortage > 0).length
+    });
+  });
+  return plans;
+}
+
+function queuedProductionQuantity(itemName) {
+  const wanted = normalize(itemName);
+  return productionBatches.filter(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status))
+    .flatMap(batch => batch.lines)
+    .filter(line => normalize(line.itemName) === wanted)
+    .reduce((sum, line) => sum + Math.max(0,
+      (Number(line.plannedCrafts || 0) - Number(line.completedCrafts || 0)) * Number(line.recipeYield || 1)
+    ), 0);
+}
+
+async function startSelectedProductionBatch() {
+  const batch = productionBatches.find(candidate => candidate.id === activeProductionBatchId);
+  if (!batch || productionActionPending) return;
+  await runProductionAction(batch, "start", {}, "Batch started");
+}
+
+async function recordSelectedProductionProgress() {
+  const batch = productionBatches.find(candidate => candidate.id === activeProductionBatchId);
+  if (!batch || productionActionPending) return;
+  const completions = [...elements.productionProgressLines.querySelectorAll("[data-production-progress-line]")]
+    .map(input => ({ lineId: input.dataset.productionProgressLine, completedCrafts: Number(input.value) }))
+    .filter(completion => {
+      const line = batch.lines.find(candidate => candidate.id === completion.lineId);
+      return line && completion.completedCrafts > Number(line.completedCrafts || 0);
+    });
+  if (!completions.length && !batch.pendingProgress) {
+    elements.productionActionStatus.textContent = "Increase at least one completed craft-cycle total";
+    return;
+  }
+  await runProductionAction(batch, "progress", { completions }, "Production progress recorded");
+  await loadBackendSnapshot({ silent: true });
+}
+
+async function cancelSelectedProductionBatch() {
+  const batch = productionBatches.find(candidate => candidate.id === activeProductionBatchId);
+  if (!batch || !isManagement() || productionActionPending) return;
+  if (!window.confirm(`Cancel production batch ${batch.reference || batch.id}?`)) return;
+  await runProductionAction(batch, "cancel", {}, "Production batch cancelled");
+}
+
+async function runProductionAction(batch, action, payload, successMessage) {
+  productionActionPending = true;
+  let finalMessage = "";
+  renderProductionDetail(batch);
+  elements.productionActionStatus.textContent = action === "progress" ? "Writing production movements to the shared ledger" : "Updating production batch";
+  try {
+    const response = await fetch(`/api/production-batches/${encodeURIComponent(batch.id)}/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    productionBatches = Array.isArray(result.batches) ? result.batches : [];
+    activeProductionBatchId = result.batch.id;
+    finalMessage = successMessage;
+  } catch (error) {
+    finalMessage = `Update failed: ${error.message}`;
+    await loadProductionBatches({ silent: true });
+  } finally {
+    productionActionPending = false;
+    renderProductionQueue();
+    renderReplenishment();
+    if (finalMessage) elements.productionActionStatus.textContent = finalMessage;
+  }
 }
 
 function toggleTimeClock() {
@@ -3029,6 +3406,13 @@ async function performBackendRefresh({ silent = false } = {}) {
     if (!response.ok) throw new Error(`API ${response.status}`);
     const nextSnapshot = await response.json();
     const sheetReady = nextSnapshot.sheet?.ok && Array.isArray(nextSnapshot.sheet.sheets);
+    productionBatches = Array.isArray(nextSnapshot.productionBatches) ? nextSnapshot.productionBatches : productionBatches;
+    if (!activeProductionBatchId || !productionBatches.some(batch => batch.id === activeProductionBatchId)) {
+      activeProductionBatchId = productionBatches.find(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status))?.id
+        || productionBatches[0]?.id
+        || "";
+    }
+    renderProductionQueue();
     if (!sheetReady && previousSnapshot?.sheet?.ok) {
       elements.dataStatus.textContent = `Sheet refresh delayed / last synced ${formatDateTime(lastBackendRefreshAt)}`;
       return;

@@ -4,11 +4,12 @@ const path = require("node:path");
 
 const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially Received", "Received", "Cancelled"]);
 const STOREFRONT_BUY_ORDER_STATUSES = new Set(["Active", "Paused", "Filled", "Cancelled"]);
+const PRODUCTION_BATCH_STATUSES = new Set(["Planned", "In Progress", "Completed", "Cancelled"]);
 
 class BusinessStore {
   constructor({ filePath }) {
     this.filePath = filePath;
-    this.data = { version: 3, supplyOrders: [], suppliers: [], storefrontBuyOrders: [] };
+    this.data = { version: 4, supplyOrders: [], suppliers: [], storefrontBuyOrders: [], productionBatches: [] };
     this.writeQueue = Promise.resolve();
   }
 
@@ -48,6 +49,124 @@ class BusinessStore {
   getSupplier(supplierId) {
     const supplier = this.data.suppliers.find(candidate => candidate.id === cleanText(supplierId, 100));
     return supplier ? structuredClone(supplier) : null;
+  }
+
+  listProductionBatches() {
+    return this.data.productionBatches
+      .map(batch => structuredClone(batch))
+      .sort((a, b) => {
+        if (a.priority !== b.priority) return a.priority === "Expedite" ? -1 : 1;
+        const dueA = a.dueDate || "9999-12-31";
+        const dueB = b.dueDate || "9999-12-31";
+        return dueA.localeCompare(dueB) || new Date(b.updatedAt) - new Date(a.updatedAt);
+      });
+  }
+
+  getProductionBatch(batchId) {
+    const batch = this.data.productionBatches.find(candidate => candidate.id === cleanText(batchId, 100));
+    return batch ? structuredClone(batch) : null;
+  }
+
+  async createProductionBatch(input, actor) {
+    return this.mutate(async () => {
+      const now = new Date().toISOString();
+      const id = cleanText(input.id, 100) || crypto.randomUUID();
+      const existing = this.data.productionBatches.find(batch => batch.id === id);
+      if (existing) return structuredClone(existing);
+      const batch = cleanProductionBatch(input, actor, { id, now });
+      const duplicateSource = batch.sourceId && this.data.productionBatches.find(candidate =>
+        candidate.sourceType === batch.sourceType
+        && candidate.sourceId === batch.sourceId
+        && candidate.status !== "Completed"
+        && candidate.status !== "Cancelled"
+      );
+      if (duplicateSource) {
+        throw businessError("This source already has an active production batch", 409, "production_source_active");
+      }
+      this.data.productionBatches.unshift(batch);
+      return structuredClone(batch);
+    });
+  }
+
+  async startProductionBatch(batchId, actor) {
+    return this.mutate(async () => {
+      const batch = this.data.productionBatches.find(candidate => candidate.id === cleanText(batchId, 100));
+      if (!batch) throw businessError("Production batch not found", 404, "not_found");
+      if (batch.status === "Cancelled" || batch.status === "Completed") {
+        throw businessError("This production batch cannot be started", 409, "production_batch_closed");
+      }
+      if (batch.status === "Planned") {
+        batch.status = "In Progress";
+        batch.startedAt = new Date().toISOString();
+        batch.startedBy = cleanText(actor?.fullName, 100);
+        batch.updatedAt = batch.startedAt;
+        batch.updatedBy = cleanText(actor?.fullName, 100);
+      }
+      return structuredClone(batch);
+    });
+  }
+
+  async beginProductionProgress(batchId, pendingProgress, actor) {
+    return this.mutate(async () => {
+      const batch = this.data.productionBatches.find(candidate => candidate.id === cleanText(batchId, 100));
+      if (!batch) throw businessError("Production batch not found", 404, "not_found");
+      if (batch.status === "Cancelled" || batch.status === "Completed") {
+        throw businessError("This production batch cannot record more work", 409, "production_batch_closed");
+      }
+      if (batch.pendingProgress) {
+        if (batch.pendingProgress.id === cleanText(pendingProgress.id, 100)) return structuredClone(batch);
+        throw businessError("Retry the pending production update before recording different progress", 409, "production_progress_pending");
+      }
+      batch.pendingProgress = cleanPendingProductionProgress(pendingProgress, batch);
+      batch.status = "In Progress";
+      batch.startedAt = batch.startedAt || new Date().toISOString();
+      batch.startedBy = batch.startedBy || cleanText(actor?.fullName, 100);
+      batch.updatedAt = new Date().toISOString();
+      batch.updatedBy = cleanText(actor?.fullName, 100);
+      return structuredClone(batch);
+    });
+  }
+
+  async commitProductionProgress(batchId, pendingId, actor) {
+    return this.mutate(async () => {
+      const batch = this.data.productionBatches.find(candidate => candidate.id === cleanText(batchId, 100));
+      if (!batch) throw businessError("Production batch not found", 404, "not_found");
+      const pending = batch.pendingProgress;
+      if (!pending || pending.id !== cleanText(pendingId, 100)) {
+        throw businessError("Pending production update was not found", 409, "production_progress_missing");
+      }
+      pending.targets.forEach(target => {
+        const line = batch.lines.find(candidate => candidate.id === target.lineId);
+        if (line) line.completedCrafts = target.completedCrafts;
+      });
+      batch.pendingProgress = null;
+      const completed = batch.lines.every(line => line.completedCrafts >= line.plannedCrafts);
+      batch.status = completed ? "Completed" : "In Progress";
+      batch.updatedAt = new Date().toISOString();
+      batch.updatedBy = cleanText(actor?.fullName, 100);
+      if (completed) {
+        batch.completedAt = batch.updatedAt;
+        batch.completedBy = batch.updatedBy;
+      }
+      return structuredClone(batch);
+    });
+  }
+
+  async cancelProductionBatch(batchId, actor) {
+    return this.mutate(async () => {
+      const batch = this.data.productionBatches.find(candidate => candidate.id === cleanText(batchId, 100));
+      if (!batch) throw businessError("Production batch not found", 404, "not_found");
+      if (batch.pendingProgress) {
+        throw businessError("Finish retrying the pending production update before cancelling", 409, "production_progress_pending");
+      }
+      if (batch.status === "Completed") {
+        throw businessError("Completed production batches cannot be cancelled", 409, "production_batch_completed");
+      }
+      batch.status = "Cancelled";
+      batch.updatedAt = new Date().toISOString();
+      batch.updatedBy = cleanText(actor?.fullName, 100);
+      return structuredClone(batch);
+    });
   }
 
   async saveSupplier(input, actor) {
@@ -224,8 +343,9 @@ class BusinessStore {
       if (!Array.isArray(parsed.supplyOrders)) parsed.supplyOrders = [];
       if (!Array.isArray(parsed.suppliers)) parsed.suppliers = [];
       if (!Array.isArray(parsed.storefrontBuyOrders)) parsed.storefrontBuyOrders = [];
+      if (!Array.isArray(parsed.productionBatches)) parsed.productionBatches = [];
       return {
-        version: 3,
+        version: 4,
         supplyOrders: parsed.supplyOrders
           .filter(order => order && typeof order === "object")
           .map(order => order.status === "Draft" ? { ...order, status: "Active" } : order),
@@ -238,10 +358,15 @@ class BusinessStore {
           })),
         storefrontBuyOrders: parsed.storefrontBuyOrders
           .filter(order => order && typeof order === "object")
-          .map(order => cleanStoredStorefrontBuyOrder(order))
+          .map(order => cleanStoredStorefrontBuyOrder(order)),
+        productionBatches: parsed.productionBatches
+          .filter(batch => batch && typeof batch === "object")
+          .map(batch => cleanStoredProductionBatch(batch))
       };
     } catch (error) {
-      if (error.code === "ENOENT") return { version: 3, supplyOrders: [], suppliers: [], storefrontBuyOrders: [] };
+      if (error.code === "ENOENT") {
+        return { version: 4, supplyOrders: [], suppliers: [], storefrontBuyOrders: [], productionBatches: [] };
+      }
       throw new Error(`Unable to read business store: ${error.message}`);
     }
   }
@@ -251,6 +376,131 @@ class BusinessStore {
     await fs.promises.writeFile(temporaryPath, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
     await fs.promises.rename(temporaryPath, this.filePath);
   }
+}
+
+function cleanProductionBatch(input, actor, { id, now }) {
+  const sourceType = new Set(["Customer Order", "Storefront Restock", "Manual"]).has(input.sourceType)
+    ? input.sourceType
+    : "Manual";
+  const lines = (Array.isArray(input.lines) ? input.lines : []).slice(0, 50)
+    .map(cleanProductionLine);
+  if (!lines.length) throw businessError("Add at least one craftable item to the production batch", 400, "production_lines_required");
+  const lineKeys = lines.map(line => normalizeKey(line.itemName));
+  if (new Set(lineKeys).size !== lineKeys.length) {
+    throw businessError("Each product can only appear once in a production batch", 400, "duplicate_production_line");
+  }
+  return {
+    id,
+    status: "Planned",
+    sourceType,
+    sourceId: cleanText(input.sourceId, 100),
+    reference: cleanText(input.reference, 150),
+    dueDate: cleanDate(input.dueDate),
+    priority: input.priority === "Expedite" ? "Expedite" : "Normal",
+    assignedTo: cleanText(input.assignedTo, 100),
+    notes: cleanText(input.notes, 1500),
+    lines,
+    pendingProgress: null,
+    startedAt: "",
+    startedBy: "",
+    completedAt: "",
+    completedBy: "",
+    createdAt: now,
+    createdBy: cleanText(actor?.fullName, 100),
+    updatedAt: now,
+    updatedBy: cleanText(actor?.fullName, 100)
+  };
+}
+
+function cleanProductionLine(line) {
+  const itemName = cleanText(line.itemName || line.name || line.itemLabel, 100);
+  if (!itemName) throw businessError("Every production line needs an item", 400, "invalid_production_line");
+  const recipe = (Array.isArray(line.recipe) ? line.recipe : []).slice(0, 50)
+    .map(component => ({
+      ingredient: cleanText(component.ingredient || component[0], 100),
+      quantity: Math.max(0, finiteNumber(component.quantity ?? component[1], 0))
+    }))
+    .filter(component => component.ingredient && component.quantity > 0);
+  if (!recipe.length) throw businessError(`No recipe is available for ${itemName}`, 400, "production_recipe_missing");
+  const recipeYield = Math.max(1, finiteNumber(line.recipeYield, 1));
+  const requestedQuantity = Math.max(1, finiteNumber(line.requestedQuantity || line.quantity, 1));
+  const plannedCrafts = Math.max(1, Math.ceil(requestedQuantity / recipeYield));
+  return {
+    id: cleanText(line.id, 100) || crypto.randomUUID(),
+    itemName,
+    itemLabel: cleanText(line.itemLabel || line.label || itemName, 100),
+    requestedQuantity,
+    recipeYield,
+    plannedCrafts,
+    completedCrafts: 0,
+    recipe
+  };
+}
+
+function cleanStoredProductionBatch(batch) {
+  const lines = (Array.isArray(batch.lines) ? batch.lines : []).slice(0, 50).map(line => {
+    const cleaned = cleanProductionLine(line);
+    cleaned.id = cleanText(line.id, 100) || cleaned.id;
+    cleaned.completedCrafts = Math.min(
+      cleaned.plannedCrafts,
+      Math.max(0, finiteNumber(line.completedCrafts, 0))
+    );
+    return cleaned;
+  });
+  const status = PRODUCTION_BATCH_STATUSES.has(batch.status) ? batch.status : "Planned";
+  return {
+    ...batch,
+    id: cleanText(batch.id, 100) || crypto.randomUUID(),
+    status,
+    sourceType: new Set(["Customer Order", "Storefront Restock", "Manual"]).has(batch.sourceType)
+      ? batch.sourceType
+      : "Manual",
+    sourceId: cleanText(batch.sourceId, 100),
+    reference: cleanText(batch.reference, 150),
+    dueDate: cleanDate(batch.dueDate),
+    priority: batch.priority === "Expedite" ? "Expedite" : "Normal",
+    assignedTo: cleanText(batch.assignedTo, 100),
+    notes: cleanText(batch.notes, 1500),
+    lines,
+    pendingProgress: batch.pendingProgress ? cleanPendingProductionProgress(batch.pendingProgress, { lines }) : null
+  };
+}
+
+function cleanPendingProductionProgress(progress, batch) {
+  const targets = (Array.isArray(progress.targets) ? progress.targets : []).slice(0, 50).map(target => {
+    const lineId = cleanText(target.lineId, 100);
+    const line = batch.lines.find(candidate => candidate.id === lineId);
+    if (!line) throw businessError("Production progress refers to an unknown line", 400, "production_line_not_found");
+    const completedCrafts = finiteNumber(target.completedCrafts, -1);
+    if (completedCrafts <= line.completedCrafts || completedCrafts > line.plannedCrafts) {
+      throw businessError("Completed craft cycles must increase without exceeding the plan", 400, "invalid_production_progress");
+    }
+    return {
+      lineId,
+      previousCrafts: Math.max(0, finiteNumber(target.previousCrafts, line.completedCrafts)),
+      completedCrafts
+    };
+  });
+  if (!targets.length) throw businessError("Enter at least one completed craft cycle", 400, "production_progress_required");
+  const operations = (Array.isArray(progress.operations) ? progress.operations : []).slice(0, 500).map(operation => ({
+    id: cleanText(operation.id, 100),
+    kind: cleanText(operation.kind, 40),
+    location: cleanText(operation.location, 40),
+    itemName: cleanText(operation.itemName, 100),
+    itemLabel: cleanText(operation.itemLabel || operation.itemName, 100),
+    quantity: Math.max(0, finiteNumber(operation.quantity, 0)),
+    amount: finiteNumber(operation.amount, 0),
+    note: cleanText(operation.note, 500),
+    employee: cleanText(operation.employee, 100)
+  })).filter(operation => operation.id && operation.itemName && operation.quantity > 0);
+  if (!operations.length) throw businessError("Production progress has no stock movements", 400, "production_operations_required");
+  return {
+    id: cleanText(progress.id, 100) || crypto.randomUUID(),
+    targets,
+    operations,
+    createdAt: cleanDateTime(progress.createdAt) || new Date().toISOString(),
+    createdBy: cleanText(progress.createdBy, 100)
+  };
 }
 
 function cleanStorefrontBuyOrder(input, actor, { id, now, existing }) {
@@ -469,4 +719,10 @@ function businessError(message, status, code) {
   return error;
 }
 
-module.exports = { BusinessStore, SUPPLY_ORDER_STATUSES, STOREFRONT_BUY_ORDER_STATUSES, businessError };
+module.exports = {
+  BusinessStore,
+  SUPPLY_ORDER_STATUSES,
+  STOREFRONT_BUY_ORDER_STATUSES,
+  PRODUCTION_BATCH_STATUSES,
+  businessError
+};

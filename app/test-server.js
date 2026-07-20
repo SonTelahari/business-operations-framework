@@ -27,6 +27,7 @@ const reviewExceptions = [{
   rawText: "Item label: Custom Navy"
 }];
 let failNextReceiverWrite = false;
+let failReceiverAfterSuccessfulWrites = -1;
 const mockReceiver = http.createServer(async (request, response) => {
   if (request.method === "GET") {
     const materials = [...storageCounts.entries()].map(([key, storageCount]) => ({
@@ -66,6 +67,13 @@ const mockReceiver = http.createServer(async (request, response) => {
     response.end(JSON.stringify({ ok: false, error: "Simulated Sheet failure" }));
     return;
   }
+  if (failReceiverAfterSuccessfulWrites === 0) {
+    failReceiverAfterSuccessfulWrites = -1;
+    response.writeHead(500, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: false, error: "Simulated partial production failure" }));
+    return;
+  }
+  if (failReceiverAfterSuccessfulWrites > 0) failReceiverAfterSuccessfulWrites -= 1;
   const entry = payload.entry;
   if (payload.action === "resolve_exception") {
     const exception = reviewExceptions.find(candidate => candidate.webhookId === payload.exception?.webhookId);
@@ -79,11 +87,19 @@ const mockReceiver = http.createServer(async (request, response) => {
     const exception = reviewExceptions.find(candidate => candidate.webhookId === payload.exception?.webhookId);
     if (exception) exception.status = "Ignored";
   }
-  if (payload.action === "manual_operation" && entry?.kind === "Stock Count" && entry.location === "Storage") {
-    if (!receiverOperationIds.has(entry.id)) {
+  if (payload.action === "manual_operation" && entry && !receiverOperationIds.has(entry.id)) {
+    if (entry.kind === "Stock Count" && entry.location === "Storage") {
       storageCounts.set(mockInventoryKey(entry.itemName || entry.itemLabel), Number(entry.quantity || 0));
-      receiverOperationIds.add(entry.id);
     }
+    if (entry.kind === "Production Use" && entry.location === "Storage") {
+      const key = mockInventoryKey(entry.itemName || entry.itemLabel);
+      storageCounts.set(key, Number(storageCounts.get(key) || 0) - Number(entry.quantity || 0));
+    }
+    if (entry.kind === "Correction In" && entry.location === "Storage") {
+      const key = mockInventoryKey(entry.itemName || entry.itemLabel);
+      storageCounts.set(key, Number(storageCounts.get(key) || 0) + Number(entry.quantity || 0));
+    }
+    receiverOperationIds.add(entry.id);
   }
   response.writeHead(200, { "content-type": "application/json" });
   response.end(JSON.stringify({ ok: true }));
@@ -124,7 +140,7 @@ async function run() {
 
   const health = await fetch(`${baseUrl}/health`);
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json().then(result => [result.authMode, result.persistentAccountStore, result.supplyReceipts]), ["accounts", true, true]);
+  assert.deepEqual(await health.json().then(result => [result.authMode, result.persistentAccountStore, result.supplyReceipts, result.productionBatches]), ["accounts", true, true, true]);
 
   const loginPage = await fetch(`${baseUrl}/login.html`);
   assert.equal(loginPage.status, 200);
@@ -156,6 +172,7 @@ async function run() {
   assert.match(authenticatedHtml, /Supplier Directory/);
   assert.match(authenticatedHtml, /Store Overview/);
   assert.match(authenticatedHtml, /Exceptions Inbox/);
+  assert.match(authenticatedHtml, /Production Queue/);
 
   const inventoryResolver = await fetch(`${baseUrl}/inventory-counts.js`, { headers: { cookie: ownerCookie } });
   assert.equal(inventoryResolver.status, 200);
@@ -174,6 +191,7 @@ async function run() {
   assert.equal(bootstrap.body.sheet.inventory.storage[1].storageCount, 2);
   assert.equal(bootstrap.body.sheet.inventory.ledger.balance, 6025);
   assert.equal(bootstrap.body.sheet.reviewExceptions[0].webhookId, "review-1");
+  assert.deepEqual(bootstrap.body.productionBatches, []);
 
   const registration = await post(`${baseUrl}/api/auth/register`, {
     fullName: "Ada Employee",
@@ -513,6 +531,134 @@ async function run() {
     password: "WorkerPassword123!"
   });
   const workerCookie = cookieFrom(workerLogin.response);
+
+  const workerCreateProduction = await post(`${baseUrl}/api/production-batches`, {
+    reference: "Worker-created batch",
+    lines: [{ itemName: "Navy Revolver", quantity: 1 }]
+  }, workerCookie);
+  assert.equal(workerCreateProduction.response.status, 403);
+
+  [
+    ["softwood", 20],
+    ["revolver handle", 10],
+    ["revolver barrel", 10],
+    ["revolver cylinder", 10],
+    ["bolts", 20]
+  ].forEach(([key, quantity]) => storageCounts.set(key, quantity));
+  const createdProduction = await post(`${baseUrl}/api/production-batches`, {
+    id: "production-navy-two",
+    sourceType: "Customer Order",
+    sourceId: "customer-order-42",
+    reference: "Order 42",
+    dueDate: "2026-07-15",
+    assignedTo: "Grace Worker",
+    lines: [{ itemName: "Navy Revolver", quantity: 2 }]
+  }, managerCookie);
+  assert.equal(createdProduction.response.status, 200);
+  assert.equal(createdProduction.body.batch.status, "Planned");
+  assert.equal(createdProduction.body.batch.lines[0].plannedCrafts, 2);
+  const productionLineId = createdProduction.body.batch.lines[0].id;
+
+  const duplicateProductionSource = await post(`${baseUrl}/api/production-batches`, {
+    sourceType: "Customer Order",
+    sourceId: "customer-order-42",
+    lines: [{ itemName: "Navy Revolver", quantity: 1 }]
+  }, managerCookie);
+  assert.equal(duplicateProductionSource.response.status, 409);
+  assert.equal(duplicateProductionSource.body.code, "production_source_active");
+
+  const workerProductionList = await getJson(`${baseUrl}/api/production-batches`, workerCookie);
+  assert.equal(workerProductionList.response.status, 200);
+  assert.equal(workerProductionList.body.batches[0].reference, "Order 42");
+  const startedProduction = await post(`${baseUrl}/api/production-batches/production-navy-two/start`, {}, workerCookie);
+  assert.equal(startedProduction.response.status, 200);
+  assert.equal(startedProduction.body.batch.status, "In Progress");
+
+  const writesBeforeProduction = receiverPayloads.length;
+  const partialProduction = await post(`${baseUrl}/api/production-batches/production-navy-two/progress`, {
+    completions: [{ lineId: productionLineId, completedCrafts: 1 }]
+  }, workerCookie);
+  assert.equal(partialProduction.response.status, 200);
+  assert.equal(partialProduction.body.batch.lines[0].completedCrafts, 1);
+  assert.equal(partialProduction.body.batch.status, "In Progress");
+  const productionWrites = receiverPayloads.slice(writesBeforeProduction).filter(payload => payload.action === "manual_operation");
+  assert(productionWrites.some(payload => payload.entry.kind === "Production Use" && payload.entry.itemName === "Iron"));
+  assert(productionWrites.some(payload => payload.entry.kind === "Correction In" && payload.entry.itemName === "Navy Revolver"));
+  assert.equal(storageCounts.get("iron"), 30);
+  assert.equal(storageCounts.get("navy revolver"), 1);
+
+  const repeatProductionWrites = receiverPayloads.length;
+  const repeatedProduction = await post(`${baseUrl}/api/production-batches/production-navy-two/progress`, {
+    completions: [{ lineId: productionLineId, completedCrafts: 1 }]
+  }, workerCookie);
+  assert.equal(repeatedProduction.response.status, 400);
+  assert.equal(receiverPayloads.length, repeatProductionWrites);
+
+  const completedProduction = await post(`${baseUrl}/api/production-batches/production-navy-two/progress`, {
+    completions: [{ lineId: productionLineId, completedCrafts: 2 }]
+  }, workerCookie);
+  assert.equal(completedProduction.response.status, 200);
+  assert.equal(completedProduction.body.batch.status, "Completed");
+  assert.equal(storageCounts.get("navy revolver"), 2);
+  const cancelCompletedProduction = await post(`${baseUrl}/api/production-batches/production-navy-two/cancel`, {}, managerCookie);
+  assert.equal(cancelCompletedProduction.response.status, 409);
+
+  const retryProduction = await post(`${baseUrl}/api/production-batches`, {
+    id: "production-retry",
+    sourceType: "Manual",
+    reference: "Retry-safe batch",
+    lines: [{ itemName: "Navy Revolver", quantity: 1 }]
+  }, managerCookie);
+  const retryLineId = retryProduction.body.batch.lines[0].id;
+  const ironBeforeRetry = storageCounts.get("iron");
+  failReceiverAfterSuccessfulWrites = 1;
+  const failedProduction = await post(`${baseUrl}/api/production-batches/production-retry/progress`, {
+    completions: [{ lineId: retryLineId, completedCrafts: 1 }]
+  }, workerCookie);
+  assert.equal(failedProduction.response.status, 502);
+  assert.equal(failedProduction.body.code, "production_sync_pending");
+  assert.equal(storageCounts.get("iron"), ironBeforeRetry - 2);
+  const pendingProduction = (await getJson(`${baseUrl}/api/production-batches`, workerCookie)).body.batches
+    .find(batch => batch.id === "production-retry");
+  assert.equal(pendingProduction.pendingProgress.targets[0].completedCrafts, 1);
+  const retriedProduction = await post(`${baseUrl}/api/production-batches/production-retry/progress`, {
+    completions: [{ lineId: retryLineId, completedCrafts: 1 }]
+  }, workerCookie);
+  assert.equal(retriedProduction.response.status, 200);
+  assert.equal(retriedProduction.body.batch.status, "Completed");
+  assert.equal(storageCounts.get("iron"), ironBeforeRetry - 2, "retry must not consume a material twice");
+
+  [
+    ["iron", 2],
+    ["softwood", 2],
+    ["revolver handle", 1],
+    ["revolver barrel", 1],
+    ["revolver cylinder", 1],
+    ["bolts", 2]
+  ].forEach(([key, quantity]) => storageCounts.set(key, quantity));
+  await post(`${baseUrl}/api/production-batches`, {
+    id: "production-reserved-first",
+    sourceType: "Manual",
+    reference: "First reserved batch",
+    dueDate: "2026-07-14",
+    lines: [{ itemName: "Navy Revolver", quantity: 1 }]
+  }, managerCookie);
+  const reservedSecond = await post(`${baseUrl}/api/production-batches`, {
+    id: "production-reserved-second",
+    sourceType: "Manual",
+    reference: "Second reserved batch",
+    dueDate: "2026-07-16",
+    lines: [{ itemName: "Navy Revolver", quantity: 1 }]
+  }, managerCookie);
+  const reservedSecondLineId = reservedSecond.body.batch.lines[0].id;
+  const blockedByReservation = await post(`${baseUrl}/api/production-batches/production-reserved-second/progress`, {
+    completions: [{ lineId: reservedSecondLineId, completedCrafts: 1 }]
+  }, workerCookie);
+  assert.equal(blockedByReservation.response.status, 409);
+  assert.equal(blockedByReservation.body.code, "production_material_shortage");
+  await post(`${baseUrl}/api/production-batches/production-reserved-first/cancel`, {}, managerCookie);
+  await post(`${baseUrl}/api/production-batches/production-reserved-second/cancel`, {}, managerCookie);
+
   const clockPayload = {
     action: "time_clock",
     entry: { id: "grace-shift", clockIn: "2026-07-13T10:30:00.000Z", clockOut: "", durationMinutes: "" }
@@ -541,6 +687,8 @@ async function run() {
   assert(managerAudit.body.events.some(event => event.action === "storefront_buy_order.saved" && event.subjectName === "Nitrite"));
   assert(managerAudit.body.events.some(event => event.action === "storefront_buy_order.fill_adjusted" && event.details.filledQuantity === 6));
   assert(managerAudit.body.events.some(event => event.action === "webhook_exception.resolved" && event.actorName === "Ada Employee"));
+  assert(managerAudit.body.events.some(event => event.action === "production_batch.created" && event.subjectName === "Order 42"));
+  assert(managerAudit.body.events.some(event => event.action === "production_batch.completed" && event.actorName === "Grace Worker"));
   assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
 
   const removedSupplyOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-1`, managerCookie);

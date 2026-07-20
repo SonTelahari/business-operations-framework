@@ -22,6 +22,7 @@ const accountStore = accountAuthEnabled
 const businessStore = new BusinessStore({ filePath: path.join(accountDataDirectory, "business.json") });
 const loginAttempts = new Map();
 let supplyReceiptQueue = Promise.resolve();
+let productionProgressQueue = Promise.resolve();
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -72,6 +73,7 @@ const server = http.createServer(async (request, response) => {
         supplyReceipts: true,
         storefrontBuyOrders: true,
         webhookReview: true,
+        productionBatches: true,
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -95,6 +97,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
+      if (await handleProductionBatchRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(user));
         return;
@@ -148,6 +151,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
+      if (await handleProductionBatchRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(null));
         return;
@@ -398,6 +402,256 @@ async function handleStorefrontBuyOrderRoute(request, response, url, user) {
   }
 }
 
+async function handleProductionBatchRoute(request, response, url, user) {
+  if (!url.pathname.startsWith("/api/production-batches")) return false;
+
+  try {
+    if (url.pathname === "/api/production-batches" && request.method === "GET") {
+      sendJson(response, { ok: true, batches: businessStore.listProductionBatches() });
+      return true;
+    }
+    if (url.pathname === "/api/production-batches" && request.method === "POST") {
+      if (!requireManagement(response, user)) return true;
+      const prepared = prepareProductionBatch(await readJsonBody(request));
+      const batch = await businessStore.createProductionBatch(prepared, user);
+      await recordProductionBatchAudit("production_batch.created", batch, user);
+      sendJson(response, { ok: true, batch, batches: businessStore.listProductionBatches() });
+      return true;
+    }
+
+    const actionRoute = url.pathname.match(/^\/api\/production-batches\/([^/]+)\/(start|progress|cancel)$/);
+    if (actionRoute && request.method === "POST") {
+      const batchId = decodeURIComponent(actionRoute[1]);
+      const action = actionRoute[2];
+      if (action === "start") {
+        const batch = await businessStore.startProductionBatch(batchId, user);
+        await recordProductionBatchAudit("production_batch.started", batch, user);
+        sendJson(response, { ok: true, batch, batches: businessStore.listProductionBatches() });
+        return true;
+      }
+      if (action === "progress") {
+        const payload = await readJsonBody(request);
+        const operation = productionProgressQueue.then(() => recordProductionProgress(batchId, payload, user));
+        productionProgressQueue = operation.catch(() => {});
+        sendJson(response, await operation);
+        return true;
+      }
+      if (!requireManagement(response, user)) return true;
+      const batch = await businessStore.cancelProductionBatch(batchId, user);
+      await recordProductionBatchAudit("production_batch.cancelled", batch, user);
+      sendJson(response, { ok: true, batch, batches: businessStore.listProductionBatches() });
+      return true;
+    }
+
+    sendJson(response, { ok: false, error: "Production batch route not found", code: "not_found" }, 404);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Production batch request failed",
+      code: error.code || "production_batch_error"
+    }, error.status || 500);
+  }
+  return true;
+}
+
+function prepareProductionBatch(input) {
+  const catalog = readCatalogFiles();
+  const itemByKey = new Map();
+  catalog.items.forEach(item => {
+    [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])].forEach(value => {
+      const key = inventoryKey(value);
+      if (key && !itemByKey.has(key)) itemByKey.set(key, item);
+    });
+  });
+  const lines = new Map();
+  (Array.isArray(input.lines) ? input.lines : []).slice(0, 50).forEach(sourceLine => {
+    const item = itemByKey.get(inventoryKey(sourceLine.itemName || sourceLine.name || sourceLine.itemLabel));
+    if (!item) throw productionError("Production batches can only contain catalog products", 400, "production_item_unknown");
+    const recipe = catalog.recipes[item.name];
+    if (!Array.isArray(recipe) || !recipe.length) {
+      throw productionError(`No recipe is available for ${item.label || item.name}`, 400, "production_recipe_missing");
+    }
+    const quantity = Number(sourceLine.requestedQuantity || sourceLine.quantity);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw productionError("Production quantities must be positive whole numbers", 400, "invalid_production_quantity");
+    }
+    const existing = lines.get(item.name) || {
+      id: crypto.randomUUID(),
+      itemName: item.name,
+      itemLabel: item.label || item.name,
+      requestedQuantity: 0,
+      recipeYield: Math.max(1, Number(catalog.recipeYields[item.name] || 1)),
+      recipe: recipe.map(([ingredient, componentQuantity]) => ({
+        ingredient: canonicalInventoryName(ingredient),
+        quantity: Number(componentQuantity || 0)
+      }))
+    };
+    existing.requestedQuantity += quantity;
+    lines.set(item.name, existing);
+  });
+  return {
+    id: String(input.id || crypto.randomUUID()),
+    sourceType: input.sourceType,
+    sourceId: input.sourceId,
+    reference: input.reference,
+    dueDate: input.dueDate,
+    priority: input.priority,
+    assignedTo: input.assignedTo,
+    notes: input.notes,
+    lines: [...lines.values()]
+  };
+}
+
+async function recordProductionProgress(batchId, payload, user) {
+  let batch = businessStore.getProductionBatch(batchId);
+  if (!batch) throw productionError("Production batch not found", 404, "not_found");
+
+  if (!batch.pendingProgress) {
+    const pending = await prepareProductionProgress(batch, payload, user);
+    batch = await businessStore.beginProductionProgress(batchId, pending, user);
+  }
+  const pending = batch.pendingProgress;
+  for (const entry of pending.operations) {
+    const result = await syncGuiPayload({ action: "manual_operation", entry });
+    if (!result.ok) {
+      throw productionError(
+        `Sheet update paused: ${result.error || "unknown error"}. The same progress is saved and can be retried safely.`,
+        502,
+        "production_sync_pending"
+      );
+    }
+  }
+
+  const updated = await businessStore.commitProductionProgress(batchId, pending.id, user);
+  const auditAction = updated.status === "Completed" ? "production_batch.completed" : "production_batch.progressed";
+  await recordProductionBatchAudit(auditAction, updated, user, pending);
+  return { ok: true, batch: updated, batches: businessStore.listProductionBatches() };
+}
+
+async function prepareProductionProgress(batch, payload, user) {
+  const requested = new Map((Array.isArray(payload.completions) ? payload.completions : [])
+    .map(completion => [String(completion.lineId || ""), Number(completion.completedCrafts)]));
+  const targets = [];
+  const operations = [];
+  const requiredMaterials = new Map();
+
+  batch.lines.forEach(line => {
+    if (!requested.has(line.id)) return;
+    const completedCrafts = requested.get(line.id);
+    if (!Number.isInteger(completedCrafts)
+      || completedCrafts <= Number(line.completedCrafts || 0)
+      || completedCrafts > Number(line.plannedCrafts || 0)) {
+      throw productionError("Completed craft cycles must increase without exceeding the plan", 400, "invalid_production_progress");
+    }
+    const previousCrafts = Number(line.completedCrafts || 0);
+    const craftDelta = completedCrafts - previousCrafts;
+    targets.push({ lineId: line.id, previousCrafts, completedCrafts });
+    line.recipe.forEach(component => {
+      const quantity = Number(component.quantity || 0) * craftDelta;
+      const itemName = canonicalInventoryName(component.ingredient);
+      const key = inventoryKey(itemName);
+      requiredMaterials.set(key, {
+        itemName,
+        quantity: Number(requiredMaterials.get(key)?.quantity || 0) + quantity
+      });
+      operations.push(productionOperation({
+        batch,
+        line,
+        previousCrafts,
+        completedCrafts,
+        suffix: `use:${key}`,
+        kind: "Production Use",
+        itemName,
+        quantity,
+        employee: user.fullName
+      }));
+    });
+    operations.push(productionOperation({
+      batch,
+      line,
+      previousCrafts,
+      completedCrafts,
+      suffix: "output",
+      kind: "Correction In",
+      itemName: line.itemName,
+      itemLabel: line.itemLabel,
+      quantity: craftDelta * Number(line.recipeYield || 1),
+      employee: user.fullName
+    }));
+  });
+  if (!targets.length) {
+    throw productionError("Enter at least one newly completed craft cycle", 400, "production_progress_required");
+  }
+
+  const snapshot = await readSheetSnapshot();
+  if (!snapshot?.ok || !Array.isArray(snapshot.inventory?.materials)) {
+    throw productionError(
+      `Storage could not be checked${snapshot?.error ? `: ${snapshot.error}` : ""}`,
+      502,
+      "production_storage_unavailable"
+    );
+  }
+  const storage = materialStorageCounts(snapshot.inventory.materials);
+  const reservedBefore = productionReservationsBefore(batch.id);
+  const shortages = [...requiredMaterials.entries()].map(([key, requirement]) => ({
+    ...requirement,
+    available: Math.max(0,
+      Number(storage.get(key)?.quantity || 0) - Number(reservedBefore.get(key) || 0)
+    )
+  })).filter(requirement => requirement.available < requirement.quantity);
+  if (shortages.length) {
+    const summary = shortages.map(line => `${line.itemName} ${line.available}/${line.quantity}`).join(", ");
+    throw productionError(`Not enough materials in storage: ${summary}`, 409, "production_material_shortage");
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    targets,
+    operations,
+    createdAt: new Date().toISOString(),
+    createdBy: user.fullName
+  };
+}
+
+function productionReservationsBefore(batchId) {
+  const reserved = new Map();
+  for (const batch of businessStore.listProductionBatches()) {
+    if (batch.id === batchId) break;
+    if (batch.status !== "Planned" && batch.status !== "In Progress") continue;
+    batch.lines.forEach(line => {
+      const remainingCrafts = Math.max(0, Number(line.plannedCrafts || 0) - Number(line.completedCrafts || 0));
+      line.recipe.forEach(component => {
+        const key = inventoryKey(component.ingredient);
+        reserved.set(key, Number(reserved.get(key) || 0) + remainingCrafts * Number(component.quantity || 0));
+      });
+    });
+  }
+  return reserved;
+}
+
+function productionOperation({ batch, line, previousCrafts, completedCrafts, suffix, kind, itemName, itemLabel, quantity, employee }) {
+  const fingerprint = `${batch.id}:${line.id}:${previousCrafts}:${completedCrafts}:${suffix}`;
+  const id = `production-${crypto.createHash("sha256").update(fingerprint).digest("hex").slice(0, 28)}`;
+  return {
+    id,
+    kind,
+    location: "Storage",
+    itemName,
+    itemLabel: itemLabel || itemName,
+    quantity,
+    amount: 0,
+    employee,
+    note: `Production batch ${batch.reference || batch.id}: ${line.itemLabel || line.itemName}`
+  };
+}
+
+function productionError(message, status, code) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  return error;
+}
+
 async function reconcileStorefrontBuyOrdersFromSheet(sheetSnapshot = null) {
   const snapshot = sheetSnapshot || await readSheetSnapshot();
   const purchases = snapshot?.inventory?.buyOrderPurchases;
@@ -581,6 +835,34 @@ async function recordSupplierAudit(action, supplier, user) {
       employeeContacts: supplier.employees.length
     }
   }).catch(error => console.error("Unable to write supplier audit event:", error.message));
+}
+
+async function recordProductionBatchAudit(action, batch, user, progress = null) {
+  if (!accountStore) return;
+  const plannedCrafts = batch.lines.reduce((sum, line) => sum + Number(line.plannedCrafts || 0), 0);
+  const completedCrafts = batch.lines.reduce((sum, line) => sum + Number(line.completedCrafts || 0), 0);
+  const progressedCrafts = (progress?.targets || []).reduce((sum, target) => {
+    return sum + Math.max(0, Number(target.completedCrafts || 0) - Number(target.previousCrafts || 0));
+  }, 0);
+  await accountStore.recordAudit({
+    category: "production",
+    action,
+    actorId: user.id,
+    actorName: user.fullName,
+    subjectId: batch.id,
+    subjectName: batch.reference || batch.sourceType,
+    fingerprint: `${action}:${batch.id}:${progress?.id || batch.updatedAt}`,
+    details: {
+      status: batch.status,
+      sourceType: batch.sourceType,
+      reference: batch.reference,
+      lineCount: batch.lines.length,
+      plannedCrafts,
+      completedCrafts,
+      progressedCrafts,
+      assignedTo: batch.assignedTo
+    }
+  });
 }
 
 async function recordSupplyReceiptAudit(order, line, receipt, user) {
@@ -879,6 +1161,7 @@ async function getBootstrapData(user) {
     recipes: data.recipes,
     recipeYields: data.recipeYields,
     storefrontBuyOrders: canManage ? businessStore.listStorefrontBuyOrders() : [],
+    productionBatches: businessStore.listProductionBatches(),
     syncTargets: {
       stockCounts: "/api/sync",
       manualMovements: "/api/sync",
@@ -887,7 +1170,8 @@ async function getBootstrapData(user) {
       timeClock: "/api/sync",
       supplyOrders: "/api/supply-orders",
       storefrontBuyOrders: "/api/storefront-buy-orders",
-      webhookReview: "/api/sync"
+      webhookReview: "/api/sync",
+      productionBatches: "/api/production-batches"
     }
   };
 }
