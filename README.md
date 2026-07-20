@@ -10,11 +10,17 @@ Employees request access with their in-game character name and a password. No re
 
 Roles are intentionally separated:
 
-- Employees can use orders, restock information, the shared production queue, and their time clock. They can start batches and record completed craft cycles.
+- Employees can use the shared sales-order register, restock information, the shared production queue, and their time clock. They can start batches and record completed craft cycles.
 - Managers can also queue or cancel production, run counts and adjustments, maintain storefront targets, approve or disable employee accounts, and review the employee audit ledger.
 - Admins can additionally run payroll and promote or demote managers.
 
-The server-side audit ledger records account requests, successful sign-ins and sign-outs, staff actions, time-clock events, counts, adjustments, and storefront target changes. It does not record passwords, IP addresses, or real-life identity data.
+The server-side audit ledger records account requests, successful sign-ins and sign-outs, staff actions, sales-order changes, time-clock events, counts, adjustments, and storefront target changes. It does not record passwords, IP addresses, or real-life identity data.
+
+## Shared Sales Orders
+
+Customer quotes and work orders are stored in the server-side business register so every signed-in employee sees the same queue. Saves use revisions to prevent an older browser tab from silently overwriting a colleague's changes. Production can only be queued after the current order revision has saved successfully, and orders linked to production are retained instead of being deleted.
+
+On the first login after this update, each browser imports its older local work orders by ID. Existing shared records are skipped, and local browser copies are removed only after the import succeeds.
 
 The Railway GUI service needs one persistent volume so accounts survive deployments. See `docs/hosting.md` for the migration from the shared login.
 

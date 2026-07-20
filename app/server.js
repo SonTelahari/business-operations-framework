@@ -74,6 +74,7 @@ const server = http.createServer(async (request, response) => {
         storefrontBuyOrders: true,
         webhookReview: true,
         productionBatches: true,
+        sharedSalesOrders: true,
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -97,6 +98,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
+      if (await handleSalesOrderRoute(request, response, url, user)) return;
       if (await handleProductionBatchRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(user));
@@ -151,6 +153,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
+      if (await handleSalesOrderRoute(request, response, url, user)) return;
       if (await handleProductionBatchRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(null));
@@ -400,6 +403,64 @@ async function handleStorefrontBuyOrderRoute(request, response, url, user) {
     sendJson(response, { ok: false, error: error.message, code: error.code || "storefront_buy_order_failed" }, error.status || 500);
     return true;
   }
+}
+
+async function handleSalesOrderRoute(request, response, url, user) {
+  if (!url.pathname.startsWith("/api/sales-orders")) return false;
+
+  try {
+    if (url.pathname === "/api/sales-orders" && request.method === "GET") {
+      sendJson(response, { ok: true, orders: businessStore.listSalesOrders() });
+      return true;
+    }
+    if (url.pathname === "/api/sales-orders/import" && request.method === "POST") {
+      const payload = await readJsonBody(request);
+      const result = await businessStore.importSalesOrders(payload.orders, user);
+      await recordSalesOrderImportAudit(result, user);
+      sendJson(response, { ok: true, ...result });
+      return true;
+    }
+    if (url.pathname === "/api/sales-orders" && request.method === "POST") {
+      const order = await businessStore.saveSalesOrder(await readJsonBody(request), user);
+      await recordSalesOrderAudit("sales_order.saved", order, user);
+      sendJson(response, { ok: true, order, orders: businessStore.listSalesOrders() });
+      return true;
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/sales-orders/")) {
+      const orderId = decodeURIComponent(url.pathname.slice("/api/sales-orders/".length));
+      const linkedBatch = businessStore.listProductionBatches().find(batch =>
+        batch.sourceType === "Customer Order"
+        && batch.sourceId === orderId
+        && batch.status !== "Cancelled"
+      );
+      if (linkedBatch) {
+        throw salesOrderError(
+          "This order is linked to production and must be cancelled instead of removed",
+          409,
+          "sales_order_has_production"
+        );
+      }
+      const order = await businessStore.removeSalesOrder(orderId);
+      await recordSalesOrderAudit("sales_order.removed", order, user);
+      sendJson(response, { ok: true, order, orders: businessStore.listSalesOrders() });
+      return true;
+    }
+    sendJson(response, { ok: false, error: "Sales order route not found", code: "not_found" }, 404);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Sales order request failed",
+      code: error.code || "sales_order_error"
+    }, error.status || 500);
+  }
+  return true;
+}
+
+function salesOrderError(message, status, code) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  return error;
 }
 
 async function handleProductionBatchRoute(request, response, url, user) {
@@ -800,6 +861,44 @@ async function recordSupplyOrderAudit(action, order, user) {
   });
 }
 
+async function recordSalesOrderAudit(action, order, user) {
+  if (!accountStore) return;
+  await accountStore.recordAudit({
+    category: "sales",
+    action,
+    actorId: user.id,
+    actorName: user.fullName,
+    subjectId: order.id,
+    subjectName: order.customer || "Unnamed customer",
+    fingerprint: `${action}:${order.id}:${order.revision}`,
+    details: {
+      status: order.status,
+      priority: order.priority,
+      handler: order.handler,
+      lineCount: order.lines.length,
+      subtotal: order.lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0),
+      revision: order.revision
+    }
+  });
+}
+
+async function recordSalesOrderImportAudit(result, user) {
+  if (!accountStore || !result.imported) return;
+  await accountStore.recordAudit({
+    category: "sales",
+    action: "sales_order.imported",
+    actorId: user.id,
+    actorName: user.fullName,
+    subjectId: user.id,
+    subjectName: user.fullName,
+    fingerprint: `sales_order.imported:${user.id}:${result.imported}:${Date.now()}`,
+    details: {
+      imported: result.imported,
+      skipped: result.skipped
+    }
+  });
+}
+
 async function recordStorefrontBuyOrderAudit(action, order, user) {
   if (!accountStore) return;
   await accountStore.recordAudit({
@@ -1160,6 +1259,7 @@ async function getBootstrapData(user) {
     recipeCount: Object.keys(data.recipes).length,
     recipes: data.recipes,
     recipeYields: data.recipeYields,
+    salesOrders: businessStore.listSalesOrders(),
     storefrontBuyOrders: canManage ? businessStore.listStorefrontBuyOrders() : [],
     productionBatches: businessStore.listProductionBatches(),
     syncTargets: {
@@ -1171,7 +1271,8 @@ async function getBootstrapData(user) {
       supplyOrders: "/api/supply-orders",
       storefrontBuyOrders: "/api/storefront-buy-orders",
       webhookReview: "/api/sync",
-      productionBatches: "/api/production-batches"
+      productionBatches: "/api/production-batches",
+      salesOrders: "/api/sales-orders"
     }
   };
 }

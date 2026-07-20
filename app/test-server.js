@@ -140,7 +140,16 @@ async function run() {
 
   const health = await fetch(`${baseUrl}/health`);
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json().then(result => [result.authMode, result.persistentAccountStore, result.supplyReceipts, result.productionBatches]), ["accounts", true, true, true]);
+  assert.deepEqual(
+    await health.json().then(result => [
+      result.authMode,
+      result.persistentAccountStore,
+      result.supplyReceipts,
+      result.productionBatches,
+      result.sharedSalesOrders
+    ]),
+    ["accounts", true, true, true, true]
+  );
 
   const loginPage = await fetch(`${baseUrl}/login.html`);
   assert.equal(loginPage.status, 200);
@@ -192,6 +201,7 @@ async function run() {
   assert.equal(bootstrap.body.sheet.inventory.ledger.balance, 6025);
   assert.equal(bootstrap.body.sheet.reviewExceptions[0].webhookId, "review-1");
   assert.deepEqual(bootstrap.body.productionBatches, []);
+  assert.deepEqual(bootstrap.body.salesOrders, []);
 
   const registration = await post(`${baseUrl}/api/auth/register`, {
     fullName: "Ada Employee",
@@ -231,6 +241,69 @@ async function run() {
   const employeeSession = await getJson(`${baseUrl}/api/auth/session`, employeeCookie);
   assert.equal(employeeSession.body.user.fullName, "Ada Employee");
   assert.equal(employeeSession.body.user.accountManagement, true);
+
+  const createdSalesOrder = await post(`${baseUrl}/api/sales-orders`, {
+    id: "sales-order-1",
+    customer: "Arthur Morgan",
+    handler: "Ada Employee",
+    status: "Draft",
+    priority: "Normal",
+    deliveryDate: "2026-07-15",
+    deposit: 20,
+    label: "The Frontier's Finest Firearms",
+    notes: "Shared counter order",
+    lines: [{
+      id: "sales-line-navy",
+      name: "Navy Revolver",
+      label: "Navy Revolver",
+      category: "Revolvers",
+      quantity: 2,
+      unitPrice: 105
+    }]
+  }, employeeCookie);
+  assert.equal(createdSalesOrder.response.status, 200);
+  assert.equal(createdSalesOrder.body.order.revision, 1);
+  assert.equal(createdSalesOrder.body.order.updatedBy, "Ada Employee");
+  assert.equal(createdSalesOrder.body.order.lines[0].quantity, 2);
+
+  const ownerSalesOrders = await getJson(`${baseUrl}/api/sales-orders`, ownerCookie);
+  assert.equal(ownerSalesOrders.response.status, 200);
+  assert.equal(ownerSalesOrders.body.orders[0].customer, "Arthur Morgan");
+
+  const updatedSalesOrder = await post(`${baseUrl}/api/sales-orders`, {
+    ...createdSalesOrder.body.order,
+    status: "Reserved",
+    deposit: 50
+  }, employeeCookie);
+  assert.equal(updatedSalesOrder.response.status, 200);
+  assert.equal(updatedSalesOrder.body.order.revision, 2);
+  assert.equal(updatedSalesOrder.body.order.status, "Reserved");
+
+  const staleSalesOrder = await post(`${baseUrl}/api/sales-orders`, {
+    ...createdSalesOrder.body.order,
+    notes: "Stale overwrite attempt"
+  }, ownerCookie);
+  assert.equal(staleSalesOrder.response.status, 409);
+  assert.equal(staleSalesOrder.body.code, "sales_order_conflict");
+
+  const importedSalesOrders = await post(`${baseUrl}/api/sales-orders/import`, {
+    orders: [
+      createdSalesOrder.body.order,
+      {
+        id: "legacy-sales-order",
+        customer: "Legacy Customer",
+        status: "Paused",
+        lines: [{ name: "Varmint Rifle", label: "Varmint Rifle", quantity: 1, unitPrice: 45 }]
+      }
+    ]
+  }, employeeCookie);
+  assert.equal(importedSalesOrders.response.status, 200);
+  assert.equal(importedSalesOrders.body.imported, 1);
+  assert.equal(importedSalesOrders.body.skipped, 1);
+
+  const removedImportedSalesOrder = await remove(`${baseUrl}/api/sales-orders/legacy-sales-order`, employeeCookie);
+  assert.equal(removedImportedSalesOrder.response.status, 200);
+  assert.equal(removedImportedSalesOrder.body.orders.length, 1);
 
   const employeeAdminAttempt = await getJson(`${baseUrl}/api/admin/users`, employeeCookie);
   assert.equal(employeeAdminAttempt.response.status, 403);
@@ -548,7 +621,7 @@ async function run() {
   const createdProduction = await post(`${baseUrl}/api/production-batches`, {
     id: "production-navy-two",
     sourceType: "Customer Order",
-    sourceId: "customer-order-42",
+    sourceId: "sales-order-1",
     reference: "Order 42",
     dueDate: "2026-07-15",
     assignedTo: "Grace Worker",
@@ -561,7 +634,7 @@ async function run() {
 
   const duplicateProductionSource = await post(`${baseUrl}/api/production-batches`, {
     sourceType: "Customer Order",
-    sourceId: "customer-order-42",
+    sourceId: "sales-order-1",
     lines: [{ itemName: "Navy Revolver", quantity: 1 }]
   }, managerCookie);
   assert.equal(duplicateProductionSource.response.status, 409);
@@ -602,6 +675,9 @@ async function run() {
   assert.equal(storageCounts.get("navy revolver"), 2);
   const cancelCompletedProduction = await post(`${baseUrl}/api/production-batches/production-navy-two/cancel`, {}, managerCookie);
   assert.equal(cancelCompletedProduction.response.status, 409);
+  const removeProductionSalesOrder = await remove(`${baseUrl}/api/sales-orders/sales-order-1`, managerCookie);
+  assert.equal(removeProductionSalesOrder.response.status, 409);
+  assert.equal(removeProductionSalesOrder.body.code, "sales_order_has_production");
 
   const retryProduction = await post(`${baseUrl}/api/production-batches`, {
     id: "production-retry",
@@ -689,6 +765,9 @@ async function run() {
   assert(managerAudit.body.events.some(event => event.action === "webhook_exception.resolved" && event.actorName === "Ada Employee"));
   assert(managerAudit.body.events.some(event => event.action === "production_batch.created" && event.subjectName === "Order 42"));
   assert(managerAudit.body.events.some(event => event.action === "production_batch.completed" && event.actorName === "Grace Worker"));
+  assert(managerAudit.body.events.some(event => event.action === "sales_order.saved" && event.subjectName === "Arthur Morgan"));
+  assert(managerAudit.body.events.some(event => event.action === "sales_order.imported" && event.actorName === "Ada Employee"));
+  assert(managerAudit.body.events.some(event => event.action === "sales_order.removed" && event.subjectName === "Legacy Customer"));
   assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
 
   const removedSupplyOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-1`, managerCookie);

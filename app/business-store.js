@@ -5,11 +5,12 @@ const path = require("node:path");
 const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially Received", "Received", "Cancelled"]);
 const STOREFRONT_BUY_ORDER_STATUSES = new Set(["Active", "Paused", "Filled", "Cancelled"]);
 const PRODUCTION_BATCH_STATUSES = new Set(["Planned", "In Progress", "Completed", "Cancelled"]);
+const SALES_ORDER_STATUSES = new Set(["Draft", "Paused", "Expedited", "Reserved", "Completed", "Cancelled"]);
 
 class BusinessStore {
   constructor({ filePath }) {
     this.filePath = filePath;
-    this.data = { version: 4, supplyOrders: [], suppliers: [], storefrontBuyOrders: [], productionBatches: [] };
+    this.data = { version: 5, salesOrders: [], supplyOrders: [], suppliers: [], storefrontBuyOrders: [], productionBatches: [] };
     this.writeQueue = Promise.resolve();
   }
 
@@ -49,6 +50,72 @@ class BusinessStore {
   getSupplier(supplierId) {
     const supplier = this.data.suppliers.find(candidate => candidate.id === cleanText(supplierId, 100));
     return supplier ? structuredClone(supplier) : null;
+  }
+
+  listSalesOrders() {
+    return this.data.salesOrders
+      .map(order => structuredClone(order))
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  }
+
+  getSalesOrder(orderId) {
+    const order = this.data.salesOrders.find(candidate => candidate.id === cleanText(orderId, 100));
+    return order ? structuredClone(order) : null;
+  }
+
+  async saveSalesOrder(input, actor) {
+    return this.mutate(async () => {
+      const now = new Date().toISOString();
+      const id = cleanText(input.id, 100) || crypto.randomUUID();
+      const existingIndex = this.data.salesOrders.findIndex(order => order.id === id);
+      const existing = existingIndex >= 0 ? this.data.salesOrders[existingIndex] : null;
+      if (existing) {
+        const revision = Number(input.revision);
+        if (!Number.isInteger(revision) || revision !== Number(existing.revision || 1)) {
+          throw businessError(
+            "This sales order was updated by someone else. Reload it before saving your changes.",
+            409,
+            "sales_order_conflict"
+          );
+        }
+      }
+      const saved = cleanSalesOrder(input, actor, { id, now, existing });
+      if (existingIndex >= 0) this.data.salesOrders[existingIndex] = saved;
+      else this.data.salesOrders.unshift(saved);
+      return structuredClone(saved);
+    });
+  }
+
+  async importSalesOrders(inputs, actor) {
+    return this.mutate(async () => {
+      const incoming = Array.isArray(inputs) ? inputs.slice(0, 250) : [];
+      let imported = 0;
+      let skipped = 0;
+      incoming.forEach(input => {
+        const id = cleanText(input?.id, 100) || crypto.randomUUID();
+        if (this.data.salesOrders.some(order => order.id === id)) {
+          skipped += 1;
+          return;
+        }
+        const now = new Date().toISOString();
+        this.data.salesOrders.push(cleanSalesOrder(input || {}, actor, { id, now, existing: null }));
+        imported += 1;
+      });
+      return { imported, skipped, orders: this.listSalesOrders() };
+    });
+  }
+
+  async removeSalesOrder(orderId) {
+    return this.mutate(async () => {
+      const id = cleanText(orderId, 100);
+      const existing = this.data.salesOrders.find(order => order.id === id);
+      if (!existing) throw businessError("Sales order not found", 404, "not_found");
+      if (existing.status === "Completed") {
+        throw businessError("Completed sales orders are retained as business records", 409, "completed_sales_order_locked");
+      }
+      this.data.salesOrders = this.data.salesOrders.filter(order => order.id !== id);
+      return structuredClone(existing);
+    });
   }
 
   listProductionBatches() {
@@ -344,8 +411,12 @@ class BusinessStore {
       if (!Array.isArray(parsed.suppliers)) parsed.suppliers = [];
       if (!Array.isArray(parsed.storefrontBuyOrders)) parsed.storefrontBuyOrders = [];
       if (!Array.isArray(parsed.productionBatches)) parsed.productionBatches = [];
+      if (!Array.isArray(parsed.salesOrders)) parsed.salesOrders = [];
       return {
-        version: 4,
+        version: 5,
+        salesOrders: parsed.salesOrders
+          .filter(order => order && typeof order === "object")
+          .map(order => cleanStoredSalesOrder(order)),
         supplyOrders: parsed.supplyOrders
           .filter(order => order && typeof order === "object")
           .map(order => order.status === "Draft" ? { ...order, status: "Active" } : order),
@@ -365,7 +436,7 @@ class BusinessStore {
       };
     } catch (error) {
       if (error.code === "ENOENT") {
-        return { version: 4, supplyOrders: [], suppliers: [], storefrontBuyOrders: [], productionBatches: [] };
+        return { version: 5, salesOrders: [], supplyOrders: [], suppliers: [], storefrontBuyOrders: [], productionBatches: [] };
       }
       throw new Error(`Unable to read business store: ${error.message}`);
     }
@@ -376,6 +447,62 @@ class BusinessStore {
     await fs.promises.writeFile(temporaryPath, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
     await fs.promises.rename(temporaryPath, this.filePath);
   }
+}
+
+function cleanSalesOrder(input, actor, { id, now, existing }) {
+  let status = SALES_ORDER_STATUSES.has(input.status) ? input.status : "Draft";
+  let priority = input.priority === "Expedite" ? "Expedite" : "Normal";
+  if (status === "Expedited") priority = "Expedite";
+  const lines = (Array.isArray(input.lines) ? input.lines : []).slice(0, 100).map(cleanSalesOrderLine);
+  return {
+    id,
+    customer: cleanText(input.customer, 120),
+    handler: cleanText(input.handler, 100),
+    status,
+    priority,
+    deliveryDate: cleanDate(input.deliveryDate),
+    deposit: Math.max(0, finiteNumber(input.deposit, 0)),
+    lines,
+    label: cleanText(input.label || "The Frontier's Finest Firearms", 250),
+    notes: cleanText(input.notes, 2500),
+    revision: Number(existing?.revision || 0) + 1,
+    createdAt: existing?.createdAt || cleanDateTime(input.createdAt) || now,
+    createdBy: existing?.createdBy || cleanText(actor?.fullName, 100),
+    updatedAt: now,
+    updatedBy: cleanText(actor?.fullName, 100)
+  };
+}
+
+function cleanStoredSalesOrder(order) {
+  const cleaned = cleanSalesOrder(order, { fullName: order.updatedBy || order.createdBy }, {
+    id: cleanText(order.id, 100) || crypto.randomUUID(),
+    now: cleanDateTime(order.updatedAt) || new Date().toISOString(),
+    existing: {
+      revision: Math.max(0, finiteNumber(order.revision, 1) - 1),
+      createdAt: cleanDateTime(order.createdAt) || new Date().toISOString(),
+      createdBy: cleanText(order.createdBy, 100)
+    }
+  });
+  cleaned.updatedAt = cleanDateTime(order.updatedAt) || cleaned.updatedAt;
+  cleaned.updatedBy = cleanText(order.updatedBy, 100);
+  return cleaned;
+}
+
+function cleanSalesOrderLine(line) {
+  const name = cleanText(line?.name || line?.label, 120);
+  if (!name) throw businessError("Every sales line needs an item", 400, "invalid_sales_line");
+  const quantity = finiteNumber(line.quantity, 0);
+  if (quantity <= 0) throw businessError("Sales quantities must be positive", 400, "invalid_sales_quantity");
+  return {
+    id: cleanText(line.id, 100) || crypto.randomUUID(),
+    name,
+    label: cleanText(line.label || name, 120),
+    tag: cleanText(line.tag, 120),
+    category: cleanText(line.category || "Manual", 80),
+    quantity,
+    unitPrice: Math.max(0, finiteNumber(line.unitPrice, 0)),
+    custom: Boolean(line.custom)
+  };
 }
 
 function cleanProductionBatch(input, actor, { id, now }) {
@@ -724,5 +851,6 @@ module.exports = {
   SUPPLY_ORDER_STATUSES,
   STOREFRONT_BUY_ORDER_STATUSES,
   PRODUCTION_BATCH_STATUSES,
+  SALES_ORDER_STATUSES,
   businessError
 };

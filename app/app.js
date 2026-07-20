@@ -48,6 +48,9 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "production_batch.progressed": "Production progress recorded",
   "production_batch.completed": "Production batch completed",
   "production_batch.cancelled": "Production batch cancelled",
+  "sales_order.saved": "Sales order saved",
+  "sales_order.removed": "Sales order removed",
+  "sales_order.imported": "Browser sales orders imported",
   "webhook_exception.resolved": "Webhook exception resolved",
   "webhook_exception.ignored": "Webhook exception ignored"
 });
@@ -59,7 +62,8 @@ const { buildSupplyQuoteTelegram } = window.FRONTIER_SUPPLY_TELEGRAM;
 const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
 
-let orders = loadOrders();
+let legacyOrdersPendingMigration = loadOrders();
+let orders = [];
 let timeClock = { current: null, entries: [] };
 let operations = loadOperations();
 let stockTargets = loadStockTargets();
@@ -78,6 +82,8 @@ let backendRefreshPromise = null;
 let lastBackendRefreshAt = 0;
 let supplyReceiptPending = false;
 let productionActionPending = false;
+let salesOrderSavePending = false;
+let activeOrderDirty = false;
 let activeOrder = newOrder();
 let activeSupplyOrder = newSupplyOrder();
 let activeStorefrontBuyOrder = newStorefrontBuyOrder();
@@ -336,7 +342,7 @@ function newOrder() {
   return {
     id: crypto.randomUUID(),
     customer: "",
-    handler: "",
+    handler: currentUser?.fullName || "",
     status: "Draft",
     priority: "Normal",
     deliveryDate: "",
@@ -344,8 +350,11 @@ function newOrder() {
     lines: [],
     label: "The Frontier's Finest Firearms",
     notes: "",
+    revision: 0,
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    createdBy: "",
+    updatedBy: ""
   };
 }
 
@@ -434,10 +443,6 @@ function loadStockTargets() {
   } catch {
     return [];
   }
-}
-
-function persistOrders() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
 }
 
 function persistTimeClock() {
@@ -639,6 +644,7 @@ function startNewDocument() {
     return;
   }
   activeOrder = newOrder();
+  activeOrderDirty = false;
   activeSection = "workbench";
   render();
 }
@@ -646,7 +652,7 @@ function startNewDocument() {
 function saveCurrentDocument() {
   if (activeSection === "supplies") return saveSupplyOrder();
   if (activeSection === "buy-orders") return saveStorefrontBuyOrder();
-  saveActiveOrder();
+  return saveActiveOrder();
 }
 
 function updateActiveFromInputs() {
@@ -666,6 +672,7 @@ function updateActiveFromInputs() {
 
 function touchActive() {
   activeOrder.updatedAt = new Date().toISOString();
+  activeOrderDirty = true;
 }
 
 function addItemLine() {
@@ -713,36 +720,121 @@ function findCatalogItem(value) {
   });
 }
 
-function saveActiveOrder() {
+async function saveActiveOrder() {
+  if (salesOrderSavePending) return false;
   updateActiveFromInputs();
-  const existingIndex = orders.findIndex(order => order.id === activeOrder.id);
-  if (existingIndex >= 0) {
-    orders[existingIndex] = structuredClone(activeOrder);
-  } else {
-    orders.unshift(structuredClone(activeOrder));
+  salesOrderSavePending = true;
+  elements.saveDocument.disabled = true;
+  elements.orderMeta.textContent = "Saving to the shared order register";
+  try {
+    const response = await fetch("/api/sales-orders", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(activeOrder)
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) {
+      const error = new Error(result.error || `API ${response.status}`);
+      error.code = result.code || "sales_order_save_failed";
+      throw error;
+    }
+    orders = Array.isArray(result.orders) ? result.orders : [];
+    activeOrder = structuredClone(result.order);
+    activeOrderDirty = false;
+    legacyOrdersPendingMigration = legacyOrdersPendingMigration.filter(order => order.id !== activeOrder.id);
+    render();
+    elements.orderMeta.textContent = `${activeOrder.status} / Shared revision ${activeOrder.revision} / Saved by ${activeOrder.updatedBy}`;
+    return true;
+  } catch (error) {
+    elements.orderMeta.textContent = `Save failed: ${error.message}`;
+    if (error.code === "sales_order_conflict") {
+      await loadSharedSalesOrders({ preserveActive: true });
+      const latest = orders.find(order => order.id === activeOrder.id);
+      if (latest && window.confirm("Another employee changed this order. Reload their latest version? Your unsaved changes will be replaced.")) {
+        activeOrder = structuredClone(latest);
+        activeOrderDirty = false;
+        render();
+      }
+    }
+    return false;
+  } finally {
+    salesOrderSavePending = false;
+    elements.saveDocument.disabled = false;
   }
-  persistOrders();
-  renderOrdersList();
 }
 
-function setStatus(status) {
+async function setStatus(status) {
   activeOrder.status = status;
   if (status === "Expedited") activeOrder.priority = "Expedite";
-  saveActiveOrder();
-  render();
+  activeOrderDirty = true;
+  await saveActiveOrder();
 }
 
-function removeActiveOrder() {
-  orders = orders.filter(order => order.id !== activeOrder.id);
-  persistOrders();
-  activeOrder = newOrder();
-  render();
+async function removeActiveOrder() {
+  const saved = orders.some(order => order.id === activeOrder.id);
+  if (!saved) {
+    activeOrder = newOrder();
+    activeOrderDirty = false;
+    render();
+    return;
+  }
+  if (!window.confirm(`Remove the sales order for ${activeOrder.customer || "this customer"}?`)) return;
+  try {
+    const response = await fetch(`/api/sales-orders/${encodeURIComponent(activeOrder.id)}`, {
+      method: "DELETE",
+      headers: { accept: "application/json" }
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    orders = Array.isArray(result.orders) ? result.orders : [];
+    activeOrder = newOrder();
+    activeOrderDirty = false;
+    render();
+  } catch (error) {
+    elements.orderMeta.textContent = `Remove failed: ${error.message}`;
+  }
+}
+
+async function loadSharedSalesOrders({ preserveActive = false } = {}) {
+  const response = await fetch("/api/sales-orders", { headers: { accept: "application/json" } });
+  const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+  if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+  orders = Array.isArray(result.orders) ? result.orders : [];
+  if (!preserveActive && !activeOrderDirty) {
+    const refreshed = orders.find(order => order.id === activeOrder.id);
+    if (refreshed) activeOrder = structuredClone(refreshed);
+  }
+  renderOrdersList();
+  renderDashboard();
+  return orders;
+}
+
+async function migrateLegacySalesOrders() {
+  if (!legacyOrdersPendingMigration.length) return true;
+  try {
+    const response = await fetch("/api/sales-orders/import", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ orders: legacyOrdersPendingMigration })
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    orders = Array.isArray(result.orders) ? result.orders : [];
+    legacyOrdersPendingMigration = [];
+    localStorage.removeItem(STORAGE_KEY);
+    return true;
+  } catch (error) {
+    orders = [...legacyOrdersPendingMigration];
+    elements.dataStatus.textContent = `Shared order migration delayed: ${error.message}`;
+    return false;
+  }
 }
 
 function loadOrder(orderId) {
-  const order = orders.find(saved => saved.id === orderId);
+  const order = orders.find(savedOrder => savedOrder.id === orderId);
   if (!order) return;
   activeOrder = structuredClone(order);
+  activeOrderDirty = false;
   render();
 }
 
@@ -2321,7 +2413,7 @@ function renderOrdersList() {
     .sort((a, b) => sortOrder(a, b));
 
   const activeCount = orders.filter(order => !statusesHiddenFromActive.has(order.status)).length;
-  elements.savedCount.textContent = `${activeCount} active`;
+  elements.savedCount.textContent = `${activeCount} active / ${orders.length} shared`;
 
   if (!visibleOrders.length) {
     elements.ordersList.innerHTML = `<div class="empty-card">No saved work orders</div>`;
@@ -2344,7 +2436,10 @@ function renderOrdersList() {
 }
 
 function renderMeta() {
-  elements.orderMeta.textContent = `${activeOrder.status} / ${activeOrder.priority} / ${formatDateTime(activeOrder.updatedAt)}`;
+  const sharedState = activeOrder.revision > 0
+    ? `Shared revision ${activeOrder.revision}${activeOrder.updatedBy ? ` by ${activeOrder.updatedBy}` : ""}`
+    : "Not yet saved";
+  elements.orderMeta.textContent = `${activeOrder.status} / ${activeOrder.priority} / ${sharedState} / ${formatDateTime(activeOrder.updatedAt)}`;
 }
 
 async function copySummary() {
@@ -2418,6 +2513,11 @@ function buildProductionSummary(order) {
 async function queueActiveOrderProduction() {
   if (!isManagement() || productionActionPending) return;
   updateActiveFromInputs();
+  const saved = orders.some(order => order.id === activeOrder.id);
+  if (!saved || activeOrderDirty) {
+    elements.productionMeta.textContent = "Saving the customer order before production is queued";
+    if (!await saveActiveOrder()) return;
+  }
   const plan = getProductionPlan(activeOrder);
   if (!plan.buildLines.length) {
     elements.productionMeta.textContent = "Add at least one item with a recipe before queuing production";
@@ -3060,6 +3160,7 @@ async function loadSessionAndData() {
     migrateLegacyTimeClock();
     applyIdentityDefaults();
     render();
+    await migrateLegacySalesOrders();
     await loadBackendSnapshot();
     startBackendRefreshLoop();
     if (isManagement()) {
@@ -3093,6 +3194,7 @@ function applyIdentityDefaults() {
     field.value = currentUser.fullName;
     field.disabled = true;
   });
+  if (!activeOrder.handler) activeOrder.handler = currentUser.fullName;
   if (!elements.handler.value) elements.handler.value = currentUser.fullName;
   if (!activeSupplyOrder.requestedBy) activeSupplyOrder.requestedBy = currentUser.fullName;
 }
@@ -3398,6 +3500,7 @@ async function loadBackendSnapshot(options = {}) {
 async function performBackendRefresh({ silent = false } = {}) {
   const previousSnapshot = backendSnapshot;
   try {
+    if (legacyOrdersPendingMigration.length) await migrateLegacySalesOrders();
     const response = await fetch("/api/bootstrap", { headers: { Accept: "application/json" } });
     if (response.status === 401) {
       window.location.replace("/login.html");
@@ -3406,6 +3509,7 @@ async function performBackendRefresh({ silent = false } = {}) {
     if (!response.ok) throw new Error(`API ${response.status}`);
     const nextSnapshot = await response.json();
     const sheetReady = nextSnapshot.sheet?.ok && Array.isArray(nextSnapshot.sheet.sheets);
+    hydrateSharedSalesOrders(nextSnapshot);
     productionBatches = Array.isArray(nextSnapshot.productionBatches) ? nextSnapshot.productionBatches : productionBatches;
     if (!activeProductionBatchId || !productionBatches.some(batch => batch.id === activeProductionBatchId)) {
       activeProductionBatchId = productionBatches.find(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status))?.id
@@ -3454,9 +3558,31 @@ async function performBackendRefresh({ silent = false } = {}) {
       elements.dataStatus.textContent = `Sheet refresh delayed / last synced ${formatDateTime(lastBackendRefreshAt)}`;
     } else {
       backendSnapshot = null;
-      elements.dataStatus.textContent = "Local mode: orders and manual entries are stored in this browser";
+      elements.dataStatus.textContent = "Shared data unavailable / unsynced entries remain in this browser until the connection returns";
     }
   }
+}
+
+function hydrateSharedSalesOrders(snapshot) {
+  if (!Array.isArray(snapshot?.salesOrders)) return;
+  const sharedOrders = snapshot.salesOrders;
+  if (legacyOrdersPendingMigration.length) {
+    const merged = new Map(sharedOrders.map(order => [order.id, order]));
+    legacyOrdersPendingMigration.forEach(order => {
+      if (!merged.has(order.id)) merged.set(order.id, order);
+    });
+    orders = [...merged.values()];
+  } else {
+    orders = sharedOrders;
+  }
+
+  if (!activeOrderDirty) {
+    const refreshed = orders.find(order => order.id === activeOrder.id);
+    if (refreshed) activeOrder = structuredClone(refreshed);
+    else if (activeOrder.revision > 0) activeOrder = newOrder();
+  }
+  renderOrdersList();
+  renderDashboard();
 }
 
 function hydrateSheetInventory() {

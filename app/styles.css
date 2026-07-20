@@ -2524,6 +2524,11 @@ body.auth-page {
     box-shadow: none;
   }
 
+  .workspace,
+  .workspace > * {
+    min-width: 0;
+  }
+
   .topbar {
     min-height: 0;
     padding: 12px 10px 16px;
@@ -2552,6 +2557,16 @@ body.auth-page {
 
   .section-button.active {
     min-height: 42px;
+  }
+
+  .quick-custom {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quick-custom .chip-button {
+    width: 100%;
+    min-width: 0;
   }
 
   .workspace-section {
