@@ -32,6 +32,22 @@ assert.equal(normalized.currentItemTotal, 0, "a reported zero stock total must r
 assert.equal(normalized.ledgerBalance, 0, "a reported zero ledger must remain an absolute control");
 assert.equal(context.eventDate(normalized).toISOString(), "2026-07-15T10:20:30.000Z");
 
+const reviewEvent = plain(context.normalizeEvent({
+  event_type: "Sale",
+  direction: "Stock Out",
+  proposed_item_name: "Unknown Custom Navy",
+  proposed_quantity: 5,
+  unit_price: 105,
+  review_required: true,
+  review_reason: "unknown_item",
+  discord_item_label: "Unknown Custom Navy",
+  webhook_id: "review-1"
+}));
+assert.equal(reviewEvent.item, "Unknown Custom Navy");
+assert.equal(reviewEvent.qty, 5);
+assert.equal(reviewEvent.reviewRequired, true);
+assert.equal(reviewEvent.reviewReason, "unknown_item");
+
 const writes = {};
 function fakeSheet(name) {
   writes[name] = [];
@@ -64,6 +80,12 @@ assert.deepEqual(controlResult, { stock: true, ledger: true });
 assert.equal(writes["Stock Counts"][0].values[0][3], 0);
 assert.equal(writes["Cash Ledger Counts"][0].values[0][2], 0);
 assert.equal(writes["Stock Counts"][0].values[0][0].toISOString(), "2026-07-15T10:20:30.000Z");
+const stockWritesBeforeLedgerOnly = writes["Stock Counts"].length;
+const ledgerOnlyResult = plain(context.writeWebhookControls({
+  getSheetByName: name => sheets[name] || null
+}, normalized, { stock: false, ledger: true }));
+assert.deepEqual(ledgerOnlyResult, { stock: false, ledger: true });
+assert.equal(writes["Stock Counts"].length, stockWritesBeforeLedgerOnly);
 
 const positiveCorrection = plain(context.normalizeManualMovement({ kind: "Correction", amount: 12.5 }));
 const negativeCorrection = plain(context.normalizeManualMovement({ kind: "Correction", amount: -7.5 }));
@@ -110,6 +132,33 @@ function dataSheet(rows) {
     getRange: () => ({ getValues: () => rows })
   };
 }
+
+const mappedReviewEvent = plain(context.applyStoredItemMapping({
+  getSheetByName(name) {
+    if (name !== "Webhook Item Mappings") return null;
+    return dataSheet([["Unknown Custom Navy", "Remington Custom", "Navy Crossover Revolver"]]);
+  }
+}, {
+  ...reviewEvent,
+  discordItemName: "Unknown Custom Navy",
+  discordItemLabel: "Remington Custom"
+}));
+assert.equal(mappedReviewEvent.item, "Navy Crossover Revolver");
+assert.equal(mappedReviewEvent.reviewRequired, false);
+assert.equal(mappedReviewEvent.reviewReason, "");
+
+const exceptionSnapshot = plain(context.readWebhookExceptions({
+  getSheetByName(name) {
+    if (name !== "Webhook Exceptions") return null;
+    return dataSheet([[
+      new Date("2026-07-15T10:00:00.000Z"), "review-1", "Open", "unknown_item", "Bought Item",
+      "", "Unknown Custom Navy", "Sale", "Stock Out", 5, 105, 1094.25, 5, "", "", "", "",
+      JSON.stringify({ raw_payload: "Item label: Unknown Custom Navy" }), false
+    ]]);
+  }
+}));
+assert.equal(exceptionSnapshot[0].webhookId, "review-1");
+assert.equal(exceptionSnapshot[0].rawText, "Item label: Unknown Custom Navy");
 
 const uncountedMovements = plain(context.readStockMovementDeltas({
   getSheetByName(name) {

@@ -657,6 +657,23 @@ for (const testCase of cases) {
   assert.equal(result.webhook_id, testCase.input.id, `${testCase.name}: Discord message identity`);
 }
 
+const unknownItem = parseStillWaterEmbed({
+  id: 'unknown-custom-label',
+  title: 'Bought Item',
+  description: 'Item label: Uncatalogued Custom Revolver\nAmount Bought: 1\nSell Price: $50'
+});
+assert.equal(unknownItem.review_required, true);
+assert.equal(unknownItem.review_reason, 'unknown_item');
+assert.equal(unknownItem.catalog_matched, false);
+
+const knownMaterial = parseStillWaterEmbed({
+  id: 'known-material',
+  title: 'Item Sold to Shop',
+  description: 'Item name: iron\nItem label: Iron\nSold Amount: 5\nSell Price: $5'
+});
+assert.equal(knownMaterial.review_required, false);
+assert.equal(knownMaterial.item_name, 'Iron');
+
 const capture = createCaptureRecord({
   id: 'message-1',
   channelId: 'channel-1',

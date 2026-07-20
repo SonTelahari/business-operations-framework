@@ -28,4 +28,15 @@ function embedToText(embed) {
   return parts.join('\n');
 }
 
-module.exports = { embedToText, loadEnvFile, normalizeSnowflake };
+function prepareSheetPayload(payload) {
+  if (!payload?.review_required) return payload;
+  return {
+    ...payload,
+    proposed_item_name: payload.item_name || '',
+    proposed_quantity: payload.quantity || 0,
+    item_name: '',
+    quantity: 0
+  };
+}
+
+module.exports = { embedToText, loadEnvFile, normalizeSnowflake, prepareSheetPayload };

@@ -1,4 +1,5 @@
 const itemCatalog = require('../app/items');
+const pricingCatalog = require('../app/pricing');
 
 function parseStillWaterEmbed(message) {
   const title = message.title || message.embeds?.[0]?.title || '';
@@ -47,20 +48,29 @@ function parseStillWaterEmbed(message) {
   const unitPrice = (isBought || isBuyOrderFill) && pricedQuantity > 1 && sellPrice
     ? sellPrice / pricedQuantity
     : sellPrice || buyPrice;
+  const resolvedItem = resolveDiscordItem(itemName, itemLabel);
+  const reviewReasons = [];
+  if (!itemName && !itemLabel) reviewReasons.push('missing_item');
+  else if (!resolvedItem.matched) reviewReasons.push('unknown_item');
+  if (!quantity) reviewReasons.push('missing_quantity');
 
   return {
     event_type: eventType,
     direction,
+    discord_title: title,
     discord_item_name: itemName,
     discord_item_label: itemLabel,
-    item_name: mapDiscordItem(itemName, itemLabel),
+    item_name: resolvedItem.itemName,
     quantity,
     unit_price: unitPrice,
     shop_ledger: optionalMoneyValue(shopLedgerText),
     current_item_total: optionalNumberValue(currentItemTotalText),
     buy_order_id: buyOrderId,
     webhook_id: message.id || buyOrderId || '',
-    raw_payload: description
+    raw_payload: description,
+    catalog_matched: resolvedItem.matched,
+    review_required: reviewReasons.length > 0,
+    review_reason: reviewReasons.join(',')
   };
 }
 
@@ -115,20 +125,23 @@ function firstTextValue(...values) {
   return values.find((value) => String(value || '').trim()) || '';
 }
 
-function mapDiscordItem(itemName, itemLabel) {
+function resolveDiscordItem(itemName, itemLabel) {
   const normalizedName = normalizeCatalogText(itemName);
   const normalizedLabel = normalizeCatalogText(itemLabel);
   const mappedByName = ITEM_NAME_MAP[normalizedName];
-  if (mappedByName) return mappedByName;
+  if (mappedByName) return { itemName: mappedByName, matched: true };
 
   const mappedByLabel = ITEM_LABEL_MAP[normalizedLabel];
-  if (mappedByLabel) return mappedByLabel;
+  if (mappedByLabel) return { itemName: mappedByLabel, matched: true };
+
+  const material = MATERIAL_MAP[normalizedName] || MATERIAL_MAP[normalizedLabel];
+  if (material) return { itemName: material, matched: true };
 
   for (const [pattern, product] of LABEL_PATTERNS) {
-    if (pattern.test(normalizedLabel)) return product;
+    if (pattern.test(normalizedLabel)) return { itemName: product, matched: true };
   }
 
-  return itemLabel || itemName;
+  return { itemName: itemLabel || itemName, matched: false };
 }
 
 function normalizeCatalogText(value) {
@@ -146,6 +159,11 @@ const ITEM_LABEL_MAP = itemCatalog.reduce((map, item) => {
     const key = normalizeCatalogText(value);
     if (key && !map[key]) map[key] = item.name;
   });
+  return map;
+}, {});
+
+const MATERIAL_MAP = Object.keys(pricingCatalog.materials || {}).reduce((map, material) => {
+  map[normalizeCatalogText(material)] = material;
   return map;
 }, {});
 

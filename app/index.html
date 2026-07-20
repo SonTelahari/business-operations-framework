@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Frontier Firearms - Still Water</title>
     <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png?v=20260713-van-horn">
-    <link rel="stylesheet" href="styles.css?v=20260715-buy-orders">
+    <link rel="stylesheet" href="styles.css?v=20260720-webhook-review">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -36,6 +36,9 @@
         <button class="section-button management-only" data-section="supplies" type="button">Supplies</button>
         <button class="section-button" data-section="workbench" type="button">Workbench</button>
         <button class="section-button management-only" data-section="operations" type="button">Operations</button>
+        <button class="section-button management-only review-tab-button" data-section="review" type="button">
+          Review <span class="nav-count hidden" id="exceptionNavCount">0</span>
+        </button>
         <button class="section-button management-only accounts-only" data-section="employees" type="button">Staff</button>
       </nav>
 
@@ -65,6 +68,10 @@
             <div>
               <span>In-Store</span>
               <strong id="inStoreCount">0</strong>
+            </div>
+            <div class="management-only review-stat">
+              <span>Review Queue</span>
+              <strong id="dashboardReviewCount">0</strong>
             </div>
           </div>
         </section>
@@ -766,6 +773,118 @@
         </section>
       </main>
 
+      <main class="review workspace-section hidden management-only" id="reviewSection">
+        <section class="panel review-heading-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Webhook Ledger</p>
+              <h2>Exceptions Inbox</h2>
+              <p id="reviewDataStatus">Loading review queue</p>
+            </div>
+            <button class="ghost-button" id="refreshReviewButton" type="button">Refresh</button>
+          </div>
+          <div class="dashboard-stats review-stats">
+            <div class="priority-stat">
+              <span>Open</span>
+              <strong id="reviewOpenCount">0</strong>
+            </div>
+            <div>
+              <span>Resolved</span>
+              <strong id="reviewResolvedCount">0</strong>
+            </div>
+            <div>
+              <span>Ignored</span>
+              <strong id="reviewIgnoredCount">0</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel review-workspace-panel">
+          <div class="review-layout">
+            <aside class="review-list-pane">
+              <div class="review-filters">
+                <label>
+                  Status
+                  <select id="reviewStatusFilter">
+                    <option value="Open">Open</option>
+                    <option value="All">All</option>
+                    <option value="Resolved">Resolved</option>
+                    <option value="Ignored">Ignored</option>
+                  </select>
+                </label>
+                <label>
+                  Search
+                  <input id="reviewSearchInput" type="search" autocomplete="off" placeholder="Item, reason, or webhook">
+                </label>
+              </div>
+              <div class="review-event-list" id="reviewEventList"></div>
+            </aside>
+
+            <div class="review-editor">
+              <div class="review-editor-heading">
+                <div>
+                  <p class="eyebrow">Selected Event</p>
+                  <h3 id="reviewEditorTitle">No event selected</h3>
+                </div>
+                <span class="status-pill" id="reviewEditorStatus">Open</span>
+              </div>
+              <dl class="review-source-grid">
+                <div><dt>Received</dt><dd id="reviewReceivedAt">-</dd></div>
+                <div><dt>Reason</dt><dd id="reviewReason">-</dd></div>
+                <div><dt>Discord Name</dt><dd id="reviewDiscordName">-</dd></div>
+                <div><dt>Discord Label</dt><dd id="reviewDiscordLabel">-</dd></div>
+              </dl>
+              <div class="review-correction-grid">
+                <label class="review-item-field">
+                  Catalog Item
+                  <input id="reviewItemInput" list="stockOptions" autocomplete="off" placeholder="Canonical item or material">
+                </label>
+                <label>
+                  Event
+                  <select id="reviewEventTypeInput">
+                    <option value="Sale">Sale</option>
+                    <option value="Purchase">Purchase</option>
+                    <option value="Stocking Movement">Stocking Movement</option>
+                  </select>
+                </label>
+                <label>
+                  Direction
+                  <select id="reviewDirectionInput">
+                    <option value="Stock In">Stock In</option>
+                    <option value="Stock Out">Stock Out</option>
+                    <option value="Purchase">Purchase</option>
+                  </select>
+                </label>
+                <label>
+                  Quantity
+                  <input id="reviewQuantityInput" type="number" min="0" step="1" value="0">
+                </label>
+                <label>
+                  Unit Price
+                  <input id="reviewUnitPriceInput" type="number" min="0" step="0.01" value="0">
+                </label>
+                <label class="review-note-field">
+                  Resolution Note
+                  <input id="reviewNoteInput" type="text" autocomplete="off" placeholder="Optional audit note">
+                </label>
+              </div>
+              <label class="checkbox-line review-mapping-option">
+                <input id="reviewRememberMappingInput" type="checkbox" checked>
+                Remember this Discord label for future events
+              </label>
+              <div class="review-actions">
+                <button class="primary-button" id="resolveReviewButton" type="button">Resolve and Apply</button>
+                <button class="ghost-button" id="ignoreReviewButton" type="button">Ignore Event</button>
+              </div>
+              <details class="review-raw-details">
+                <summary>Original webhook text</summary>
+                <pre id="reviewRawText">No event selected</pre>
+              </details>
+            </div>
+          </div>
+        </section>
+      </main>
+
       <main class="operations workspace-section hidden management-only" id="operationsSection">
         <section class="panel operations-panel">
           <div class="panel-header">
@@ -1001,6 +1120,7 @@
                 <option value="authentication">Sign-ins and sign-outs</option>
                 <option value="time_clock">Clock activity</option>
                 <option value="operations">Counts and adjustments</option>
+                <option value="webhook">Webhook review</option>
                 <option value="staff">Staff changes</option>
                 <option value="account">Access requests</option>
               </select>
@@ -1040,6 +1160,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260719-item-aliases"></script>
+    <script src="app.js?v=20260720-webhook-review"></script>
   </body>
 </html>

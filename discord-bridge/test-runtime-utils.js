@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { embedToText, loadEnvFile, normalizeSnowflake } = require('./runtime-utils');
+const { embedToText, loadEnvFile, normalizeSnowflake, prepareSheetPayload } = require('./runtime-utils');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'still-water-runtime-'));
 const envPath = path.join(directory, '.env');
@@ -25,6 +25,18 @@ try {
     description: 'Shop Info',
     fields: [{ name: 'Item Info', value: 'Item name: test' }]
   }), 'Shop Info\nItem Info:\nItem name: test');
+  assert.deepEqual(prepareSheetPayload({
+    item_name: 'Unknown Custom Label',
+    quantity: 5,
+    review_required: true
+  }), {
+    item_name: '',
+    quantity: 0,
+    proposed_item_name: 'Unknown Custom Label',
+    proposed_quantity: 5,
+    review_required: true
+  });
+  assert.deepEqual(prepareSheetPayload({ item_name: 'Iron', quantity: 5 }), { item_name: 'Iron', quantity: 5 });
   console.log('Shared Discord runtime utility checks passed.');
 } finally {
   delete process.env.RUNTIME_UTIL_NEW;

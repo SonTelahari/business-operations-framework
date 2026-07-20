@@ -7,6 +7,8 @@ const CASH_COUNTS_SHEET = 'Cash Ledger Counts';
 const PRODUCTS_SHEET = 'Products';
 const TIME_CLOCK_SHEET = 'Timesheet';
 const PAYROLL_PAYMENT_SHEET = 'Payroll Payments';
+const WEBHOOK_EXCEPTION_SHEET = 'Webhook Exceptions';
+const ITEM_MAPPING_SHEET = 'Webhook Item Mappings';
 const SOURCE_NAME = 'Discord Bridge - Still Water';
 const GUI_SOURCE_NAME = 'Frontier GUI - Still Water';
 const TIMESTAMP_FORMAT = 'dd.mm.yyyy hh:mm';
@@ -34,9 +36,8 @@ function doPost(e) {
       return jsonResponse(writeGuiPayload(payload));
     }
 
-    const event = normalizeEvent(payload);
-
     const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const event = applyStoredItemMapping(spreadsheet, normalizeEvent(payload));
     const rawSheet = spreadsheet.getSheetByName(RAW_SHEET);
     const transactionSheet = spreadsheet.getSheetByName(TRANSACTION_SHEET);
 
@@ -66,6 +67,21 @@ function doPost(e) {
       JSON.stringify(payload)
     ]);
     formatTimestampCell(rawSheet, rawSheet.getLastRow());
+
+    if (event.reviewRequired) {
+      const exception = writeWebhookException(spreadsheet, event, payload);
+      const controls = writeWebhookControls(spreadsheet, event, { stock: false, ledger: true });
+      return jsonResponse({
+        ok: true,
+        webhookId: event.webhookId,
+        reviewRequired: true,
+        reviewReason: event.reviewReason,
+        exceptionWritten: exception.written,
+        transactionWritten: false,
+        stockControlWritten: false,
+        ledgerControlWritten: controls.ledger
+      });
+    }
 
     if (event.item && event.qty) {
       writeTransaction(transactionSheet, event);
@@ -105,7 +121,195 @@ function writeGuiPayload(payload) {
     return writeTimeClockEntry(spreadsheet, payload.entry || {}, action);
   }
 
+  if (action === 'resolve_exception') {
+    return resolveWebhookException(spreadsheet, payload.exception || {}, action);
+  }
+
+  if (action === 'ignore_exception') {
+    return ignoreWebhookException(spreadsheet, payload.exception || {}, action);
+  }
+
   throw new Error('Unknown GUI action: ' + action);
+}
+
+function writeWebhookException(spreadsheet, event, payload) {
+  const sheet = requireOrCreateSheet(spreadsheet, WEBHOOK_EXCEPTION_SHEET, webhookExceptionHeaders());
+  const existingRow = findRowByValue(sheet, 2, event.webhookId);
+  if (existingRow) return { written: false, row: existingRow };
+
+  const row = firstEmptyRow(sheet, 2, 1);
+  sheet.getRange(row, 1, 1, 19).setValues([[
+    eventDate(event),
+    event.webhookId,
+    'Open',
+    event.reviewReason,
+    event.discordTitle,
+    event.discordItemName,
+    event.discordItemLabel,
+    event.type,
+    event.direction,
+    event.qty,
+    event.unitPrice,
+    event.ledgerBalance === null ? '' : event.ledgerBalance,
+    event.currentItemTotal === null ? '' : event.currentItemTotal,
+    '',
+    '',
+    '',
+    '',
+    JSON.stringify(payload),
+    false
+  ]]);
+  formatTimestampCell(sheet, row);
+  return { written: true, row };
+}
+
+function resolveWebhookException(spreadsheet, correction, action) {
+  const sheet = requireOrCreateSheet(spreadsheet, WEBHOOK_EXCEPTION_SHEET, webhookExceptionHeaders());
+  const webhookId = String(correction.webhookId || '');
+  const row = findRowByValue(sheet, 2, webhookId);
+  if (!row) throw new Error('Webhook exception not found.');
+
+  const values = sheet.getRange(row, 1, 1, 19).getValues()[0];
+  if (String(values[2]) !== 'Open') {
+    return { ok: true, duplicate: true, action, webhookId, status: String(values[2]) };
+  }
+
+  const originalPayload = parseJsonObject(values[17]);
+  const itemName = String(correction.itemName || '').trim();
+  const quantity = Number(correction.quantity);
+  if (!itemName || !Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error('Resolving an exception requires an item and positive quantity.');
+  }
+
+  const event = normalizeEvent({
+    ...originalPayload,
+    webhook_id: webhookId,
+    event_type: correction.eventType || values[7],
+    direction: correction.direction || values[8],
+    item_name: itemName,
+    quantity,
+    unit_price: correction.unitPrice === '' || correction.unitPrice === undefined
+      ? values[10]
+      : correction.unitPrice,
+    review_required: false,
+    review_reason: ''
+  });
+  event.reviewRequired = false;
+  event.reviewReason = '';
+
+  const transactionSheet = requireSheet(spreadsheet, TRANSACTION_SHEET);
+  const transactionAlreadyWritten = alreadyRecordedInColumn(transactionSheet, 11, webhookId);
+  if (!transactionAlreadyWritten) writeTransaction(transactionSheet, event);
+  const controls = writeWebhookControls(spreadsheet, event, { stock: true, ledger: false });
+  const resolvedBy = String(correction.resolvedBy || GUI_SOURCE_NAME);
+  if (correction.rememberMapping !== false) {
+    rememberItemMapping(spreadsheet, {
+      discordItemName: values[5],
+      discordItemLabel: values[6],
+      itemName,
+      resolvedBy,
+      webhookId
+    });
+  }
+
+  sheet.getRange(row, 3).setValue('Resolved');
+  sheet.getRange(row, 14, 1, 6).setValues([[
+    itemName,
+    new Date(),
+    resolvedBy,
+    String(correction.note || ''),
+    values[17],
+    true
+  ]]);
+  sheet.getRange(row, 15).setNumberFormat(TIMESTAMP_FORMAT);
+  return {
+    ok: true,
+    action,
+    webhookId,
+    status: 'Resolved',
+    itemName,
+    transactionWritten: !transactionAlreadyWritten,
+    stockControlWritten: controls.stock
+  };
+}
+
+function ignoreWebhookException(spreadsheet, correction, action) {
+  const sheet = requireOrCreateSheet(spreadsheet, WEBHOOK_EXCEPTION_SHEET, webhookExceptionHeaders());
+  const webhookId = String(correction.webhookId || '');
+  const row = findRowByValue(sheet, 2, webhookId);
+  if (!row) throw new Error('Webhook exception not found.');
+  const status = String(sheet.getRange(row, 3).getDisplayValue());
+  if (status !== 'Open') return { ok: true, duplicate: true, action, webhookId, status };
+
+  const resolvedBy = String(correction.resolvedBy || GUI_SOURCE_NAME);
+  sheet.getRange(row, 3).setValue('Ignored');
+  sheet.getRange(row, 14, 1, 6).setValues([[
+    '',
+    new Date(),
+    resolvedBy,
+    String(correction.note || ''),
+    sheet.getRange(row, 18).getValue(),
+    false
+  ]]);
+  sheet.getRange(row, 15).setNumberFormat(TIMESTAMP_FORMAT);
+  return { ok: true, action, webhookId, status: 'Ignored' };
+}
+
+function applyStoredItemMapping(spreadsheet, event) {
+  if (!event.reviewRequired || !String(event.reviewReason).includes('unknown_item')) return event;
+  const sheet = spreadsheet.getSheetByName(ITEM_MAPPING_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return event;
+
+  const wantedName = inventoryKey(event.discordItemName);
+  const wantedLabel = inventoryKey(event.discordItemLabel);
+  const rows = sheet.getRange(2, 2, sheet.getLastRow() - 1, 3).getValues();
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    const nameMatches = wantedName && wantedName === inventoryKey(row[0]);
+    const labelMatches = wantedLabel && wantedLabel === inventoryKey(row[1]);
+    if (!nameMatches && !labelMatches) continue;
+    event.item = String(row[2] || event.item);
+    event.reviewReason = String(event.reviewReason)
+      .split(',')
+      .filter(reason => reason && reason !== 'unknown_item')
+      .join(',');
+    event.reviewRequired = Boolean(event.reviewReason);
+    return event;
+  }
+  return event;
+}
+
+function rememberItemMapping(spreadsheet, mapping) {
+  if (!mapping.discordItemName && !mapping.discordItemLabel) return;
+  const sheet = requireOrCreateSheet(spreadsheet, ITEM_MAPPING_SHEET, [
+    'Added At', 'Discord Item Name', 'Discord Item Label', 'Canonical Item', 'Added By', 'Source Webhook ID'
+  ]);
+  const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 2, sheet.getLastRow() - 1, 2).getValues();
+  const wantedName = inventoryKey(mapping.discordItemName);
+  const wantedLabel = inventoryKey(mapping.discordItemLabel);
+  const offset = rows.findIndex(row =>
+    (wantedName && wantedName === inventoryKey(row[0])) ||
+    (wantedLabel && wantedLabel === inventoryKey(row[1]))
+  );
+  const row = offset === -1 ? firstEmptyRow(sheet, 2, 1) : offset + 2;
+  sheet.getRange(row, 1, 1, 6).setValues([[
+    new Date(),
+    String(mapping.discordItemName || ''),
+    String(mapping.discordItemLabel || ''),
+    String(mapping.itemName || ''),
+    String(mapping.resolvedBy || ''),
+    String(mapping.webhookId || '')
+  ]]);
+  formatTimestampCell(sheet, row);
+}
+
+function webhookExceptionHeaders() {
+  return [
+    'Received At', 'Webhook ID', 'Status', 'Reason', 'Discord Title', 'Discord Item Name',
+    'Discord Item Label', 'Event Type', 'Direction', 'Quantity', 'Unit Price', 'Ledger Balance',
+    'Current Item Total', 'Resolved Item', 'Resolved At', 'Resolved By', 'Resolution Note',
+    'Original Payload', 'Transaction Written'
+  ];
 }
 
 function writeManualOperation(spreadsheet, entry, action) {
@@ -293,6 +497,15 @@ function requireSheet(spreadsheet, name) {
   return sheet;
 }
 
+function requireOrCreateSheet(spreadsheet, name, headers) {
+  let sheet = spreadsheet.getSheetByName(name);
+  if (sheet) return sheet;
+  sheet = spreadsheet.insertSheet(name);
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.setFrozenRows(1);
+  return sheet;
+}
+
 function findRowByValue(sheet, column, value) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return 0;
@@ -313,6 +526,15 @@ function alreadyRecordedInColumn(sheet, column, entryId) {
 function numberOrZero(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(String(value || '{}'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    return {};
+  }
 }
 
 function guiReference(entryId) {
@@ -347,6 +569,7 @@ function parsePayload(e) {
 }
 
 function normalizeEvent(payload) {
+  const reviewRequested = payload.review_required === true || String(payload.review_required || '').toLowerCase() === 'true';
   const rawType = firstValue(payload, ['event_type', 'type', 'action', 'event']);
   const type = normalizeType(rawType);
   const direction = normalizeDirection(
@@ -354,18 +577,36 @@ function normalizeEvent(payload) {
     type
   );
 
+  const item = String(firstValue(payload, reviewRequested
+    ? ['proposed_item_name', 'item_name', 'item', 'name', 'product', 'product_name']
+    : ['item_name', 'item', 'name', 'product', 'product_name']) || '');
+  const qty = Number(firstValue(payload, reviewRequested
+    ? ['proposed_quantity', 'qty', 'quantity', 'count', 'amount']
+    : ['qty', 'quantity', 'count', 'amount']) || 0);
+  const reviewReasons = String(firstValue(payload, ['review_reason']) || '')
+    .split(',')
+    .map(reason => reason.trim())
+    .filter(Boolean);
+  if (!item && !reviewReasons.includes('missing_item')) reviewReasons.push('missing_item');
+  if (!(qty > 0) && !reviewReasons.includes('missing_quantity')) reviewReasons.push('missing_quantity');
+
   return {
     webhookId: String(firstValue(payload, ['webhook_id', 'id', 'event_id', 'discord_message_id', 'order_id', 'buy_order_id', 'receipt_id']) || Utilities.getUuid()),
     type,
     direction,
-    item: String(firstValue(payload, ['item_name', 'item', 'name', 'product', 'product_name']) || ''),
-    qty: Number(firstValue(payload, ['qty', 'quantity', 'count', 'amount']) || 0),
+    item,
+    qty,
     unitPrice: Number(firstValue(payload, ['unit_price', 'price', 'sale_price', 'buy_price']) || 0),
     currentItemTotal: nullableNumber(firstValue(payload, ['current_item_total', 'current_stock', 'stock_total'])),
     ledgerBalance: nullableNumber(firstValue(payload, ['shop_ledger', 'ledger_balance', 'current_ledger'])),
     occurredAt: String(firstValue(payload, ['timestamp', 'occurred_at', 'created_at']) || ''),
     actor: String(firstValue(payload, ['actor', 'customer', 'buyer', 'seller', 'player']) || ''),
-    orderId: String(firstValue(payload, ['order_id', 'buy_order_id', 'receipt_id', 'transaction_id']) || '')
+    orderId: String(firstValue(payload, ['order_id', 'buy_order_id', 'receipt_id', 'transaction_id']) || ''),
+    discordTitle: String(firstValue(payload, ['discord_title', 'title']) || ''),
+    discordItemName: String(firstValue(payload, ['discord_item_name']) || ''),
+    discordItemLabel: String(firstValue(payload, ['discord_item_label']) || ''),
+    reviewRequired: reviewRequested || reviewReasons.length > 0,
+    reviewReason: reviewReasons.join(',')
   };
 }
 
@@ -437,11 +678,12 @@ function writeTransaction(sheet, event) {
   formatTimestampCell(sheet, row);
 }
 
-function writeWebhookControls(spreadsheet, event) {
+function writeWebhookControls(spreadsheet, event, options) {
+  options = options || {};
   const result = { stock: false, ledger: false };
   const occurredAt = eventDate(event);
 
-  if (event.item && event.currentItemTotal !== null) {
+  if (options.stock !== false && event.item && event.currentItemTotal !== null) {
     const stockSheet = requireSheet(spreadsheet, STOCK_COUNTS_SHEET);
     const row = firstEmptyRow(stockSheet, 2, 1);
     stockSheet.getRange(row, 1, 1, 4).setValues([[
@@ -458,7 +700,7 @@ function writeWebhookControls(spreadsheet, event) {
     result.stock = true;
   }
 
-  if (event.ledgerBalance !== null) {
+  if (options.ledger !== false && event.ledgerBalance !== null) {
     const ledgerSheet = requireSheet(spreadsheet, CASH_COUNTS_SHEET);
     const row = firstEmptyRow(ledgerSheet, 2, 1);
     ledgerSheet.getRange(row, 1, 1, 3).setValues([[
@@ -494,6 +736,7 @@ function firstEmptyRow(sheet, startRow, column) {
 // Public bootstrap exposes workbook structure and operational totals, never detailed payroll or transaction rows.
 function readWorkbookSnapshot() {
   const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+  backfillWebhookExceptions(spreadsheet);
   const sheets = spreadsheet.getSheets().map(sheet => {
     const lastRow = sheet.getLastRow();
     const lastColumn = sheet.getLastColumn();
@@ -509,12 +752,73 @@ function readWorkbookSnapshot() {
 
   return {
     ok: true,
-    schemaVersion: 3,
+    schemaVersion: 4,
     spreadsheetId: SPREADSHEET_ID,
     generatedAt: new Date().toISOString(),
     sheets,
+    reviewExceptions: readWebhookExceptions(spreadsheet),
     inventory: readInventorySnapshot(spreadsheet)
   };
+}
+
+function backfillWebhookExceptions(spreadsheet) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) return 0;
+  try {
+    const rawSheet = spreadsheet.getSheetByName(RAW_SHEET);
+    if (!rawSheet || rawSheet.getLastRow() < 2) return 0;
+    const rowCount = Math.min(1000, rawSheet.getLastRow() - 1);
+    const startRow = Math.max(2, rawSheet.getLastRow() - rowCount + 1);
+    const rows = rawSheet.getRange(startRow, 1, rowCount, 10).getValues();
+    let recovered = 0;
+    rows.forEach(row => {
+      const payload = parseJsonObject(row[9]);
+      const reviewRequested = payload.review_required === true || String(payload.review_required || '').toLowerCase() === 'true';
+      if (!reviewRequested) return;
+      const event = normalizeEvent(payload);
+      const result = writeWebhookException(spreadsheet, event, payload);
+      if (result.written) recovered += 1;
+    });
+    return recovered;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function readWebhookExceptions(spreadsheet) {
+  const sheet = spreadsheet.getSheetByName(WEBHOOK_EXCEPTION_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const rowCount = Math.min(250, sheet.getLastRow() - 1);
+  const startRow = Math.max(2, sheet.getLastRow() - rowCount + 1);
+  return sheet.getRange(startRow, 1, rowCount, 19).getValues()
+    .filter(row => row[1])
+    .map(row => {
+      const receivedAt = row[0] instanceof Date ? row[0] : new Date(row[0]);
+      const resolvedAt = row[14] instanceof Date ? row[14] : new Date(row[14]);
+      const originalPayload = parseJsonObject(row[17]);
+      return {
+        webhookId: String(row[1]),
+        status: String(row[2] || 'Open'),
+        reason: String(row[3] || ''),
+        receivedAt: isNaN(receivedAt.getTime()) ? '' : receivedAt.toISOString(),
+        discordTitle: String(row[4] || ''),
+        discordItemName: String(row[5] || ''),
+        discordItemLabel: String(row[6] || ''),
+        eventType: String(row[7] || ''),
+        direction: String(row[8] || ''),
+        quantity: numberOrZero(row[9]),
+        unitPrice: numberOrZero(row[10]),
+        ledgerBalance: row[11] === '' ? null : numberOrZero(row[11]),
+        currentItemTotal: row[12] === '' ? null : numberOrZero(row[12]),
+        resolvedItem: String(row[13] || ''),
+        resolvedAt: isNaN(resolvedAt.getTime()) ? '' : resolvedAt.toISOString(),
+        resolvedBy: String(row[15] || ''),
+        note: String(row[16] || ''),
+        rawText: String(originalPayload.raw_payload || '').slice(0, 4000),
+        transactionWritten: row[18] === true || String(row[18]).toLowerCase() === 'true'
+      };
+    })
+    .sort((a, b) => new Date(b.receivedAt || 0) - new Date(a.receivedAt || 0));
 }
 
 // Exposes operational totals only; transaction and payroll rows stay private.

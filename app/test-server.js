@@ -12,6 +12,20 @@ const receiverPayloads = [];
 const receiverOperationIds = new Set();
 const storageCounts = new Map([["iron", 12]]);
 const buyOrderPurchases = [];
+const reviewExceptions = [{
+  webhookId: "review-1",
+  status: "Open",
+  reason: "unknown_item",
+  receivedAt: "2026-07-13T03:25:00.000Z",
+  discordTitle: "Bought Item",
+  discordItemName: "",
+  discordItemLabel: "Custom Navy",
+  eventType: "Sale",
+  direction: "Stock Out",
+  quantity: 1,
+  unitPrice: 105,
+  rawText: "Item label: Custom Navy"
+}];
 let failNextReceiverWrite = false;
 const mockReceiver = http.createServer(async (request, response) => {
   if (request.method === "GET") {
@@ -24,6 +38,7 @@ const mockReceiver = http.createServer(async (request, response) => {
       ok: true,
       generatedAt: "2026-07-13T03:30:00.000Z",
       sheets: [{ name: "Products", lastRow: 3 }],
+      reviewExceptions,
       inventory: {
         products: [
           { itemName: "Navy Revolver", itemLabel: "Navy Revolver", target: 5, currentStock: 1 },
@@ -52,6 +67,18 @@ const mockReceiver = http.createServer(async (request, response) => {
     return;
   }
   const entry = payload.entry;
+  if (payload.action === "resolve_exception") {
+    const exception = reviewExceptions.find(candidate => candidate.webhookId === payload.exception?.webhookId);
+    if (exception) {
+      exception.status = "Resolved";
+      exception.resolvedItem = payload.exception.itemName;
+      exception.resolvedBy = payload.exception.resolvedBy;
+    }
+  }
+  if (payload.action === "ignore_exception") {
+    const exception = reviewExceptions.find(candidate => candidate.webhookId === payload.exception?.webhookId);
+    if (exception) exception.status = "Ignored";
+  }
   if (payload.action === "manual_operation" && entry?.kind === "Stock Count" && entry.location === "Storage") {
     if (!receiverOperationIds.has(entry.id)) {
       storageCounts.set(mockInventoryKey(entry.itemName || entry.itemLabel), Number(entry.quantity || 0));
@@ -128,6 +155,7 @@ async function run() {
   assert.match(authenticatedHtml, /Employee Audit/);
   assert.match(authenticatedHtml, /Supplier Directory/);
   assert.match(authenticatedHtml, /Store Overview/);
+  assert.match(authenticatedHtml, /Exceptions Inbox/);
 
   const inventoryResolver = await fetch(`${baseUrl}/inventory-counts.js`, { headers: { cookie: ownerCookie } });
   assert.equal(inventoryResolver.status, 200);
@@ -145,6 +173,7 @@ async function run() {
   assert.equal(bootstrap.body.sheet.inventory.materials[0].storageCount, 12);
   assert.equal(bootstrap.body.sheet.inventory.storage[1].storageCount, 2);
   assert.equal(bootstrap.body.sheet.inventory.ledger.balance, 6025);
+  assert.equal(bootstrap.body.sheet.reviewExceptions[0].webhookId, "review-1");
 
   const registration = await post(`${baseUrl}/api/auth/register`, {
     fullName: "Ada Employee",
@@ -195,6 +224,13 @@ async function run() {
   assert.equal(employeeBuyOrderAttempt.response.status, 403);
   const employeeSupplierAttempt = await getJson(`${baseUrl}/api/suppliers`, employeeCookie);
   assert.equal(employeeSupplierAttempt.response.status, 403);
+  const employeeBootstrap = await getJson(`${baseUrl}/api/bootstrap`, employeeCookie);
+  assert.equal(Object.prototype.hasOwnProperty.call(employeeBootstrap.body.sheet, "reviewExceptions"), false);
+  const employeeReviewAttempt = await post(`${baseUrl}/api/sync`, {
+    action: "resolve_exception",
+    exception: { webhookId: "review-1", itemName: "Navy Revolver", quantity: 1 }
+  }, employeeCookie);
+  assert.equal(employeeReviewAttempt.response.status, 403);
 
   const sheetHealth = await getJson(`${baseUrl}/health/sheet`);
   assert.equal(sheetHealth.response.status, 200);
@@ -442,6 +478,23 @@ async function run() {
   }, managerCookie);
   assert.equal(managerAdjustment.response.status, 200);
 
+  const managerReview = await post(`${baseUrl}/api/sync`, {
+    action: "resolve_exception",
+    exception: {
+      webhookId: "review-1",
+      itemName: "Navy Revolver",
+      eventType: "Sale",
+      direction: "Stock Out",
+      quantity: 1,
+      unitPrice: 105,
+      rememberMapping: true,
+      note: "Mapped custom label"
+    }
+  }, managerCookie);
+  assert.equal(managerReview.response.status, 200);
+  assert.equal(receiverPayloads.at(-1).exception.resolvedBy, "Ada Employee");
+  assert.equal((await getJson(`${baseUrl}/api/bootstrap`, managerCookie)).body.sheet.reviewExceptions[0].status, "Resolved");
+
   const managerPayrollAttempt = await post(`${baseUrl}/api/sync`, {
     action: "manual_operation",
     entry: { id: "manager-payroll", kind: "Payroll Payment", location: "Payroll", amount: 25 }
@@ -487,6 +540,7 @@ async function run() {
   assert(managerAudit.body.events.some(event => event.action === "supplier.removed" && event.subjectName === "Van Horn Foundry"));
   assert(managerAudit.body.events.some(event => event.action === "storefront_buy_order.saved" && event.subjectName === "Nitrite"));
   assert(managerAudit.body.events.some(event => event.action === "storefront_buy_order.fill_adjusted" && event.details.filledQuantity === 6));
+  assert(managerAudit.body.events.some(event => event.action === "webhook_exception.resolved" && event.actorName === "Ada Employee"));
   assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
 
   const removedSupplyOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-1`, managerCookie);

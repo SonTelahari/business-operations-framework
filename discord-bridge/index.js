@@ -3,7 +3,7 @@ const http = require('http');
 const path = require('path');
 const { appendCaptureRecord, createCaptureRecord, serializeCaptureRecord } = require('./capture');
 const { parseStillWaterEmbed } = require('./parser');
-const { embedToText, loadEnvFile, normalizeSnowflake } = require('./runtime-utils');
+const { embedToText, loadEnvFile, normalizeSnowflake, prepareSheetPayload } = require('./runtime-utils');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -47,11 +47,6 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  if (!message.embeds.length && !message.content) {
-    logWarn(`Skipped empty message in watched channel: ${message.id}`);
-    return;
-  }
-
   const sources = message.embeds.length
     ? message.embeds.map((embed, index) => ({
         id: message.embeds.length > 1 ? `${message.id}-${index + 1}` : message.id,
@@ -76,18 +71,17 @@ client.on('messageCreate', async (message) => {
   const payloads = sources.map(parseStillWaterEmbed);
 
   for (const payload of payloads) {
-    if (!payload.item_name || !payload.quantity) {
-      logWarn(`Skipped message because it did not parse into an item movement: ${message.id}`);
-      continue;
-    }
-
     try {
-      await forwardToSheet({
+      const outboundPayload = prepareSheetPayload({
         ...payload,
         discord_message_id: message.id,
         discord_channel_id: message.channelId,
         timestamp: message.createdAt.toISOString()
       });
+      await forwardToSheet(outboundPayload);
+      if (payload.review_required) {
+        logWarn(`Sent Discord message ${message.id} to review: ${payload.review_reason || 'parser review required'}`);
+      }
     } catch (error) {
       logError(`Failed to forward Discord message ${message.id}: ${error.message}`);
     }
@@ -132,7 +126,9 @@ async function forwardToSheet(payload) {
       ? `ledger control=$${payload.shop_ledger}`
       : ""
   ].filter(Boolean).join(", ");
-  logInfo(`Forwarded ${payload.event_type} for ${payload.item_name} x${payload.quantity}${controls ? ` / ${controls}` : ""}: ${resultText}`);
+  const itemName = payload.item_name || payload.proposed_item_name || 'unresolved item';
+  const quantity = payload.quantity || payload.proposed_quantity || 0;
+  logInfo(`Forwarded ${payload.event_type} for ${itemName} x${quantity}${controls ? ` / ${controls}` : ""}: ${resultText}`);
 }
 
 function startHealthServer() {

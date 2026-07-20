@@ -71,6 +71,7 @@ const server = http.createServer(async (request, response) => {
         persistentBusinessStore: Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
         supplyReceipts: true,
         storefrontBuyOrders: true,
+        webhookReview: true,
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -609,16 +610,44 @@ function requiresAdmin(payload) {
 }
 
 function requiresManagement(payload) {
-  return payload.action === "stock_target" || payload.action === "manual_operation";
+  return payload.action === "stock_target"
+    || payload.action === "manual_operation"
+    || payload.action === "resolve_exception"
+    || payload.action === "ignore_exception";
 }
 
 function stampEmployee(payload, user) {
   if ((payload.action === "manual_operation" || payload.action === "time_clock") && payload.entry) {
     payload.entry.employee = user.fullName;
   }
+  if ((payload.action === "resolve_exception" || payload.action === "ignore_exception") && payload.exception) {
+    payload.exception.resolvedBy = user.fullName;
+  }
 }
 
 async function auditGuiPayload(payload, user, syncResult) {
+  if ((payload.action === "resolve_exception" || payload.action === "ignore_exception") && payload.exception) {
+    const resolved = payload.action === "resolve_exception";
+    await accountStore.recordAudit({
+      category: "webhook",
+      action: resolved ? "webhook_exception.resolved" : "webhook_exception.ignored",
+      actorId: user.id,
+      actorName: user.fullName,
+      subjectId: payload.exception.webhookId,
+      subjectName: payload.exception.itemName || payload.exception.discordItemLabel || "Webhook event",
+      fingerprint: `${payload.action}:${payload.exception.webhookId}`,
+      details: {
+        item: payload.exception.itemName,
+        quantity: payload.exception.quantity,
+        eventType: payload.exception.eventType,
+        direction: payload.exception.direction,
+        rememberMapping: payload.exception.rememberMapping,
+        note: payload.exception.note,
+        sheetSync: Boolean(syncResult?.ok)
+      }
+    });
+    return;
+  }
   if (payload.action === "time_clock" && payload.entry) {
     const clockedOut = Boolean(payload.entry.clockOut);
     await accountStore.recordAudit({
@@ -837,6 +866,7 @@ async function getBootstrapData(user) {
   const canManage = !user || isManagementRole(user);
   if (canManage) await reconcileStorefrontBuyOrdersFromSheet(sheetSnapshot);
   if (sheetSnapshot?.inventory) delete sheetSnapshot.inventory.buyOrderPurchases;
+  if (!canManage && sheetSnapshot) delete sheetSnapshot.reviewExceptions;
   return {
     source: sheetSnapshot ? "apps-script-and-local-app-files" : "local-app-files",
     generatedAt: new Date().toISOString(),
@@ -856,7 +886,8 @@ async function getBootstrapData(user) {
       stockTargets: "/api/sync",
       timeClock: "/api/sync",
       supplyOrders: "/api/supply-orders",
-      storefrontBuyOrders: "/api/storefront-buy-orders"
+      storefrontBuyOrders: "/api/storefront-buy-orders",
+      webhookReview: "/api/sync"
     }
   };
 }

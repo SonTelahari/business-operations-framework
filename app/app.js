@@ -41,7 +41,9 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "supplier.removed": "Supplier record removed",
   "storefront_buy_order.saved": "Storefront buy order saved",
   "storefront_buy_order.fill_adjusted": "Buy order fill adjusted",
-  "storefront_buy_order.removed": "Storefront buy order removed"
+  "storefront_buy_order.removed": "Storefront buy order removed",
+  "webhook_exception.resolved": "Webhook exception resolved",
+  "webhook_exception.ignored": "Webhook exception ignored"
 });
 const itemCatalog = window.FRONTIER_ITEMS || [];
 const recipeCatalog = window.FRONTIER_RECIPES || {};
@@ -58,6 +60,7 @@ let stockTargets = loadStockTargets();
 let supplyOrders = [];
 let storefrontBuyOrders = [];
 let suppliers = [];
+let reviewExceptions = [];
 let currentUser = null;
 let currentRole = "employee";
 let employeeUsers = [];
@@ -71,6 +74,7 @@ let activeOrder = newOrder();
 let activeSupplyOrder = newSupplyOrder();
 let activeStorefrontBuyOrder = newStorefrontBuyOrder();
 let activeSupplier = newSupplier();
+let activeReviewExceptionId = "";
 let activeView = "quote";
 let activeSection = "dashboard";
 
@@ -183,7 +187,34 @@ const elements = {
   restockSection: document.querySelector("#restockSection"),
   workbenchSection: document.querySelector("#workbenchSection"),
   operationsSection: document.querySelector("#operationsSection"),
+  reviewSection: document.querySelector("#reviewSection"),
   employeesSection: document.querySelector("#employeesSection"),
+  exceptionNavCount: document.querySelector("#exceptionNavCount"),
+  dashboardReviewCount: document.querySelector("#dashboardReviewCount"),
+  reviewDataStatus: document.querySelector("#reviewDataStatus"),
+  reviewOpenCount: document.querySelector("#reviewOpenCount"),
+  reviewResolvedCount: document.querySelector("#reviewResolvedCount"),
+  reviewIgnoredCount: document.querySelector("#reviewIgnoredCount"),
+  reviewStatusFilter: document.querySelector("#reviewStatusFilter"),
+  reviewSearch: document.querySelector("#reviewSearchInput"),
+  reviewEventList: document.querySelector("#reviewEventList"),
+  refreshReview: document.querySelector("#refreshReviewButton"),
+  reviewEditorTitle: document.querySelector("#reviewEditorTitle"),
+  reviewEditorStatus: document.querySelector("#reviewEditorStatus"),
+  reviewReceivedAt: document.querySelector("#reviewReceivedAt"),
+  reviewReason: document.querySelector("#reviewReason"),
+  reviewDiscordName: document.querySelector("#reviewDiscordName"),
+  reviewDiscordLabel: document.querySelector("#reviewDiscordLabel"),
+  reviewItem: document.querySelector("#reviewItemInput"),
+  reviewEventType: document.querySelector("#reviewEventTypeInput"),
+  reviewDirection: document.querySelector("#reviewDirectionInput"),
+  reviewQuantity: document.querySelector("#reviewQuantityInput"),
+  reviewUnitPrice: document.querySelector("#reviewUnitPriceInput"),
+  reviewNote: document.querySelector("#reviewNoteInput"),
+  reviewRememberMapping: document.querySelector("#reviewRememberMappingInput"),
+  resolveReview: document.querySelector("#resolveReviewButton"),
+  ignoreReview: document.querySelector("#ignoreReviewButton"),
+  reviewRawText: document.querySelector("#reviewRawText"),
   pendingUserCount: document.querySelector("#pendingUserCount"),
   pendingUserList: document.querySelector("#pendingUserList"),
   employeeUserList: document.querySelector("#employeeUserList"),
@@ -436,6 +467,11 @@ function wireEvents() {
   elements.auditActionFilter.addEventListener("change", renderAudit);
   elements.auditSearch.addEventListener("input", renderAudit);
   elements.refreshAudit.addEventListener("click", loadAuditEvents);
+  elements.reviewStatusFilter.addEventListener("change", renderReviewWorkspace);
+  elements.reviewSearch.addEventListener("input", renderReviewWorkspace);
+  elements.refreshReview.addEventListener("click", () => loadBackendSnapshot({ silent: false }));
+  elements.resolveReview.addEventListener("click", resolveReviewException);
+  elements.ignoreReview.addEventListener("click", ignoreReviewException);
   elements.clockToggle.addEventListener("click", toggleTimeClock);
   elements.countLocation.addEventListener("change", seedCountDatalist);
   elements.saveCount.addEventListener("click", saveManualCount);
@@ -513,6 +549,7 @@ function wireEvents() {
         loadSuppliers({ silent: true });
       }
       if (activeSection === "buy-orders" && isManagement()) loadStorefrontBuyOrders({ silent: true });
+      if (activeSection === "review" && isManagement()) loadBackendSnapshot({ silent: true });
     });
   });
 
@@ -1442,6 +1479,7 @@ function render() {
   renderStoreOverview();
   renderTimeClock();
   renderOperations();
+  renderReviewWorkspace();
   renderEmployees();
   renderRole();
   renderSection();
@@ -1661,6 +1699,7 @@ function renderSection() {
   elements.supplySection.classList.toggle("hidden", activeSection !== "supplies");
   elements.workbenchSection.classList.toggle("hidden", activeSection !== "workbench");
   elements.operationsSection.classList.toggle("hidden", activeSection !== "operations");
+  elements.reviewSection.classList.toggle("hidden", activeSection !== "review");
   elements.employeesSection.classList.toggle("hidden", activeSection !== "employees");
   const supplyMode = activeSection === "supplies";
   const buyOrderMode = activeSection === "buy-orders";
@@ -1689,6 +1728,7 @@ function renderDashboard() {
   elements.pausedCount.textContent = paused.length;
   elements.inStoreCount.textContent = inStore.length;
   elements.expectedDeliveryTodayCount.textContent = expectedDeliveries.length;
+  renderReviewIndicators();
   elements.dueTodayList.innerHTML = renderDashboardCards(dueToday, "No deliveries due today");
   elements.overdueList.innerHTML = renderDashboardCards(overdue, "No overdue orders");
   elements.attentionList.innerHTML = renderDashboardCards(attention, "No paused or expedited orders");
@@ -1875,7 +1915,7 @@ function renderRole() {
     activeSection = "dashboard";
     renderSection();
   }
-  if (!isManagement() && (activeSection === "operations" || activeSection === "supplies" || activeSection === "buy-orders")) {
+  if (!isManagement() && (activeSection === "operations" || activeSection === "supplies" || activeSection === "buy-orders" || activeSection === "review")) {
     activeSection = "dashboard";
     renderSection();
   }
@@ -1883,6 +1923,210 @@ function renderRole() {
 
 function isManagement() {
   return currentRole === "admin" || currentRole === "manager";
+}
+
+function renderReviewIndicators() {
+  const openCount = reviewExceptions.filter(entry => entry.status === "Open").length;
+  const resolvedCount = reviewExceptions.filter(entry => entry.status === "Resolved").length;
+  const ignoredCount = reviewExceptions.filter(entry => entry.status === "Ignored").length;
+  elements.dashboardReviewCount.textContent = formatNumber(openCount);
+  elements.reviewOpenCount.textContent = formatNumber(openCount);
+  elements.reviewResolvedCount.textContent = formatNumber(resolvedCount);
+  elements.reviewIgnoredCount.textContent = formatNumber(ignoredCount);
+  elements.exceptionNavCount.textContent = formatNumber(openCount);
+  elements.exceptionNavCount.classList.toggle("hidden", openCount === 0);
+}
+
+function renderReviewWorkspace() {
+  if (!elements.reviewSection) return;
+  renderReviewIndicators();
+  const openCount = reviewExceptions.filter(entry => entry.status === "Open").length;
+  const generatedAt = backendSnapshot?.sheet?.generatedAt;
+  elements.reviewDataStatus.textContent = generatedAt
+    ? `${openCount} open / sheet synced ${formatDateTime(generatedAt)}`
+    : `${openCount} open / shared sheet unavailable`;
+
+  const filter = elements.reviewStatusFilter.value || "Open";
+  const query = normalize(elements.reviewSearch.value);
+  const visible = reviewExceptions.filter(entry => {
+    if (filter !== "All" && entry.status !== filter) return false;
+    if (!query) return true;
+    return normalize([
+      entry.webhookId,
+      entry.reason,
+      entry.discordTitle,
+      entry.discordItemName,
+      entry.discordItemLabel,
+      entry.resolvedItem,
+      entry.resolvedBy,
+      entry.note
+    ].join(" ")).includes(query);
+  });
+
+  if (!activeReviewExceptionId || !reviewExceptions.some(entry => entry.webhookId === activeReviewExceptionId)) {
+    activeReviewExceptionId = visible[0]?.webhookId
+      || reviewExceptions.find(entry => entry.status === "Open")?.webhookId
+      || reviewExceptions[0]?.webhookId
+      || "";
+  }
+
+  elements.reviewEventList.innerHTML = visible.length
+    ? visible.map(entry => `
+      <button class="review-event-card ${entry.webhookId === activeReviewExceptionId ? "active" : ""}" data-review-id="${escapeHtml(entry.webhookId)}" data-status="${escapeHtml(entry.status)}" type="button">
+        <span class="review-event-card-header">
+          <strong>${escapeHtml(entry.discordItemLabel || entry.discordItemName || "Unidentified event")}</strong>
+          <span class="review-event-card-status">${escapeHtml(entry.status)}</span>
+        </span>
+        <span>${escapeHtml(reviewReasonText(entry.reason))}</span>
+        <small class="review-event-card-meta"><span>${escapeHtml(entry.eventType || "Event")}</span><span>${escapeHtml(formatDateTime(entry.receivedAt))}</span></small>
+      </button>
+    `).join("")
+    : `<div class="empty-card">No webhook events in this view</div>`;
+  elements.reviewEventList.querySelectorAll("[data-review-id]").forEach(button => {
+    button.addEventListener("click", () => {
+      activeReviewExceptionId = button.dataset.reviewId;
+      renderReviewWorkspace();
+    });
+  });
+
+  renderReviewEditor(reviewExceptions.find(entry => entry.webhookId === activeReviewExceptionId));
+}
+
+function renderReviewEditor(entry) {
+  if (!entry) {
+    elements.reviewEditorTitle.textContent = "No event selected";
+    elements.reviewEditorStatus.textContent = "-";
+    elements.reviewReceivedAt.textContent = "-";
+    elements.reviewReason.textContent = "-";
+    elements.reviewDiscordName.textContent = "-";
+    elements.reviewDiscordLabel.textContent = "-";
+    elements.reviewItem.value = "";
+    elements.reviewQuantity.value = 0;
+    elements.reviewUnitPrice.value = 0;
+    elements.reviewRawText.textContent = "No event selected";
+    setReviewEditorDisabled(true);
+    return;
+  }
+
+  const suggestedItem = findExactStockItem(entry.resolvedItem)
+    || findExactStockItem(entry.discordItemLabel)
+    || findExactStockItem(entry.discordItemName);
+  elements.reviewEditorTitle.textContent = entry.discordTitle || entry.eventType || "Webhook Event";
+  elements.reviewEditorStatus.textContent = entry.status;
+  elements.reviewReceivedAt.textContent = formatDateTime(entry.receivedAt);
+  elements.reviewReason.textContent = reviewReasonText(entry.reason);
+  elements.reviewDiscordName.textContent = entry.discordItemName || "Not supplied";
+  elements.reviewDiscordLabel.textContent = entry.discordItemLabel || "Not supplied";
+  elements.reviewItem.value = entry.resolvedItem || suggestedItem?.label || entry.discordItemLabel || entry.discordItemName || "";
+  elements.reviewEventType.value = ["Sale", "Purchase", "Stocking Movement"].includes(entry.eventType)
+    ? entry.eventType
+    : "Stocking Movement";
+  elements.reviewDirection.value = ["Stock In", "Stock Out", "Purchase"].includes(entry.direction)
+    ? entry.direction
+    : "Stock In";
+  elements.reviewQuantity.value = Number(entry.quantity || 0);
+  elements.reviewUnitPrice.value = Number(entry.unitPrice || 0);
+  elements.reviewNote.value = entry.note || "";
+  elements.reviewRememberMapping.checked = true;
+  elements.reviewRawText.textContent = entry.rawText || "No webhook text was supplied";
+  setReviewEditorDisabled(entry.status !== "Open");
+}
+
+function setReviewEditorDisabled(disabled) {
+  [
+    elements.reviewItem,
+    elements.reviewEventType,
+    elements.reviewDirection,
+    elements.reviewQuantity,
+    elements.reviewUnitPrice,
+    elements.reviewNote,
+    elements.reviewRememberMapping,
+    elements.resolveReview,
+    elements.ignoreReview
+  ].forEach(element => { element.disabled = disabled; });
+}
+
+function findExactStockItem(value) {
+  const wanted = normalize(value);
+  if (!wanted) return null;
+  return stockCatalog.find(item => [item.name, item.label, item.tag, ...(item.aliases || [])]
+    .map(normalize)
+    .includes(wanted)) || null;
+}
+
+function reviewReasonText(value) {
+  const labels = {
+    unknown_item: "Unknown item label",
+    missing_item: "Item missing",
+    missing_quantity: "Quantity missing"
+  };
+  return String(value || "Review required")
+    .split(",")
+    .filter(Boolean)
+    .map(reason => labels[reason] || reason.replace(/_/g, " "))
+    .join(" / ");
+}
+
+async function resolveReviewException() {
+  const entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId);
+  if (!entry || entry.status !== "Open") return;
+  const item = findExactStockItem(elements.reviewItem.value);
+  const quantity = Number(elements.reviewQuantity.value);
+  if (!item) {
+    elements.reviewDataStatus.textContent = "Select an exact catalog item or recipe material";
+    elements.reviewItem.focus();
+    return;
+  }
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    elements.reviewDataStatus.textContent = "Enter a positive quantity";
+    elements.reviewQuantity.focus();
+    return;
+  }
+
+  elements.resolveReview.disabled = true;
+  elements.ignoreReview.disabled = true;
+  const result = await syncToBackend("resolve_exception", {
+    exception: {
+      webhookId: entry.webhookId,
+      discordItemLabel: entry.discordItemLabel,
+      itemName: item.name,
+      eventType: elements.reviewEventType.value,
+      direction: elements.reviewDirection.value,
+      quantity,
+      unitPrice: Number(elements.reviewUnitPrice.value || 0),
+      rememberMapping: elements.reviewRememberMapping.checked,
+      note: elements.reviewNote.value.trim()
+    }
+  });
+  if (!result.ok) {
+    elements.reviewDataStatus.textContent = `Resolution failed: ${result.error || "sheet sync failed"}`;
+    setReviewEditorDisabled(false);
+    return;
+  }
+  activeReviewExceptionId = "";
+  await loadBackendSnapshot({ silent: true });
+}
+
+async function ignoreReviewException() {
+  const entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId);
+  if (!entry || entry.status !== "Open") return;
+  if (!window.confirm(`Ignore webhook ${entry.webhookId}?`)) return;
+  elements.resolveReview.disabled = true;
+  elements.ignoreReview.disabled = true;
+  const result = await syncToBackend("ignore_exception", {
+    exception: {
+      webhookId: entry.webhookId,
+      discordItemLabel: entry.discordItemLabel,
+      note: elements.reviewNote.value.trim()
+    }
+  });
+  if (!result.ok) {
+    elements.reviewDataStatus.textContent = `Ignore failed: ${result.error || "sheet sync failed"}`;
+    setReviewEditorDisabled(false);
+    return;
+  }
+  activeReviewExceptionId = "";
+  await loadBackendSnapshot({ silent: true });
 }
 
 function renderReplenishment() {
@@ -2733,14 +2977,15 @@ async function syncToBackend(action, payload) {
       },
       body: JSON.stringify({ action, ...payload })
     });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
     if (response.status === 401) {
       window.location.replace("/login.html");
-      return { ok: false };
+      return { ok: false, error: "Authentication required" };
     }
-    if (!response.ok) return { ok: false };
-    return await response.json();
-  } catch {
-    return { ok: false };
+    if (!response.ok) return { ok: false, error: result.error || `API ${response.status}` };
+    return result;
+  } catch (error) {
+    return { ok: false, error: error.message };
   }
 }
 
@@ -2789,6 +3034,11 @@ async function performBackendRefresh({ silent = false } = {}) {
       return;
     }
     backendSnapshot = nextSnapshot;
+    if (isManagement()) {
+      reviewExceptions = Array.isArray(nextSnapshot.sheet?.reviewExceptions)
+        ? nextSnapshot.sheet.reviewExceptions
+        : [];
+    }
     if (isManagement() && Array.isArray(nextSnapshot.storefrontBuyOrders)) {
       storefrontBuyOrders = nextSnapshot.storefrontBuyOrders;
       const refreshedBuyOrder = storefrontBuyOrders.find(order => order.id === activeStorefrontBuyOrder.id);
@@ -2809,6 +3059,7 @@ async function performBackendRefresh({ silent = false } = {}) {
       renderOperations();
       renderSupplyWorkspace();
       renderStorefrontBuyOrderWorkspace();
+      renderReviewWorkspace();
       if (!silent) retryPendingSyncs();
     } else {
       renderStoreOverview();
