@@ -51,6 +51,9 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "sales_order.saved": "Sales order saved",
   "sales_order.removed": "Sales order removed",
   "sales_order.imported": "Browser sales orders imported",
+  "daily_close.saved": "Daily close draft saved",
+  "daily_close.finalized": "Daily close finalized",
+  "daily_close.reopened": "Daily close reopened",
   "webhook_exception.resolved": "Webhook exception resolved",
   "webhook_exception.ignored": "Webhook exception ignored"
 });
@@ -72,6 +75,7 @@ let storefrontBuyOrders = [];
 let suppliers = [];
 let reviewExceptions = [];
 let productionBatches = [];
+let dailyCloses = [];
 let currentUser = null;
 let currentRole = "employee";
 let employeeUsers = [];
@@ -83,10 +87,13 @@ let lastBackendRefreshAt = 0;
 let supplyReceiptPending = false;
 let productionActionPending = false;
 let salesOrderSavePending = false;
+let dailyCloseActionPending = false;
 let activeOrderDirty = false;
+let dailyCloseDirty = false;
 let activeOrder = newOrder();
 let activeSupplyOrder = newSupplyOrder();
 let activeStorefrontBuyOrder = newStorefrontBuyOrder();
+let activeDailyClose = newDailyClose();
 let activeSupplier = newSupplier();
 let activeReviewExceptionId = "";
 let activeProductionBatchId = "";
@@ -228,6 +235,7 @@ const elements = {
   restockSection: document.querySelector("#restockSection"),
   workbenchSection: document.querySelector("#workbenchSection"),
   operationsSection: document.querySelector("#operationsSection"),
+  dailyCloseSection: document.querySelector("#dailyCloseSection"),
   reviewSection: document.querySelector("#reviewSection"),
   employeesSection: document.querySelector("#employeesSection"),
   exceptionNavCount: document.querySelector("#exceptionNavCount"),
@@ -291,6 +299,30 @@ const elements = {
   overdueList: document.querySelector("#overdueList"),
   attentionList: document.querySelector("#attentionList"),
   inStoreList: document.querySelector("#inStoreList"),
+  latestHandoffMeta: document.querySelector("#latestHandoffMeta"),
+  latestHandoffSummary: document.querySelector("#latestHandoffSummary"),
+  dailyCloseDataStatus: document.querySelector("#dailyCloseDataStatus"),
+  dailyCloseStatus: document.querySelector("#dailyCloseStatus"),
+  dailyCloseStorefrontUnits: document.querySelector("#dailyCloseStorefrontUnits"),
+  dailyCloseStorageUnits: document.querySelector("#dailyCloseStorageUnits"),
+  dailyCloseSystemLedger: document.querySelector("#dailyCloseSystemLedger"),
+  dailyCloseOpenSales: document.querySelector("#dailyCloseOpenSales"),
+  dailyCloseActiveProduction: document.querySelector("#dailyCloseActiveProduction"),
+  dailyCloseIssueCount: document.querySelector("#dailyCloseIssueCount"),
+  dailyCloseEditMeta: document.querySelector("#dailyCloseEditMeta"),
+  dailyCloseBusinessDate: document.querySelector("#dailyCloseBusinessDateInput"),
+  dailyCloseLedgerCount: document.querySelector("#dailyCloseLedgerCountInput"),
+  dailyCloseLedgerDifference: document.querySelector("#dailyCloseLedgerDifference"),
+  dailyCloseStorefrontConfirmed: document.querySelector("#dailyCloseStorefrontConfirmedInput"),
+  dailyCloseStorageConfirmed: document.querySelector("#dailyCloseStorageConfirmedInput"),
+  dailyCloseDiscrepancy: document.querySelector("#dailyCloseDiscrepancyInput"),
+  dailyClosePriority: document.querySelector("#dailyClosePriorityInput"),
+  dailyCloseHandoff: document.querySelector("#dailyCloseHandoffInput"),
+  finalizeDailyClose: document.querySelector("#finalizeDailyCloseButton"),
+  reopenDailyClose: document.querySelector("#reopenDailyCloseButton"),
+  dailyCloseIssueList: document.querySelector("#dailyCloseIssueList"),
+  dailyCloseHistoryCount: document.querySelector("#dailyCloseHistoryCount"),
+  dailyCloseHistoryList: document.querySelector("#dailyCloseHistoryList"),
   replenishmentMeta: document.querySelector("#replenishmentMeta"),
   replenishmentList: document.querySelector("#replenishmentList"),
   replenishmentMaterialsList: document.querySelector("#replenishmentMaterialsList"),
@@ -355,6 +387,46 @@ function newOrder() {
     updatedAt: now,
     createdBy: "",
     updatedBy: ""
+  };
+}
+
+function newDailyClose() {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    businessDate: todayKey(),
+    status: "Draft",
+    storefrontConfirmed: false,
+    storageConfirmed: false,
+    countedLedgerBalance: null,
+    discrepancyNotes: "",
+    priorityNotes: "",
+    handoffNotes: "",
+    snapshot: emptyDailyCloseSnapshot(),
+    revision: 0,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: currentUser?.fullName || "",
+    updatedBy: "",
+    finalizedAt: "",
+    finalizedBy: ""
+  };
+}
+
+function emptyDailyCloseSnapshot() {
+  return {
+    capturedAt: "",
+    sheetGeneratedAt: "",
+    storefrontUnits: null,
+    storageUnits: null,
+    ledgerBalance: null,
+    openSalesOrders: 0,
+    overdueSalesOrders: 0,
+    activeProductionBatches: 0,
+    expectedSupplyDeliveries: 0,
+    openStorefrontBuyOrders: 0,
+    openReviewExceptions: 0,
+    issues: []
   };
 }
 
@@ -496,6 +568,21 @@ function stockOptionMarkup(catalog) {
 function wireEvents() {
   elements.newDocument.addEventListener("click", startNewDocument);
   elements.saveDocument.addEventListener("click", saveCurrentDocument);
+  elements.finalizeDailyClose.addEventListener("click", finalizeActiveDailyClose);
+  elements.reopenDailyClose.addEventListener("click", reopenActiveDailyClose);
+  [
+    elements.dailyCloseBusinessDate,
+    elements.dailyCloseLedgerCount,
+    elements.dailyCloseStorefrontConfirmed,
+    elements.dailyCloseStorageConfirmed,
+    elements.dailyCloseDiscrepancy,
+    elements.dailyClosePriority,
+    elements.dailyCloseHandoff
+  ].forEach(field => ["input", "change"].forEach(eventName => field.addEventListener(eventName, () => {
+    updateDailyCloseFromInputs();
+    dailyCloseDirty = true;
+    renderDailyCloseDifference();
+  })));
   document.querySelector("#addItemButton").addEventListener("click", addItemLine);
   document.querySelector("#copySummaryButton").addEventListener("click", copySummary);
   document.querySelector("#copyProductionButton").addEventListener("click", copyProduction);
@@ -598,6 +685,7 @@ function wireEvents() {
       if (activeSection === "buy-orders" && isManagement()) loadStorefrontBuyOrders({ silent: true });
       if (activeSection === "review" && isManagement()) loadBackendSnapshot({ silent: true });
       if (activeSection === "production") loadProductionBatches({ silent: true });
+      if (activeSection === "daily-close" && isManagement()) renderDailyCloseWorkspace();
     });
   });
 
@@ -633,6 +721,13 @@ function wireEvents() {
 }
 
 function startNewDocument() {
+  if (activeSection === "daily-close") {
+    const todayClose = dailyCloses.find(close => close.businessDate === todayKey());
+    activeDailyClose = structuredClone(todayClose || newDailyClose());
+    dailyCloseDirty = false;
+    renderDailyCloseWorkspace();
+    return;
+  }
   if (activeSection === "supplies") {
     activeSupplyOrder = newSupplyOrder();
     renderSupplyWorkspace();
@@ -650,6 +745,7 @@ function startNewDocument() {
 }
 
 function saveCurrentDocument() {
+  if (activeSection === "daily-close") return saveDailyClose();
   if (activeSection === "supplies") return saveSupplyOrder();
   if (activeSection === "buy-orders") return saveStorefrontBuyOrder();
   return saveActiveOrder();
@@ -1610,8 +1706,10 @@ function render() {
   renderStorefrontBuyOrderWorkspace();
   renderSupplierWorkspace();
   renderProductionQueue();
+  renderDailyCloseWorkspace();
   renderView();
   renderDashboard();
+  renderLatestHandoff();
   renderStoreOverview();
   renderTimeClock();
   renderOperations();
@@ -1836,12 +1934,14 @@ function renderSection() {
   elements.workbenchSection.classList.toggle("hidden", activeSection !== "workbench");
   elements.productionSection.classList.toggle("hidden", activeSection !== "production");
   elements.operationsSection.classList.toggle("hidden", activeSection !== "operations");
+  elements.dailyCloseSection.classList.toggle("hidden", activeSection !== "daily-close");
   elements.reviewSection.classList.toggle("hidden", activeSection !== "review");
   elements.employeesSection.classList.toggle("hidden", activeSection !== "employees");
   const supplyMode = activeSection === "supplies";
   const buyOrderMode = activeSection === "buy-orders";
-  elements.newDocument.textContent = supplyMode ? "New Supply" : buyOrderMode ? "New Buy Order" : "New Sale";
-  elements.saveDocument.textContent = supplyMode ? "Save Supply" : buyOrderMode ? "Save Buy Order" : "Save Sale";
+  const closeMode = activeSection === "daily-close";
+  elements.newDocument.textContent = supplyMode ? "New Supply" : buyOrderMode ? "New Buy Order" : closeMode ? "Today's Close" : "New Sale";
+  elements.saveDocument.textContent = supplyMode ? "Save Supply" : buyOrderMode ? "Save Buy Order" : closeMode ? "Save Draft" : "Save Sale";
 }
 
 function renderDashboard() {
@@ -1940,6 +2040,291 @@ function renderStoreOverview() {
   elements.ledgerOverviewDetail.textContent = ledger.countedAt
     ? `Counted ${formatDateTime(ledger.countedAt)} / ${movementText} since count`
     : `Recorded cash movement ${movementText}`;
+}
+
+function updateDailyCloseFromInputs() {
+  activeDailyClose.businessDate = elements.dailyCloseBusinessDate.value;
+  activeDailyClose.countedLedgerBalance = elements.dailyCloseLedgerCount.value === ""
+    ? null
+    : Number(elements.dailyCloseLedgerCount.value);
+  activeDailyClose.storefrontConfirmed = elements.dailyCloseStorefrontConfirmed.checked;
+  activeDailyClose.storageConfirmed = elements.dailyCloseStorageConfirmed.checked;
+  activeDailyClose.discrepancyNotes = elements.dailyCloseDiscrepancy.value;
+  activeDailyClose.priorityNotes = elements.dailyClosePriority.value;
+  activeDailyClose.handoffNotes = elements.dailyCloseHandoff.value;
+}
+
+async function saveDailyClose({ silent = false } = {}) {
+  if (!isManagement() || dailyCloseActionPending) return false;
+  updateDailyCloseFromInputs();
+  dailyCloseActionPending = true;
+  elements.saveDocument.disabled = true;
+  if (!silent) elements.dailyCloseDataStatus.textContent = "Refreshing the shared snapshot and saving draft";
+  try {
+    const response = await fetch("/api/daily-closes", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(activeDailyClose)
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) {
+      const error = new Error(result.error || `API ${response.status}`);
+      error.code = result.code || "daily_close_save_failed";
+      throw error;
+    }
+    applyDailyCloseResult(result);
+    dailyCloseDirty = false;
+    elements.dailyCloseDataStatus.textContent = `Draft saved ${formatDateTime(activeDailyClose.updatedAt)} by ${activeDailyClose.updatedBy}`;
+    return true;
+  } catch (error) {
+    elements.dailyCloseDataStatus.textContent = `Save failed: ${error.message}`;
+    if (error.code === "daily_close_conflict" || error.code === "daily_close_date_exists") {
+      await refreshDailyCloses({ preserveActive: true }).catch(() => {});
+    }
+    return false;
+  } finally {
+    dailyCloseActionPending = false;
+    elements.saveDocument.disabled = false;
+    renderDailyCloseWorkspace();
+  }
+}
+
+async function finalizeActiveDailyClose() {
+  if (!isManagement() || dailyCloseActionPending || activeDailyClose.status === "Finalized") return;
+  if (!await saveDailyClose({ silent: true })) return;
+  if (!window.confirm(`Finalize the daily close for ${formatDelivery(activeDailyClose.businessDate)}? It will be locked after signing.`)) return;
+  dailyCloseActionPending = true;
+  try {
+    const response = await fetch(`/api/daily-closes/${encodeURIComponent(activeDailyClose.id)}/finalize`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ revision: activeDailyClose.revision })
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    applyDailyCloseResult(result);
+    dailyCloseDirty = false;
+    elements.dailyCloseDataStatus.textContent = `Finalized ${formatDateTime(activeDailyClose.finalizedAt)} by ${activeDailyClose.finalizedBy}`;
+  } catch (error) {
+    elements.dailyCloseDataStatus.textContent = `Finalize failed: ${error.message}`;
+  } finally {
+    dailyCloseActionPending = false;
+    renderDailyCloseWorkspace();
+    renderLatestHandoff();
+  }
+}
+
+async function reopenActiveDailyClose() {
+  if (currentRole !== "admin" || dailyCloseActionPending || activeDailyClose.status !== "Finalized") return;
+  if (!window.confirm(`Reopen the signed close for ${formatDelivery(activeDailyClose.businessDate)}?`)) return;
+  dailyCloseActionPending = true;
+  try {
+    const response = await fetch(`/api/daily-closes/${encodeURIComponent(activeDailyClose.id)}/reopen`, {
+      method: "POST",
+      headers: { accept: "application/json" }
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    applyDailyCloseResult(result);
+    dailyCloseDirty = false;
+    elements.dailyCloseDataStatus.textContent = `Reopened ${formatDateTime(activeDailyClose.updatedAt)} by ${activeDailyClose.updatedBy}`;
+  } catch (error) {
+    elements.dailyCloseDataStatus.textContent = `Reopen failed: ${error.message}`;
+  } finally {
+    dailyCloseActionPending = false;
+    renderDailyCloseWorkspace();
+    renderLatestHandoff();
+  }
+}
+
+function applyDailyCloseResult(result) {
+  dailyCloses = Array.isArray(result.closes) ? result.closes : dailyCloses;
+  if (result.close) activeDailyClose = structuredClone(result.close);
+  renderDailyCloseWorkspace();
+  renderLatestHandoff();
+}
+
+async function refreshDailyCloses({ preserveActive = false } = {}) {
+  const response = await fetch("/api/daily-closes", { headers: { accept: "application/json" } });
+  const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+  if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+  dailyCloses = Array.isArray(result.closes) ? result.closes : [];
+  if (!preserveActive && !dailyCloseDirty) {
+    const refreshed = dailyCloses.find(close => close.id === activeDailyClose.id)
+      || dailyCloses.find(close => close.businessDate === todayKey());
+    if (refreshed) activeDailyClose = structuredClone(refreshed);
+  }
+  renderDailyCloseWorkspace();
+  renderLatestHandoff();
+}
+
+function loadDailyClose(closeId) {
+  const close = dailyCloses.find(candidate => candidate.id === closeId);
+  if (!close) return;
+  activeDailyClose = structuredClone(close);
+  dailyCloseDirty = false;
+  renderDailyCloseWorkspace();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function renderDailyCloseWorkspace() {
+  if (!elements.dailyCloseSection) return;
+  const snapshot = activeDailyClose.revision > 0 ? activeDailyClose.snapshot : buildDailyClosePreview();
+  const finalized = activeDailyClose.status === "Finalized";
+  elements.dailyCloseBusinessDate.value = activeDailyClose.businessDate || todayKey();
+  elements.dailyCloseLedgerCount.value = activeDailyClose.countedLedgerBalance === null ? "" : activeDailyClose.countedLedgerBalance;
+  elements.dailyCloseStorefrontConfirmed.checked = Boolean(activeDailyClose.storefrontConfirmed);
+  elements.dailyCloseStorageConfirmed.checked = Boolean(activeDailyClose.storageConfirmed);
+  elements.dailyCloseDiscrepancy.value = activeDailyClose.discrepancyNotes || "";
+  elements.dailyClosePriority.value = activeDailyClose.priorityNotes || "";
+  elements.dailyCloseHandoff.value = activeDailyClose.handoffNotes || "";
+  elements.dailyCloseStatus.textContent = activeDailyClose.status;
+  elements.dailyCloseStatus.className = `status-pill ${statusClass(activeDailyClose.status)}`;
+  elements.dailyCloseStorefrontUnits.textContent = formatAvailableNumber(snapshot.storefrontUnits);
+  elements.dailyCloseStorageUnits.textContent = formatAvailableNumber(snapshot.storageUnits);
+  elements.dailyCloseSystemLedger.textContent = formatAvailableCurrency(snapshot.ledgerBalance);
+  elements.dailyCloseOpenSales.textContent = formatNumber(snapshot.openSalesOrders);
+  elements.dailyCloseActiveProduction.textContent = formatNumber(snapshot.activeProductionBatches);
+  elements.dailyCloseIssueCount.textContent = formatNumber(snapshot.issues?.length || 0);
+  elements.dailyCloseEditMeta.textContent = finalized
+    ? `Signed ${formatDateTime(activeDailyClose.finalizedAt)} by ${activeDailyClose.finalizedBy}`
+    : activeDailyClose.revision > 0
+      ? `Shared revision ${activeDailyClose.revision} / saved by ${activeDailyClose.updatedBy}`
+      : "Unsaved draft / live preview";
+  elements.dailyCloseDataStatus.textContent = finalized
+    ? `Finalized for ${formatDelivery(activeDailyClose.businessDate)} / snapshot ${formatDateTime(snapshot.capturedAt)}`
+    : elements.dailyCloseDataStatus.textContent || "Draft is ready";
+
+  [
+    elements.dailyCloseBusinessDate,
+    elements.dailyCloseLedgerCount,
+    elements.dailyCloseStorefrontConfirmed,
+    elements.dailyCloseStorageConfirmed,
+    elements.dailyCloseDiscrepancy,
+    elements.dailyClosePriority,
+    elements.dailyCloseHandoff
+  ].forEach(field => { field.disabled = finalized || dailyCloseActionPending; });
+  elements.finalizeDailyClose.disabled = finalized || dailyCloseActionPending;
+  elements.reopenDailyClose.disabled = !finalized || dailyCloseActionPending;
+  elements.saveDocument.disabled = finalized || dailyCloseActionPending;
+  renderDailyCloseDifference(snapshot);
+  renderDailyCloseIssues(snapshot);
+  renderDailyCloseHistory();
+}
+
+function renderDailyCloseDifference(snapshot = activeDailyClose.revision > 0 ? activeDailyClose.snapshot : buildDailyClosePreview()) {
+  const counted = activeDailyClose.countedLedgerBalance;
+  const system = snapshot?.ledgerBalance;
+  if (!Number.isFinite(counted) || !Number.isFinite(system)) {
+    elements.dailyCloseLedgerDifference.textContent = "Unavailable";
+    elements.dailyCloseLedgerDifference.classList.remove("short");
+    return;
+  }
+  const difference = counted - system;
+  elements.dailyCloseLedgerDifference.textContent = `${difference >= 0 ? "+" : "-"}$${formatNumber(Math.abs(difference))}`;
+  elements.dailyCloseLedgerDifference.classList.toggle("short", Math.abs(difference) >= 0.005);
+}
+
+function renderDailyCloseIssues(snapshot) {
+  const issues = Array.isArray(snapshot?.issues) ? snapshot.issues : [];
+  elements.dailyCloseIssueList.innerHTML = issues.length
+    ? issues.map(issue => `
+      <div class="daily-close-issue">
+        <span>${escapeHtml(issue.type || "Open Item")}</span>
+        <strong>${escapeHtml(issue.label)}</strong>
+        <small>${escapeHtml(issue.detail || "")}</small>
+      </div>
+    `).join("")
+    : `<div class="empty-card">No open issues in this snapshot</div>`;
+}
+
+function renderDailyCloseHistory() {
+  elements.dailyCloseHistoryCount.textContent = `${dailyCloses.length} shared ${dailyCloses.length === 1 ? "record" : "records"}`;
+  elements.dailyCloseHistoryList.innerHTML = dailyCloses.length
+    ? dailyCloses.map(close => `
+      <button class="daily-close-history-entry ${close.id === activeDailyClose.id ? "selected" : ""}" type="button" data-daily-close-id="${escapeHtml(close.id)}">
+        <span class="status-pill ${statusClass(close.status)}">${escapeHtml(close.status)}</span>
+        <strong>${escapeHtml(formatDelivery(close.businessDate))}</strong>
+        <small>${escapeHtml(close.finalizedBy ? `Signed by ${close.finalizedBy}` : `Updated by ${close.updatedBy || close.createdBy}`)}</small>
+        <span>${formatNumber(close.snapshot?.issues?.length || 0)} open items / ${formatAvailableCurrency(close.snapshot?.ledgerBalance)}</span>
+      </button>
+    `).join("")
+    : `<div class="empty-card">No daily closes recorded yet</div>`;
+  elements.dailyCloseHistoryList.querySelectorAll("[data-daily-close-id]")
+    .forEach(button => button.addEventListener("click", () => loadDailyClose(button.dataset.dailyCloseId)));
+}
+
+function renderLatestHandoff() {
+  if (!elements.latestHandoffSummary) return;
+  const latest = dailyCloses.find(close => close.status === "Finalized");
+  if (!latest) {
+    elements.latestHandoffMeta.textContent = "No finalized daily close yet";
+    elements.latestHandoffSummary.innerHTML = `<div class="empty-card">The latest signed handoff will appear here</div>`;
+    return;
+  }
+  const snapshot = latest.snapshot || emptyDailyCloseSnapshot();
+  elements.latestHandoffMeta.textContent = `${formatDelivery(latest.businessDate)} / signed ${formatDateTime(latest.finalizedAt)} by ${latest.finalizedBy}`;
+  elements.latestHandoffSummary.innerHTML = `
+    <div class="handoff-metrics">
+      <span><strong>${formatNumber(snapshot.openSalesOrders)}</strong> open sales</span>
+      <span><strong>${formatNumber(snapshot.activeProductionBatches)}</strong> active batches</span>
+      <span><strong>${formatNumber(snapshot.issues?.length || 0)}</strong> open items</span>
+    </div>
+    ${latest.priorityNotes ? `<div><strong>Priorities</strong><p>${escapeHtml(latest.priorityNotes)}</p></div>` : ""}
+    ${latest.handoffNotes ? `<div><strong>Handoff</strong><p>${escapeHtml(latest.handoffNotes)}</p></div>` : ""}
+  `;
+}
+
+function buildDailyClosePreview() {
+  const storefrontCounts = getLatestCounts("Storefront");
+  const storageCounts = getLatestCounts("Storage");
+  const ledger = window.FRONTIER_INVENTORY_COUNTS.selectCurrentLedger({
+    ledger: backendSnapshot?.sheet?.inventory?.ledger,
+    operations,
+    snapshotGeneratedAt: backendSnapshot?.sheet?.generatedAt
+  });
+  const activeSales = orders.filter(order => !statusesHiddenFromActive.has(order.status));
+  const activeProduction = productionBatches.filter(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status));
+  const openBuyOrders = storefrontBuyOrders.filter(order => BUY_ORDER_OPEN_STATUSES.has(order.status));
+  const issues = [
+    ...activeSales.filter(order => order.deliveryDate && order.deliveryDate < todayKey()).map(order => ({
+      type: "Overdue Sale",
+      label: order.customer || "Unnamed customer",
+      detail: `Due ${order.deliveryDate}`
+    })),
+    ...activeProduction.map(batch => ({
+      type: "Production",
+      label: batch.reference || batch.sourceType,
+      detail: batch.status
+    })),
+    ...openBuyOrders.map(order => ({
+      type: "Storefront Buy Order",
+      label: order.itemLabel || order.itemName,
+      detail: `${formatNumber(order.filledQuantity)} of ${formatNumber(order.quantity)} filled`
+    }))
+  ];
+  return {
+    capturedAt: new Date().toISOString(),
+    sheetGeneratedAt: backendSnapshot?.sheet?.generatedAt || "",
+    storefrontUnits: [...storefrontCounts.values()].reduce((sum, value) => sum + Number(value || 0), 0),
+    storageUnits: [...storageCounts.values()].reduce((sum, value) => sum + Number(value || 0), 0),
+    ledgerBalance: ledger.available ? ledger.balance : null,
+    openSalesOrders: activeSales.length,
+    overdueSalesOrders: activeSales.filter(order => order.deliveryDate && order.deliveryDate < todayKey()).length,
+    activeProductionBatches: activeProduction.length,
+    expectedSupplyDeliveries: supplyOrders.filter(order => SUPPLY_DELIVERY_STATUSES.has(order.status) && order.expectedDate && order.expectedDate <= todayKey()).length,
+    openStorefrontBuyOrders: openBuyOrders.length,
+    openReviewExceptions: reviewExceptions.filter(exception => exception.status === "Open").length,
+    issues
+  };
+}
+
+function formatAvailableNumber(value) {
+  return Number.isFinite(value) ? formatNumber(value) : "Unavailable";
+}
+
+function formatAvailableCurrency(value) {
+  return Number.isFinite(value) ? `$${formatNumber(value)}` : "Unavailable";
 }
 
 function buildInventoryOverviewRows(catalog, counts, location) {
@@ -3510,6 +3895,7 @@ async function performBackendRefresh({ silent = false } = {}) {
     const nextSnapshot = await response.json();
     const sheetReady = nextSnapshot.sheet?.ok && Array.isArray(nextSnapshot.sheet.sheets);
     hydrateSharedSalesOrders(nextSnapshot);
+    hydrateDailyCloses(nextSnapshot);
     productionBatches = Array.isArray(nextSnapshot.productionBatches) ? nextSnapshot.productionBatches : productionBatches;
     if (!activeProductionBatchId || !productionBatches.some(batch => batch.id === activeProductionBatchId)) {
       activeProductionBatchId = productionBatches.find(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status))?.id
@@ -3583,6 +3969,18 @@ function hydrateSharedSalesOrders(snapshot) {
   }
   renderOrdersList();
   renderDashboard();
+}
+
+function hydrateDailyCloses(snapshot) {
+  if (!Array.isArray(snapshot?.dailyCloses)) return;
+  dailyCloses = snapshot.dailyCloses;
+  if (!dailyCloseDirty) {
+    const refreshed = dailyCloses.find(close => close.id === activeDailyClose.id)
+      || dailyCloses.find(close => close.businessDate === todayKey());
+    if (refreshed) activeDailyClose = structuredClone(refreshed);
+  }
+  renderDailyCloseWorkspace();
+  renderLatestHandoff();
 }
 
 function hydrateSheetInventory() {

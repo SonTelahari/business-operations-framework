@@ -2938,7 +2938,207 @@ body.auth-page {
   color: var(--muted);
 }
 
+.latest-handoff-panel {
+  grid-column: 1 / -1;
+}
+
+.latest-handoff-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.latest-handoff-summary p {
+  margin: 5px 0 0;
+  white-space: pre-wrap;
+}
+
+.handoff-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.handoff-metrics span {
+  padding: 10px;
+  border-bottom: 1px solid rgba(77, 113, 128, 0.36);
+  font-family: "Courier New", Courier, monospace;
+}
+
+.daily-close {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.55fr);
+  grid-template-areas:
+    "overview overview"
+    "editor issues"
+    "editor history";
+  gap: 18px;
+  align-items: start;
+}
+
+.daily-close-overview-panel {
+  grid-area: overview;
+  padding: 18px;
+}
+
+.daily-close-editor-panel {
+  grid-area: editor;
+  padding: 18px;
+}
+
+.daily-close-issues-panel {
+  grid-area: issues;
+  padding: 18px;
+}
+
+.daily-close-history-panel {
+  grid-area: history;
+  min-width: 0;
+  padding: 18px;
+}
+
+.daily-close-heading,
+.daily-close-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.daily-close-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.daily-close-stats div {
+  min-width: 0;
+  padding: 12px;
+  background: rgba(84, 113, 124, 0.09);
+  border: 1px solid rgba(78, 104, 113, 0.46);
+}
+
+.daily-close-stats span,
+.daily-close-difference span {
+  display: block;
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+}
+
+.daily-close-stats strong {
+  display: block;
+  margin-top: 7px;
+  font-size: 1.25rem;
+}
+
+.daily-close-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.daily-close-wide {
+  grid-column: 1 / -1;
+}
+
+.daily-close-difference {
+  align-self: end;
+  min-height: 58px;
+  padding: 8px 10px;
+  border-bottom: 2px solid rgba(77, 113, 128, 0.42);
+}
+
+.daily-close-difference strong {
+  display: block;
+  margin-top: 7px;
+}
+
+.daily-close-difference strong.short {
+  color: var(--red);
+}
+
+.daily-close-check {
+  align-self: end;
+  min-height: 44px;
+}
+
+.daily-close-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.daily-close-issue-list,
+.daily-close-history-list {
+  display: grid;
+  gap: 8px;
+  max-height: 430px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.daily-close-issue {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  background: rgba(255, 250, 232, 0.58);
+  border: 1px solid rgba(119, 99, 70, 0.5);
+  border-left: 4px solid var(--red);
+}
+
+.daily-close-issue span,
+.daily-close-issue small,
+.daily-close-history-entry span,
+.daily-close-history-entry small {
+  color: var(--muted);
+}
+
+.daily-close-history-entry {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 9px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  text-align: left;
+  color: var(--text);
+  background: rgba(255, 250, 232, 0.58);
+  border: 1px solid rgba(119, 99, 70, 0.5);
+}
+
+.daily-close-history-entry strong,
+.daily-close-history-entry small,
+.daily-close-history-entry > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.daily-close-history-entry small,
+.daily-close-history-entry > span:last-child {
+  grid-column: 1 / -1;
+}
+
+.daily-close-history-entry.selected {
+  border-color: var(--green);
+  box-shadow: inset 4px 0 var(--green);
+}
+
 @media (max-width: 1050px) {
+  .daily-close {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "overview"
+      "editor"
+      "issues"
+      "history";
+  }
+
+  .daily-close-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .production-ledger {
     grid-template-columns: 1fr;
     grid-template-areas:
@@ -2992,6 +3192,26 @@ body.auth-page {
 }
 
 @media (max-width: 560px) {
+  .daily-close-stats,
+  .daily-close-form,
+  .handoff-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .daily-close-wide {
+    grid-column: auto;
+  }
+
+  .daily-close-heading,
+  .daily-close-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .daily-close-actions button {
+    width: 100%;
+  }
+
   .review-filters,
   .review-source-grid,
   .review-correction-grid {

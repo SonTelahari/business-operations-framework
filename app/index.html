@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Frontier Firearms - Still Water</title>
     <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png?v=20260713-van-horn">
-    <link rel="stylesheet" href="styles.css?v=20260721-shared-sales-orders">
+    <link rel="stylesheet" href="styles.css?v=20260721-daily-close">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -39,6 +39,7 @@
           Production <span class="nav-count hidden" id="productionNavCount">0</span>
         </button>
         <button class="section-button management-only" data-section="operations" type="button">Operations</button>
+        <button class="section-button management-only" data-section="daily-close" type="button">Daily Close</button>
         <button class="section-button management-only review-tab-button" data-section="review" type="button">
           Review <span class="nav-count hidden" id="exceptionNavCount">0</span>
         </button>
@@ -168,6 +169,19 @@
             </div>
           </div>
           <div class="dashboard-list" id="attentionList"></div>
+        </section>
+
+        <section class="panel dashboard-list-panel latest-handoff-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Shift Ledger</p>
+              <h2>Latest Handoff</h2>
+              <p id="latestHandoffMeta">No finalized daily close yet</p>
+            </div>
+          </div>
+          <div id="latestHandoffSummary" class="latest-handoff-summary">
+            <div class="empty-card">The latest signed handoff will appear here</div>
+          </div>
         </section>
 
       </main>
@@ -973,6 +987,94 @@
         </section>
       </main>
 
+      <main class="daily-close workspace-section hidden management-only" id="dailyCloseSection">
+        <section class="panel daily-close-overview-panel">
+          <div class="panel-header daily-close-heading">
+            <div>
+              <p class="eyebrow">Reconciliation Ledger</p>
+              <h2>Daily Close and Handoff</h2>
+              <p id="dailyCloseDataStatus">Loading shared close records</p>
+            </div>
+            <span class="status-pill draft" id="dailyCloseStatus">Draft</span>
+          </div>
+          <div class="daily-close-stats">
+            <div><span>Storefront Units</span><strong id="dailyCloseStorefrontUnits">Unavailable</strong></div>
+            <div><span>Storage Units</span><strong id="dailyCloseStorageUnits">Unavailable</strong></div>
+            <div><span>System Ledger</span><strong id="dailyCloseSystemLedger">Unavailable</strong></div>
+            <div><span>Open Sales</span><strong id="dailyCloseOpenSales">0</strong></div>
+            <div><span>Active Production</span><strong id="dailyCloseActiveProduction">0</strong></div>
+            <div><span>Open Issues</span><strong id="dailyCloseIssueCount">0</strong></div>
+          </div>
+        </section>
+
+        <section class="panel daily-close-editor-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Verification</h2>
+              <p id="dailyCloseEditMeta">Start today's draft to record the close</p>
+            </div>
+          </div>
+          <div class="daily-close-form">
+            <label>
+              Business Date
+              <input id="dailyCloseBusinessDateInput" type="date">
+            </label>
+            <label>
+              Counted Ledger
+              <input id="dailyCloseLedgerCountInput" type="number" step="0.01" placeholder="Enter physical count">
+            </label>
+            <div class="daily-close-difference">
+              <span>Ledger Difference</span>
+              <strong id="dailyCloseLedgerDifference">Unavailable</strong>
+            </div>
+            <label class="checkbox-line daily-close-check">
+              <input id="dailyCloseStorefrontConfirmedInput" type="checkbox">
+              Storefront count reviewed
+            </label>
+            <label class="checkbox-line daily-close-check">
+              <input id="dailyCloseStorageConfirmedInput" type="checkbox">
+              Storage count reviewed
+            </label>
+            <label class="daily-close-wide">
+              Difference Explanation
+              <textarea id="dailyCloseDiscrepancyInput" rows="3" placeholder="Required when the counted ledger differs from the system ledger"></textarea>
+            </label>
+            <label class="daily-close-wide">
+              Priorities for Next Shift
+              <textarea id="dailyClosePriorityInput" rows="3" placeholder="Urgent orders, production, deliveries, or stock work"></textarea>
+            </label>
+            <label class="daily-close-wide">
+              Handoff Notes
+              <textarea id="dailyCloseHandoffInput" rows="4" placeholder="What the next employee needs to know"></textarea>
+            </label>
+          </div>
+          <div class="daily-close-actions">
+            <button class="primary-button" id="finalizeDailyCloseButton" type="button">Finalize Close</button>
+            <button class="ghost-button admin-only" id="reopenDailyCloseButton" type="button">Reopen Close</button>
+          </div>
+        </section>
+
+        <section class="panel daily-close-issues-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Open at Snapshot</h2>
+              <p>Orders and events carried into the handoff</p>
+            </div>
+          </div>
+          <div class="daily-close-issue-list" id="dailyCloseIssueList"></div>
+        </section>
+
+        <section class="panel daily-close-history-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Close History</h2>
+              <p id="dailyCloseHistoryCount">0 shared records</p>
+            </div>
+          </div>
+          <div class="daily-close-history-list" id="dailyCloseHistoryList"></div>
+        </section>
+      </main>
+
       <main class="operations workspace-section hidden management-only" id="operationsSection">
         <section class="panel operations-panel">
           <div class="panel-header">
@@ -1249,6 +1351,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260721-shared-sales-orders"></script>
+    <script src="app.js?v=20260721-daily-close"></script>
   </body>
 </html>

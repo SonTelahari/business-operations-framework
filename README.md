@@ -11,8 +11,8 @@ Employees request access with their in-game character name and a password. No re
 Roles are intentionally separated:
 
 - Employees can use the shared sales-order register, restock information, the shared production queue, and their time clock. They can start batches and record completed craft cycles.
-- Managers can also queue or cancel production, run counts and adjustments, maintain storefront targets, approve or disable employee accounts, and review the employee audit ledger.
-- Admins can additionally run payroll and promote or demote managers.
+- Managers can also queue or cancel production, run counts and adjustments, maintain storefront targets, finalize daily closes, approve or disable employee accounts, and review the employee audit ledger.
+- Admins can additionally run payroll, promote or demote managers, and reopen a signed daily close when a correction is required.
 
 The server-side audit ledger records account requests, successful sign-ins and sign-outs, staff actions, sales-order changes, time-clock events, counts, adjustments, and storefront target changes. It does not record passwords, IP addresses, or real-life identity data.
 
@@ -21,6 +21,12 @@ The server-side audit ledger records account requests, successful sign-ins and s
 Customer quotes and work orders are stored in the server-side business register so every signed-in employee sees the same queue. Saves use revisions to prevent an older browser tab from silently overwriting a colleague's changes. Production can only be queued after the current order revision has saved successfully, and orders linked to production are retained instead of being deleted.
 
 On the first login after this update, each browser imports its older local work orders by ID. Existing shared records are skipped, and local browser copies are removed only after the import succeeds.
+
+## Daily Close and Handoff
+
+Management can keep one shared reconciliation record per business date. A draft records storefront and storage confirmations, the physical ledger count, discrepancy notes, next-shift priorities, and handoff notes. The server refreshes the live inventory, ledger, orders, production, supply, storefront buy-order, and webhook-review snapshot when the record is saved and again when it is finalized.
+
+A close cannot be finalized until storefront and storage are confirmed and a ledger count is entered. Any difference from the shared ledger requires an explanation. Finalized records are locked, the latest signed handoff is shown to every employee on the dashboard, and only an admin can reopen a close. Saves, finalizations, and reopenings are written to the employee audit ledger.
 
 The Railway GUI service needs one persistent volume so accounts survive deployments. See `docs/hosting.md` for the migration from the shared login.
 

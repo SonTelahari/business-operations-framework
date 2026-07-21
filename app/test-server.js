@@ -146,9 +146,10 @@ async function run() {
       result.persistentAccountStore,
       result.supplyReceipts,
       result.productionBatches,
-      result.sharedSalesOrders
+      result.sharedSalesOrders,
+      result.dailyCloses
     ]),
-    ["accounts", true, true, true, true]
+    ["accounts", true, true, true, true, true]
   );
 
   const loginPage = await fetch(`${baseUrl}/login.html`);
@@ -182,6 +183,7 @@ async function run() {
   assert.match(authenticatedHtml, /Store Overview/);
   assert.match(authenticatedHtml, /Exceptions Inbox/);
   assert.match(authenticatedHtml, /Production Queue/);
+  assert.match(authenticatedHtml, /Daily Close and Handoff/);
 
   const inventoryResolver = await fetch(`${baseUrl}/inventory-counts.js`, { headers: { cookie: ownerCookie } });
   assert.equal(inventoryResolver.status, 200);
@@ -202,6 +204,7 @@ async function run() {
   assert.equal(bootstrap.body.sheet.reviewExceptions[0].webhookId, "review-1");
   assert.deepEqual(bootstrap.body.productionBatches, []);
   assert.deepEqual(bootstrap.body.salesOrders, []);
+  assert.deepEqual(bootstrap.body.dailyCloses, []);
 
   const registration = await post(`${baseUrl}/api/auth/register`, {
     fullName: "Ada Employee",
@@ -315,6 +318,8 @@ async function run() {
   assert.equal(employeeBuyOrderAttempt.response.status, 403);
   const employeeSupplierAttempt = await getJson(`${baseUrl}/api/suppliers`, employeeCookie);
   assert.equal(employeeSupplierAttempt.response.status, 403);
+  const employeeDailyCloseAttempt = await getJson(`${baseUrl}/api/daily-closes`, employeeCookie);
+  assert.equal(employeeDailyCloseAttempt.response.status, 403);
   const employeeBootstrap = await getJson(`${baseUrl}/api/bootstrap`, employeeCookie);
   assert.equal(Object.prototype.hasOwnProperty.call(employeeBootstrap.body.sheet, "reviewExceptions"), false);
   const employeeReviewAttempt = await post(`${baseUrl}/api/sync`, {
@@ -360,6 +365,112 @@ async function run() {
 
   const managerUsers = await getJson(`${baseUrl}/api/admin/users`, managerCookie);
   assert.equal(managerUsers.response.status, 200);
+
+  const createdDailyClose = await post(`${baseUrl}/api/daily-closes`, {
+    id: "daily-close-2026-07-13",
+    businessDate: "2026-07-13",
+    storefrontConfirmed: false,
+    storageConfirmed: true,
+    countedLedgerBalance: 6020,
+    discrepancyNotes: "Five dollars held for change.",
+    priorityNotes: "Finish the Morgan order.",
+    handoffNotes: "Foundry delivery is expected next shift."
+  }, managerCookie);
+  assert.equal(createdDailyClose.response.status, 200);
+  assert.equal(createdDailyClose.body.close.revision, 1);
+  assert.equal(createdDailyClose.body.close.snapshot.storefrontUnits, 4);
+  assert.equal(createdDailyClose.body.close.snapshot.storageUnits, 14);
+  assert.equal(createdDailyClose.body.close.snapshot.ledgerBalance, 6025);
+  assert.equal(createdDailyClose.body.close.snapshot.openSalesOrders, 1);
+
+  const incompleteFinalization = await post(
+    `${baseUrl}/api/daily-closes/daily-close-2026-07-13/finalize`,
+    { revision: 1 },
+    managerCookie
+  );
+  assert.equal(incompleteFinalization.response.status, 409);
+  assert.equal(incompleteFinalization.body.code, "inventory_confirmation_required");
+
+  const updatedDailyClose = await post(`${baseUrl}/api/daily-closes`, {
+    ...createdDailyClose.body.close,
+    storefrontConfirmed: true,
+    discrepancyNotes: ""
+  }, managerCookie);
+  assert.equal(updatedDailyClose.response.status, 200);
+  assert.equal(updatedDailyClose.body.close.revision, 2);
+
+  const unexplainedFinalization = await post(
+    `${baseUrl}/api/daily-closes/daily-close-2026-07-13/finalize`,
+    { revision: updatedDailyClose.body.close.revision },
+    managerCookie
+  );
+  assert.equal(unexplainedFinalization.response.status, 409);
+  assert.equal(unexplainedFinalization.body.code, "discrepancy_note_required");
+
+  const notedDailyClose = await post(`${baseUrl}/api/daily-closes`, {
+    ...updatedDailyClose.body.close,
+    discrepancyNotes: "Five dollars held for change."
+  }, managerCookie);
+  assert.equal(notedDailyClose.response.status, 200);
+  assert.equal(notedDailyClose.body.close.revision, 3);
+
+  const staleDailyClose = await post(`${baseUrl}/api/daily-closes`, {
+    ...createdDailyClose.body.close,
+    handoffNotes: "Stale handoff overwrite"
+  }, managerCookie);
+  assert.equal(staleDailyClose.response.status, 409);
+  assert.equal(staleDailyClose.body.code, "daily_close_conflict");
+
+  const finalizedDailyClose = await post(
+    `${baseUrl}/api/daily-closes/daily-close-2026-07-13/finalize`,
+    { revision: notedDailyClose.body.close.revision },
+    managerCookie
+  );
+  assert.equal(finalizedDailyClose.response.status, 200);
+  assert.equal(finalizedDailyClose.body.close.status, "Finalized");
+  assert.equal(finalizedDailyClose.body.close.revision, 4);
+  assert.equal(finalizedDailyClose.body.close.finalizedBy, "Ada Employee");
+
+  const editFinalizedDailyClose = await post(`${baseUrl}/api/daily-closes`, {
+    ...finalizedDailyClose.body.close,
+    handoffNotes: "Editing a signed record"
+  }, managerCookie);
+  assert.equal(editFinalizedDailyClose.response.status, 409);
+  assert.equal(editFinalizedDailyClose.body.code, "daily_close_finalized");
+
+  const managerReopenDailyClose = await post(
+    `${baseUrl}/api/daily-closes/daily-close-2026-07-13/reopen`,
+    {},
+    managerCookie
+  );
+  assert.equal(managerReopenDailyClose.response.status, 403);
+  const reopenedDailyClose = await post(
+    `${baseUrl}/api/daily-closes/daily-close-2026-07-13/reopen`,
+    {},
+    ownerCookie
+  );
+  assert.equal(reopenedDailyClose.response.status, 200);
+  assert.equal(reopenedDailyClose.body.close.status, "Draft");
+  assert.equal(reopenedDailyClose.body.close.revision, 5);
+
+  const resavedDailyClose = await post(`${baseUrl}/api/daily-closes`, {
+    ...reopenedDailyClose.body.close,
+    handoffNotes: "Foundry delivery is expected next shift. Rechecked by the owner."
+  }, managerCookie);
+  const refinalizedDailyClose = await post(
+    `${baseUrl}/api/daily-closes/daily-close-2026-07-13/finalize`,
+    { revision: resavedDailyClose.body.close.revision },
+    managerCookie
+  );
+  assert.equal(refinalizedDailyClose.response.status, 200);
+  assert.equal(refinalizedDailyClose.body.close.status, "Finalized");
+
+  const duplicateDailyClose = await post(`${baseUrl}/api/daily-closes`, {
+    id: "duplicate-daily-close",
+    businessDate: "2026-07-13"
+  }, managerCookie);
+  assert.equal(duplicateDailyClose.response.status, 409);
+  assert.equal(duplicateDailyClose.body.code, "daily_close_date_exists");
 
   const emptySuppliers = await getJson(`${baseUrl}/api/suppliers`, managerCookie);
   assert.equal(emptySuppliers.response.status, 200);
@@ -768,6 +879,9 @@ async function run() {
   assert(managerAudit.body.events.some(event => event.action === "sales_order.saved" && event.subjectName === "Arthur Morgan"));
   assert(managerAudit.body.events.some(event => event.action === "sales_order.imported" && event.actorName === "Ada Employee"));
   assert(managerAudit.body.events.some(event => event.action === "sales_order.removed" && event.subjectName === "Legacy Customer"));
+  assert(managerAudit.body.events.some(event => event.action === "daily_close.saved" && event.subjectName === "2026-07-13"));
+  assert(managerAudit.body.events.some(event => event.action === "daily_close.finalized" && event.details.ledgerDifference === -5));
+  assert(managerAudit.body.events.some(event => event.action === "daily_close.reopened" && event.actorName === "Frontier Owner"));
   assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
 
   const removedSupplyOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-1`, managerCookie);

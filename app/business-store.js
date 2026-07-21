@@ -6,11 +6,20 @@ const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially 
 const STOREFRONT_BUY_ORDER_STATUSES = new Set(["Active", "Paused", "Filled", "Cancelled"]);
 const PRODUCTION_BATCH_STATUSES = new Set(["Planned", "In Progress", "Completed", "Cancelled"]);
 const SALES_ORDER_STATUSES = new Set(["Draft", "Paused", "Expedited", "Reserved", "Completed", "Cancelled"]);
+const DAILY_CLOSE_STATUSES = new Set(["Draft", "Finalized"]);
 
 class BusinessStore {
   constructor({ filePath }) {
     this.filePath = filePath;
-    this.data = { version: 5, salesOrders: [], supplyOrders: [], suppliers: [], storefrontBuyOrders: [], productionBatches: [] };
+    this.data = {
+      version: 6,
+      salesOrders: [],
+      supplyOrders: [],
+      suppliers: [],
+      storefrontBuyOrders: [],
+      productionBatches: [],
+      dailyCloses: []
+    };
     this.writeQueue = Promise.resolve();
   }
 
@@ -61,6 +70,83 @@ class BusinessStore {
   getSalesOrder(orderId) {
     const order = this.data.salesOrders.find(candidate => candidate.id === cleanText(orderId, 100));
     return order ? structuredClone(order) : null;
+  }
+
+  listDailyCloses() {
+    return this.data.dailyCloses
+      .map(close => structuredClone(close))
+      .sort((a, b) => b.businessDate.localeCompare(a.businessDate) || new Date(b.updatedAt) - new Date(a.updatedAt));
+  }
+
+  getDailyClose(closeId) {
+    const close = this.data.dailyCloses.find(candidate => candidate.id === cleanText(closeId, 100));
+    return close ? structuredClone(close) : null;
+  }
+
+  async saveDailyClose(input, snapshot, actor) {
+    return this.mutate(async () => {
+      const now = new Date().toISOString();
+      const id = cleanText(input.id, 100) || crypto.randomUUID();
+      const existingIndex = this.data.dailyCloses.findIndex(close => close.id === id);
+      const existing = existingIndex >= 0 ? this.data.dailyCloses[existingIndex] : null;
+      if (existing?.status === "Finalized") {
+        throw businessError("Finalized daily closes must be reopened before editing", 409, "daily_close_finalized");
+      }
+      if (existing) assertRevision(input.revision, existing.revision, "daily_close_conflict");
+      const businessDate = cleanDate(input.businessDate);
+      if (!businessDate) throw businessError("Business date is required", 400, "business_date_required");
+      const duplicate = this.data.dailyCloses.find(close => close.businessDate === businessDate && close.id !== id);
+      if (duplicate) throw businessError("A daily close already exists for this date", 409, "daily_close_date_exists");
+      const saved = cleanDailyClose(input, snapshot, actor, { id, now, existing });
+      if (existingIndex >= 0) this.data.dailyCloses[existingIndex] = saved;
+      else this.data.dailyCloses.unshift(saved);
+      return structuredClone(saved);
+    });
+  }
+
+  async finalizeDailyClose(closeId, revision, snapshot, actor) {
+    return this.mutate(async () => {
+      const close = this.data.dailyCloses.find(candidate => candidate.id === cleanText(closeId, 100));
+      if (!close) throw businessError("Daily close not found", 404, "not_found");
+      if (close.status === "Finalized") throw businessError("This daily close is already finalized", 409, "daily_close_finalized");
+      assertRevision(revision, close.revision, "daily_close_conflict");
+      if (!close.storefrontConfirmed || !close.storageConfirmed) {
+        throw businessError("Confirm both storefront and storage counts before finalizing", 409, "inventory_confirmation_required");
+      }
+      if (!Number.isFinite(close.countedLedgerBalance)) {
+        throw businessError("Enter the counted ledger balance before finalizing", 409, "ledger_count_required");
+      }
+      const refreshedSnapshot = cleanDailyCloseSnapshot(snapshot);
+      const difference = dailyCloseLedgerDifference(close.countedLedgerBalance, refreshedSnapshot.ledgerBalance);
+      if (difference !== null && Math.abs(difference) >= 0.005 && !cleanMultilineText(close.discrepancyNotes, 2500)) {
+        throw businessError("Explain the ledger difference before finalizing", 409, "discrepancy_note_required");
+      }
+      const now = new Date().toISOString();
+      close.snapshot = refreshedSnapshot;
+      close.status = "Finalized";
+      close.revision = Number(close.revision || 0) + 1;
+      close.updatedAt = now;
+      close.updatedBy = cleanText(actor?.fullName, 100);
+      close.finalizedAt = now;
+      close.finalizedBy = cleanText(actor?.fullName, 100);
+      return structuredClone(close);
+    });
+  }
+
+  async reopenDailyClose(closeId, actor) {
+    return this.mutate(async () => {
+      const close = this.data.dailyCloses.find(candidate => candidate.id === cleanText(closeId, 100));
+      if (!close) throw businessError("Daily close not found", 404, "not_found");
+      if (close.status !== "Finalized") throw businessError("Only finalized daily closes can be reopened", 409, "daily_close_not_finalized");
+      const now = new Date().toISOString();
+      close.status = "Draft";
+      close.revision = Number(close.revision || 0) + 1;
+      close.updatedAt = now;
+      close.updatedBy = cleanText(actor?.fullName, 100);
+      close.finalizedAt = "";
+      close.finalizedBy = "";
+      return structuredClone(close);
+    });
   }
 
   async saveSalesOrder(input, actor) {
@@ -412,8 +498,9 @@ class BusinessStore {
       if (!Array.isArray(parsed.storefrontBuyOrders)) parsed.storefrontBuyOrders = [];
       if (!Array.isArray(parsed.productionBatches)) parsed.productionBatches = [];
       if (!Array.isArray(parsed.salesOrders)) parsed.salesOrders = [];
+      if (!Array.isArray(parsed.dailyCloses)) parsed.dailyCloses = [];
       return {
-        version: 5,
+        version: 6,
         salesOrders: parsed.salesOrders
           .filter(order => order && typeof order === "object")
           .map(order => cleanStoredSalesOrder(order)),
@@ -432,11 +519,22 @@ class BusinessStore {
           .map(order => cleanStoredStorefrontBuyOrder(order)),
         productionBatches: parsed.productionBatches
           .filter(batch => batch && typeof batch === "object")
-          .map(batch => cleanStoredProductionBatch(batch))
+          .map(batch => cleanStoredProductionBatch(batch)),
+        dailyCloses: parsed.dailyCloses
+          .filter(close => close && typeof close === "object")
+          .map(close => cleanStoredDailyClose(close))
       };
     } catch (error) {
       if (error.code === "ENOENT") {
-        return { version: 5, salesOrders: [], supplyOrders: [], suppliers: [], storefrontBuyOrders: [], productionBatches: [] };
+        return {
+          version: 6,
+          salesOrders: [],
+          supplyOrders: [],
+          suppliers: [],
+          storefrontBuyOrders: [],
+          productionBatches: [],
+          dailyCloses: []
+        };
       }
       throw new Error(`Unable to read business store: ${error.message}`);
     }
@@ -471,6 +569,85 @@ function cleanSalesOrder(input, actor, { id, now, existing }) {
     updatedAt: now,
     updatedBy: cleanText(actor?.fullName, 100)
   };
+}
+
+function cleanDailyClose(input, snapshot, actor, { id, now, existing }) {
+  return {
+    id,
+    businessDate: cleanDate(input.businessDate),
+    status: "Draft",
+    storefrontConfirmed: Boolean(input.storefrontConfirmed),
+    storageConfirmed: Boolean(input.storageConfirmed),
+    countedLedgerBalance: nullableFiniteNumber(input.countedLedgerBalance),
+    discrepancyNotes: cleanMultilineText(input.discrepancyNotes, 2500),
+    handoffNotes: cleanMultilineText(input.handoffNotes, 4000),
+    priorityNotes: cleanMultilineText(input.priorityNotes, 2500),
+    snapshot: cleanDailyCloseSnapshot(snapshot),
+    revision: Number(existing?.revision || 0) + 1,
+    createdAt: existing?.createdAt || now,
+    createdBy: existing?.createdBy || cleanText(actor?.fullName, 100),
+    updatedAt: now,
+    updatedBy: cleanText(actor?.fullName, 100),
+    finalizedAt: "",
+    finalizedBy: ""
+  };
+}
+
+function cleanStoredDailyClose(close) {
+  const status = DAILY_CLOSE_STATUSES.has(close.status) ? close.status : "Draft";
+  return {
+    id: cleanText(close.id, 100) || crypto.randomUUID(),
+    businessDate: cleanDate(close.businessDate) || new Date().toISOString().slice(0, 10),
+    status,
+    storefrontConfirmed: Boolean(close.storefrontConfirmed),
+    storageConfirmed: Boolean(close.storageConfirmed),
+    countedLedgerBalance: nullableFiniteNumber(close.countedLedgerBalance),
+    discrepancyNotes: cleanMultilineText(close.discrepancyNotes, 2500),
+    handoffNotes: cleanMultilineText(close.handoffNotes, 4000),
+    priorityNotes: cleanMultilineText(close.priorityNotes, 2500),
+    snapshot: cleanDailyCloseSnapshot(close.snapshot),
+    revision: Math.max(1, finiteNumber(close.revision, 1)),
+    createdAt: cleanDateTime(close.createdAt) || new Date().toISOString(),
+    createdBy: cleanText(close.createdBy, 100),
+    updatedAt: cleanDateTime(close.updatedAt) || new Date().toISOString(),
+    updatedBy: cleanText(close.updatedBy, 100),
+    finalizedAt: status === "Finalized" ? cleanDateTime(close.finalizedAt) : "",
+    finalizedBy: status === "Finalized" ? cleanText(close.finalizedBy, 100) : ""
+  };
+}
+
+function cleanDailyCloseSnapshot(snapshot) {
+  const input = snapshot && typeof snapshot === "object" ? snapshot : {};
+  return {
+    capturedAt: cleanDateTime(input.capturedAt) || new Date().toISOString(),
+    sheetGeneratedAt: cleanDateTime(input.sheetGeneratedAt),
+    storefrontUnits: nullableNonnegativeNumber(input.storefrontUnits),
+    storageUnits: nullableNonnegativeNumber(input.storageUnits),
+    ledgerBalance: nullableFiniteNumber(input.ledgerBalance),
+    openSalesOrders: Math.max(0, finiteNumber(input.openSalesOrders, 0)),
+    overdueSalesOrders: Math.max(0, finiteNumber(input.overdueSalesOrders, 0)),
+    activeProductionBatches: Math.max(0, finiteNumber(input.activeProductionBatches, 0)),
+    expectedSupplyDeliveries: Math.max(0, finiteNumber(input.expectedSupplyDeliveries, 0)),
+    openStorefrontBuyOrders: Math.max(0, finiteNumber(input.openStorefrontBuyOrders, 0)),
+    openReviewExceptions: Math.max(0, finiteNumber(input.openReviewExceptions, 0)),
+    issues: (Array.isArray(input.issues) ? input.issues : []).slice(0, 100).map(issue => ({
+      type: cleanText(issue?.type, 50),
+      label: cleanText(issue?.label, 160),
+      detail: cleanText(issue?.detail, 300)
+    })).filter(issue => issue.label)
+  };
+}
+
+function dailyCloseLedgerDifference(countedBalance, systemBalance) {
+  if (!Number.isFinite(countedBalance) || !Number.isFinite(systemBalance)) return null;
+  return countedBalance - systemBalance;
+}
+
+function assertRevision(received, expected, code) {
+  const revision = Number(received);
+  if (!Number.isInteger(revision) || revision !== Number(expected || 1)) {
+    throw businessError("This record was updated by someone else. Reload it before saving your changes.", 409, code);
+  }
 }
 
 function cleanStoredSalesOrder(order) {
@@ -830,6 +1007,15 @@ function cleanText(value, limit) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, limit);
 }
 
+function cleanMultilineText(value, limit) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\t ]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, limit);
+}
+
 function normalizeKey(value) {
   return cleanText(value, 200).toLocaleLowerCase("en");
 }
@@ -837,6 +1023,17 @@ function normalizeKey(value) {
 function finiteNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function nullableFiniteNumber(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function nullableNonnegativeNumber(value) {
+  const number = nullableFiniteNumber(value);
+  return number === null ? null : Math.max(0, number);
 }
 
 function businessError(message, status, code) {
@@ -852,5 +1049,6 @@ module.exports = {
   STOREFRONT_BUY_ORDER_STATUSES,
   PRODUCTION_BATCH_STATUSES,
   SALES_ORDER_STATUSES,
+  DAILY_CLOSE_STATUSES,
   businessError
 };

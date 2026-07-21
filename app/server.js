@@ -75,6 +75,7 @@ const server = http.createServer(async (request, response) => {
         webhookReview: true,
         productionBatches: true,
         sharedSalesOrders: true,
+        dailyCloses: true,
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -100,6 +101,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
       if (await handleSalesOrderRoute(request, response, url, user)) return;
       if (await handleProductionBatchRoute(request, response, url, user)) return;
+      if (await handleDailyCloseRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(user));
         return;
@@ -155,6 +157,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
       if (await handleSalesOrderRoute(request, response, url, user)) return;
       if (await handleProductionBatchRoute(request, response, url, user)) return;
+      if (await handleDailyCloseRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(null));
         return;
@@ -461,6 +464,54 @@ function salesOrderError(message, status, code) {
   error.status = status;
   error.code = code;
   return error;
+}
+
+async function handleDailyCloseRoute(request, response, url, user) {
+  if (!url.pathname.startsWith("/api/daily-closes")) return false;
+  if (!requireManagement(response, user)) return true;
+
+  try {
+    if (url.pathname === "/api/daily-closes" && request.method === "GET") {
+      sendJson(response, { ok: true, closes: businessStore.listDailyCloses() });
+      return true;
+    }
+    if (url.pathname === "/api/daily-closes" && request.method === "POST") {
+      const close = await businessStore.saveDailyClose(await readJsonBody(request), await buildDailyCloseSnapshot(), user);
+      await recordDailyCloseAudit("daily_close.saved", close, user);
+      sendJson(response, { ok: true, close, closes: businessStore.listDailyCloses() });
+      return true;
+    }
+    const actionRoute = url.pathname.match(/^\/api\/daily-closes\/([^/]+)\/(finalize|reopen)$/);
+    if (actionRoute && request.method === "POST") {
+      const closeId = decodeURIComponent(actionRoute[1]);
+      const action = actionRoute[2];
+      if (action === "reopen") {
+        if (!requireAdmin(response, user)) return true;
+        const close = await businessStore.reopenDailyClose(closeId, user);
+        await recordDailyCloseAudit("daily_close.reopened", close, user);
+        sendJson(response, { ok: true, close, closes: businessStore.listDailyCloses() });
+        return true;
+      }
+      const payload = await readJsonBody(request);
+      const close = await businessStore.finalizeDailyClose(
+        closeId,
+        payload.revision,
+        await buildDailyCloseSnapshot(),
+        user
+      );
+      await recordDailyCloseAudit("daily_close.finalized", close, user);
+      sendJson(response, { ok: true, close, closes: businessStore.listDailyCloses() });
+      return true;
+    }
+    sendJson(response, { ok: false, error: "Daily close route not found", code: "not_found" }, 404);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Daily close request failed",
+      code: error.code || "daily_close_error"
+    }, error.status || 500);
+  }
+  return true;
 }
 
 async function handleProductionBatchRoute(request, response, url, user) {
@@ -899,6 +950,30 @@ async function recordSalesOrderImportAudit(result, user) {
   });
 }
 
+async function recordDailyCloseAudit(action, close, user) {
+  if (!accountStore) return;
+  const difference = Number.isFinite(close.countedLedgerBalance) && Number.isFinite(close.snapshot?.ledgerBalance)
+    ? close.countedLedgerBalance - close.snapshot.ledgerBalance
+    : null;
+  await accountStore.recordAudit({
+    category: "reconciliation",
+    action,
+    actorId: user.id,
+    actorName: user.fullName,
+    subjectId: close.id,
+    subjectName: close.businessDate,
+    fingerprint: `${action}:${close.id}:${close.revision}`,
+    details: {
+      status: close.status,
+      revision: close.revision,
+      ledgerDifference: difference,
+      storefrontConfirmed: close.storefrontConfirmed,
+      storageConfirmed: close.storageConfirmed,
+      openIssues: close.snapshot?.issues?.length || 0
+    }
+  });
+}
+
 async function recordStorefrontBuyOrderAudit(action, order, user) {
   if (!accountStore) return;
   await accountStore.recordAudit({
@@ -1262,6 +1337,7 @@ async function getBootstrapData(user) {
     salesOrders: businessStore.listSalesOrders(),
     storefrontBuyOrders: canManage ? businessStore.listStorefrontBuyOrders() : [],
     productionBatches: businessStore.listProductionBatches(),
+    dailyCloses: businessStore.listDailyCloses(),
     syncTargets: {
       stockCounts: "/api/sync",
       manualMovements: "/api/sync",
@@ -1272,9 +1348,110 @@ async function getBootstrapData(user) {
       storefrontBuyOrders: "/api/storefront-buy-orders",
       webhookReview: "/api/sync",
       productionBatches: "/api/production-batches",
-      salesOrders: "/api/sales-orders"
+      salesOrders: "/api/sales-orders",
+      dailyCloses: "/api/daily-closes"
     }
   };
+}
+
+async function buildDailyCloseSnapshot() {
+  const capturedAt = new Date().toISOString();
+  const businessDate = businessDateKey(capturedAt);
+  const sheet = await readSheetSnapshot();
+  const inventory = sheet?.inventory || {};
+  const activeSalesOrders = businessStore.listSalesOrders()
+    .filter(order => order.status !== "Completed" && order.status !== "Cancelled");
+  const overdueSalesOrders = activeSalesOrders.filter(order => order.deliveryDate && order.deliveryDate < businessDate);
+  const activeProductionBatches = businessStore.listProductionBatches()
+    .filter(batch => batch.status === "Planned" || batch.status === "In Progress");
+  const expectedSupplyDeliveries = businessStore.listSupplyOrders()
+    .filter(order => order.status === "Ordered" || order.status === "Partially Received")
+    .filter(order => order.expectedDate && order.expectedDate <= businessDate);
+  const openStorefrontBuyOrders = businessStore.listStorefrontBuyOrders()
+    .filter(order => order.status === "Active" || order.status === "Paused");
+  const openReviewExceptions = (Array.isArray(sheet?.reviewExceptions) ? sheet.reviewExceptions : [])
+    .filter(exception => exception.status === "Open");
+
+  const issues = [
+    ...overdueSalesOrders.map(order => ({
+      type: "Overdue Sale",
+      label: order.customer || "Unnamed customer",
+      detail: `${order.status} / due ${order.deliveryDate}`
+    })),
+    ...activeSalesOrders.filter(order => order.priority === "Expedite" || order.status === "Paused").map(order => ({
+      type: order.status === "Paused" ? "Paused Sale" : "Expedited Sale",
+      label: order.customer || "Unnamed customer",
+      detail: order.deliveryDate ? `Due ${order.deliveryDate}` : "In-store order"
+    })),
+    ...activeProductionBatches.map(batch => ({
+      type: "Production",
+      label: batch.reference || batch.sourceType,
+      detail: `${batch.status}${batch.dueDate ? ` / due ${batch.dueDate}` : ""}`
+    })),
+    ...expectedSupplyDeliveries.map(order => ({
+      type: "Supply Delivery",
+      label: order.producer || "Unassigned producer",
+      detail: `${order.status} / expected ${order.expectedDate}`
+    })),
+    ...openStorefrontBuyOrders.map(order => ({
+      type: "Storefront Buy Order",
+      label: order.itemLabel || order.itemName,
+      detail: `${Number(order.filledQuantity || 0)} of ${Number(order.quantity || 0)} filled`
+    })),
+    ...openReviewExceptions.slice(0, 20).map(exception => ({
+      type: "Webhook Review",
+      label: exception.discordItemLabel || exception.discordItemName || "Unrecognized event",
+      detail: exception.reason || "Needs review"
+    }))
+  ];
+
+  const storageRows = Array.isArray(inventory.storage) && inventory.storage.length
+    ? inventory.storage
+    : inventory.materials;
+  return {
+    capturedAt,
+    sheetGeneratedAt: sheet?.generatedAt || "",
+    storefrontUnits: sumInventorySnapshot(inventory.products, ["currentStock", "quantity"]),
+    storageUnits: sumInventorySnapshot(storageRows, ["storageCount", "quantity"]),
+    ledgerBalance: finiteOrNull(inventory.ledger?.balance),
+    openSalesOrders: activeSalesOrders.length,
+    overdueSalesOrders: overdueSalesOrders.length,
+    activeProductionBatches: activeProductionBatches.length,
+    expectedSupplyDeliveries: expectedSupplyDeliveries.length,
+    openStorefrontBuyOrders: openStorefrontBuyOrders.length,
+    openReviewExceptions: openReviewExceptions.length,
+    issues
+  };
+}
+
+function sumInventorySnapshot(rows, fields) {
+  if (!Array.isArray(rows)) return null;
+  const counts = new Map();
+  rows.forEach(row => {
+    const key = inventoryKey(row?.itemName || row?.itemLabel || row?.ingredient || row?.name);
+    if (!key) return;
+    const field = fields.find(candidate => Number.isFinite(Number(row?.[candidate])));
+    if (!field) return;
+    counts.set(key, Math.max(0, Number(row[field])));
+  });
+  return [...counts.values()].reduce((sum, value) => sum + value, 0);
+}
+
+function finiteOrNull(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function businessDateKey(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: process.env.BUSINESS_TIME_ZONE || "Europe/Oslo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date(value));
+  const byType = new Map(parts.map(part => [part.type, part.value]));
+  return `${byType.get("year")}-${byType.get("month")}-${byType.get("day")}`;
 }
 
 async function readSheetSnapshot() {
