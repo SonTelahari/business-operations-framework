@@ -1603,9 +1603,9 @@ h2 {
 .section-tabs {
   display: flex;
   align-items: end;
-  gap: 5px;
-  width: fit-content;
-  margin: 0 0 -1px 24px;
+  gap: 4px;
+  width: calc(100% - 48px);
+  margin: 0 24px -1px;
   padding: 0;
   background: transparent;
   border: 0;
@@ -1613,34 +1613,93 @@ h2 {
 }
 
 .section-button {
+  --tab-color: #31555a;
+  --tab-edge: #203b3f;
   position: relative;
-  min-width: 118px;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 42px;
-  padding: 9px 16px 10px;
+  padding: 9px 8px 10px;
   color: #f8efd9;
-  background: #31555a;
-  border: 1px solid rgba(25, 15, 14, 0.72);
+  background: var(--tab-color);
+  border: 1px solid var(--tab-edge);
   border-bottom: 0;
   border-radius: 4px 4px 0 0;
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.12), 0 -2px 8px rgba(23, 7, 12, 0.2);
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.14),
+    inset 0 -5px rgba(24, 13, 11, 0.12),
+    0 -2px 8px rgba(23, 7, 12, 0.2);
   font-family: "Courier New", Courier, monospace;
   font-weight: 700;
+  line-height: 1.15;
+  text-shadow: 0 1px rgba(24, 13, 11, 0.45);
+  transition: min-height 140ms ease, filter 140ms ease, transform 140ms ease;
 }
 
-.section-button:nth-child(2) {
-  background: #506548;
+.section-button[data-section="dashboard"] {
+  --tab-color: #31555a;
+  --tab-edge: #203b3f;
 }
 
-.section-button:nth-child(3) {
-  background: #8a6838;
+.section-button[data-section="store"] {
+  --tab-color: #506548;
+  --tab-edge: #34432e;
 }
 
-.section-button:nth-child(4) {
-  background: #753744;
+.section-button[data-section="restock"] {
+  --tab-color: #8a6838;
+  --tab-edge: #5c431f;
 }
 
-.section-button:nth-child(5) {
-  background: #46576b;
+.section-button[data-section="buy-orders"] {
+  --tab-color: #753744;
+  --tab-edge: #4d202a;
+}
+
+.section-button[data-section="supplies"] {
+  --tab-color: #46576b;
+  --tab-edge: #2d3948;
+}
+
+.section-button[data-section="workbench"] {
+  --tab-color: #76503b;
+  --tab-edge: #4d3021;
+}
+
+.section-button[data-section="production"] {
+  --tab-color: #3f6758;
+  --tab-edge: #28443a;
+}
+
+.section-button[data-section="operations"] {
+  --tab-color: #455d66;
+  --tab-edge: #2b3d44;
+}
+
+.section-button[data-section="daily-close"] {
+  --tab-color: #6e5a48;
+  --tab-edge: #493a2e;
+}
+
+.section-button[data-section="review"] {
+  --tab-color: #70475e;
+  --tab-edge: #4a2c3e;
+}
+
+.section-button[data-section="employees"] {
+  --tab-color: #5d566f;
+  --tab-edge: #3d374b;
+}
+
+.section-button:hover:not(.active) {
+  filter: brightness(1.12) saturate(1.04);
+  transform: translateY(-2px);
+}
+
+.section-button:focus-visible {
+  z-index: 3;
+  outline: 2px solid #f0d494;
+  outline-offset: 2px;
 }
 
 .section-button.active {
@@ -1648,9 +1707,12 @@ h2 {
   min-height: 46px;
   color: #342d24;
   background: var(--paper);
-  border-color: var(--paper-shadow);
+  border-color: var(--tab-edge);
   transform: translateY(1px);
-  box-shadow: 0 -4px 12px rgba(26, 11, 14, 0.2);
+  box-shadow:
+    inset 0 5px var(--tab-color),
+    0 -4px 12px rgba(26, 11, 14, 0.2);
+  text-shadow: none;
 }
 
 .workspace-section {
