@@ -870,18 +870,20 @@ async function prepareProductionProgress(batch, payload, user) {
         employee: user.fullName
       }));
     });
-    operations.push(productionOperation({
-      batch,
-      line,
-      previousCrafts,
-      completedCrafts,
-      suffix: "output",
-      kind: "Correction In",
-      itemName: line.itemName,
-      itemLabel: line.itemLabel,
-      quantity: craftDelta * Number(line.recipeYield || 1),
-      employee: user.fullName
-    }));
+    if (batch.sourceType !== "Storefront Restock") {
+      operations.push(productionOperation({
+        batch,
+        line,
+        previousCrafts,
+        completedCrafts,
+        suffix: "output",
+        kind: "Production Output",
+        itemName: line.itemName,
+        itemLabel: line.itemLabel,
+        quantity: craftDelta * Number(line.recipeYield || 1),
+        employee: user.fullName
+      }));
+    }
   });
   if (!targets.length) {
     throw productionError("Enter at least one newly completed craft cycle", 400, "production_progress_required");

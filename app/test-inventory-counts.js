@@ -125,6 +125,25 @@ const pendingProductionAndPurchase = selectLatestCounts({
 });
 assert.equal(pendingProductionAndPurchase.get("iron"), 18, "production and P2P stock movements must be applied in order");
 
+const pendingProductionOutput = selectLatestCounts({
+  location: "Storage",
+  inventory: { storage: [{ ingredient: "Navy Revolver", storageCount: 1, countedAt: "2026-07-13T10:00:00.000Z" }] },
+  snapshotGeneratedAt: "2026-07-13T10:00:30.000Z",
+  operations: [
+    { kind: "Production Output", itemName: "Navy Revolver", quantity: 2, createdAt: "2026-07-13T10:01:00.000Z", syncStatus: "Pending sheet sync" }
+  ]
+});
+assert.equal(pendingProductionOutput.get("navy revolver"), 3, "customer production output must remain Storage-only");
+const productionOutputStorefront = selectLatestCounts({
+  location: "Storefront",
+  inventory: { products: [{ itemName: "Navy Revolver", currentStock: 1, countedAt: "2026-07-13T10:00:00.000Z" }] },
+  snapshotGeneratedAt: "2026-07-13T10:00:30.000Z",
+  operations: [
+    { kind: "Production Output", itemName: "Navy Revolver", quantity: 2, createdAt: "2026-07-13T10:01:00.000Z", syncStatus: "Pending sheet sync" }
+  ]
+});
+assert.equal(productionOutputStorefront.get("navy revolver"), 1, "production output must never change Storefront stock");
+
 const snapshotBoundary = selectLatestCounts({
   location: "Storage",
   inventory: { materials: [{ ingredient: "Iron", storageCount: 20, countedAt: "2026-07-13T10:00:00.000Z" }] },

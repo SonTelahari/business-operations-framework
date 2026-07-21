@@ -397,8 +397,10 @@ function writeManualMovement(spreadsheet, entry, action) {
 
   const movement = normalizeManualMovement(entry);
   const row = firstEmptyRow(sheet, 2, 1);
-  const isTransfer = String(entry.kind || '').includes('Transfer');
-  const signedQtyFormula = isTransfer
+  const kind = String(entry.kind || '');
+  const isTransfer = kind.includes('Transfer');
+  const doesNotAffectStorefrontFormula = isTransfer || kind === 'Production Output';
+  const signedQtyFormula = doesNotAffectStorefrontFormula
     ? 0
     : `=IF(E${row}="";"";IF(OR(D${row}="Stock In";D${row}="Purchase";D${row}="Return");F${row};-F${row}))`;
   const cashFlowFormula = `=IF(E${row}="";"";IF(OR(C${row}="Sale";D${row}="Cash In");F${row}*G${row};IF(OR(C${row}="Purchase";D${row}="Cash Out");-F${row}*G${row};0)))`;
@@ -417,7 +419,7 @@ function writeManualMovement(spreadsheet, entry, action) {
     joinNotes(
       entry.note,
       entry.kind && entry.kind !== movement.type ? 'GUI type: ' + entry.kind : '',
-      String(entry.kind || '').includes('Transfer') ? 'Transferred qty: ' + numberOrZero(entry.quantity) : ''
+      isTransfer ? 'Transferred qty: ' + numberOrZero(entry.quantity) : ''
     ),
     entry.employee || '',
     entry.id
@@ -467,6 +469,9 @@ function normalizeManualMovement(entry) {
   }
   if (kind === 'Production Use' || kind === 'Correction Out') {
     return { type: 'Stocking Movement', direction: 'Stock Out', item, quantity, unitPrice: 0 };
+  }
+  if (kind === 'Production Output') {
+    return { type: 'Storage Movement', direction: 'Storage In', item, quantity, unitPrice: 0 };
   }
   if (kind === 'Storefront Transfer' || kind === 'Storage Transfer') {
     return {
@@ -775,7 +780,7 @@ function readWorkbookSnapshot() {
 
   return {
     ok: true,
-    schemaVersion: 5,
+    schemaVersion: 6,
     spreadsheetId: SPREADSHEET_ID,
     generatedAt: new Date().toISOString(),
     sheets,
@@ -1248,7 +1253,7 @@ function manualStockDelta(row, location) {
   if (kind === 'P2P Sale' || kind === 'Production Use' || kind === 'Correction Out' || kind === 'Storefront Transfer') {
     return -quantity;
   }
-  if (kind === 'P2P Purchase' || kind === 'Correction In' || kind === 'Storage Transfer') {
+  if (kind === 'P2P Purchase' || kind === 'Correction In' || kind === 'Production Output' || kind === 'Storage Transfer') {
     return quantity;
   }
   if (

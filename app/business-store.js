@@ -786,17 +786,23 @@ function cleanPendingProductionProgress(progress, batch) {
     };
   });
   if (!targets.length) throw businessError("Enter at least one completed craft cycle", 400, "production_progress_required");
-  const operations = (Array.isArray(progress.operations) ? progress.operations : []).slice(0, 500).map(operation => ({
-    id: cleanText(operation.id, 100),
-    kind: cleanText(operation.kind, 40),
-    location: cleanText(operation.location, 40),
-    itemName: cleanText(operation.itemName, 100),
-    itemLabel: cleanText(operation.itemLabel || operation.itemName, 100),
-    quantity: Math.max(0, finiteNumber(operation.quantity, 0)),
-    amount: finiteNumber(operation.amount, 0),
-    note: cleanText(operation.note, 500),
-    employee: cleanText(operation.employee, 100)
-  })).filter(operation => operation.id && operation.itemName && operation.quantity > 0);
+  const operations = (Array.isArray(progress.operations) ? progress.operations : []).slice(0, 500).map(operation => {
+    const originalKind = cleanText(operation.kind, 40);
+    if (batch.sourceType === "Storefront Restock" && (originalKind === "Correction In" || originalKind === "Production Output")) {
+      return null;
+    }
+    return {
+      id: cleanText(operation.id, 100),
+      kind: originalKind === "Correction In" ? "Production Output" : originalKind,
+      location: cleanText(operation.location, 40),
+      itemName: cleanText(operation.itemName, 100),
+      itemLabel: cleanText(operation.itemLabel || operation.itemName, 100),
+      quantity: Math.max(0, finiteNumber(operation.quantity, 0)),
+      amount: finiteNumber(operation.amount, 0),
+      note: cleanText(operation.note, 500),
+      employee: cleanText(operation.employee, 100)
+    };
+  }).filter(operation => operation && operation.id && operation.itemName && operation.quantity > 0);
   if (!operations.length) throw businessError("Production progress has no stock movements", 400, "production_operations_required");
   return {
     id: cleanText(progress.id, 100) || crypto.randomUUID(),

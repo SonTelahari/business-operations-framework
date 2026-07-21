@@ -121,7 +121,7 @@ const mockReceiver = http.createServer(async (request, response) => {
       const key = mockInventoryKey(entry.itemName || entry.itemLabel);
       storageCounts.set(key, Number(storageCounts.get(key) || 0) - Number(entry.quantity || 0));
     }
-    if (entry.kind === "Correction In" && entry.location === "Storage") {
+    if ((entry.kind === "Correction In" || entry.kind === "Production Output") && entry.location === "Storage") {
       const key = mockInventoryKey(entry.itemName || entry.itemLabel);
       storageCounts.set(key, Number(storageCounts.get(key) || 0) + Number(entry.quantity || 0));
     }
@@ -832,7 +832,8 @@ async function run() {
   assert.equal(partialProduction.body.batch.status, "In Progress");
   const productionWrites = receiverPayloads.slice(writesBeforeProduction).filter(payload => payload.action === "manual_operation");
   assert(productionWrites.some(payload => payload.entry.kind === "Production Use" && payload.entry.itemName === "Iron"));
-  assert(productionWrites.some(payload => payload.entry.kind === "Correction In" && payload.entry.itemName === "Navy Revolver"));
+  assert(productionWrites.some(payload => payload.entry.kind === "Production Output" && payload.entry.itemName === "Navy Revolver"));
+  assert.equal(productionWrites.some(payload => payload.entry.kind === "Correction In"), false);
   assert.equal(storageCounts.get("iron"), 30);
   assert.equal(storageCounts.get("navy revolver"), 1);
 
@@ -848,6 +849,31 @@ async function run() {
   }, workerCookie);
   assert.equal(completedProduction.response.status, 200);
   assert.equal(completedProduction.body.batch.status, "Completed");
+  assert.equal(storageCounts.get("navy revolver"), 2);
+
+  const restockProduction = await post(`${baseUrl}/api/production-batches`, {
+    id: "production-restock-one",
+    sourceType: "Storefront Restock",
+    reference: "Storefront refill",
+    lines: [{ itemName: "Navy Revolver", quantity: 1 }]
+  }, managerCookie);
+  assert.equal(restockProduction.response.status, 200);
+  const restockLineId = restockProduction.body.batch.lines[0].id;
+  const startedRestock = await post(`${baseUrl}/api/production-batches/production-restock-one/start`, {}, workerCookie);
+  assert.equal(startedRestock.response.status, 200);
+  const writesBeforeRestock = receiverPayloads.length;
+  const completedRestock = await post(`${baseUrl}/api/production-batches/production-restock-one/progress`, {
+    completions: [{ lineId: restockLineId, completedCrafts: 1 }]
+  }, workerCookie);
+  assert.equal(completedRestock.response.status, 200);
+  assert.equal(completedRestock.body.batch.status, "Completed");
+  const restockWrites = receiverPayloads.slice(writesBeforeRestock).filter(payload => payload.action === "manual_operation");
+  assert(restockWrites.some(payload => payload.entry.kind === "Production Use"));
+  assert.equal(
+    restockWrites.some(payload => payload.entry.kind === "Production Output" || payload.entry.kind === "Correction In"),
+    false,
+    "restock output must wait for the storefront webhook instead of creating finished stock twice"
+  );
   assert.equal(storageCounts.get("navy revolver"), 2);
   const cancelCompletedProduction = await post(`${baseUrl}/api/production-batches/production-navy-two/cancel`, {}, managerCookie);
   assert.equal(cancelCompletedProduction.response.status, 409);

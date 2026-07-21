@@ -3473,7 +3473,9 @@ async function runProductionAction(batch, action, payload, successMessage) {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     productionBatches = Array.isArray(result.batches) ? result.batches : [];
     activeProductionBatchId = result.batch.id;
-    finalMessage = successMessage;
+    finalMessage = result.batch.sourceType === "Storefront Restock"
+      ? "Materials recorded / awaiting storefront deposit"
+      : successMessage;
   } catch (error) {
     finalMessage = `Update failed: ${error.message}`;
     await loadProductionBatches({ silent: true });

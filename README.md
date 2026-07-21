@@ -72,7 +72,7 @@ The Still Water bridge is capture-only by default for a safe first deployment. T
 
 ## Production Batches
 
-Managers can turn customer orders or uncovered storefront targets into shared production batches. The server snapshots each product recipe when the batch is created, reserves materials by expedite status and due date, and lets employees record total craft cycles as work is completed. Each progress update writes material consumption and finished goods into shared Storage; finished goods can then be moved to the Storefront with the existing transfer workflow.
+Managers can turn customer orders or uncovered storefront targets into shared production batches. The server snapshots each product recipe when the batch is created, reserves materials by expedite status and due date, and lets employees record total craft cycles as work is completed. Customer and manual production writes finished goods into shared Storage. Storefront-restock production records material use only; the Discord deposit webhook is the sole source of truth for the finished goods entering the Storefront.
 
 Interrupted Sheet writes remain attached to the batch and can be retried without consuming materials or adding finished stock twice.
 

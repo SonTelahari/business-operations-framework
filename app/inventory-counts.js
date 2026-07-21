@@ -91,7 +91,7 @@
     if (kind === "P2P Sale" || kind === "Production Use" || kind === "Correction Out" || kind === "Storefront Transfer") {
       return -quantity;
     }
-    if (kind === "P2P Purchase" || kind === "Correction In" || kind === "Storage Transfer") {
+    if (kind === "P2P Purchase" || kind === "Correction In" || kind === "Production Output" || kind === "Storage Transfer") {
       return quantity;
     }
     return 0;

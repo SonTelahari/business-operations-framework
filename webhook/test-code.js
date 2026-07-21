@@ -52,6 +52,7 @@ const writes = {};
 function fakeSheet(name) {
   writes[name] = [];
   return {
+    getLastRow: () => 1,
     getMaxRows: () => 10,
     insertRowsAfter: () => {},
     getRange(row, column, rowCount = 1) {
@@ -71,7 +72,8 @@ function fakeSheet(name) {
 
 const sheets = {
   "Stock Counts": fakeSheet("Stock Counts"),
-  "Cash Ledger Counts": fakeSheet("Cash Ledger Counts")
+  "Cash Ledger Counts": fakeSheet("Cash Ledger Counts"),
+  "Manual Movements": fakeSheet("Manual Movements")
 };
 const controlResult = plain(context.writeWebhookControls({
   getSheetByName: name => sheets[name] || null
@@ -102,6 +104,26 @@ assert.deepEqual(ownerDeposit, {
 assert.equal(ownerWithdrawal.direction, "Cash Out");
 assert.equal(safekeepingDeposit.type, "Safekeeping");
 assert.equal(safekeepingDeposit.direction, "Cash In");
+const productionOutput = plain(context.normalizeManualMovement({
+  kind: "Production Output",
+  itemName: "Navy Revolver",
+  quantity: 2
+}));
+assert.deepEqual(productionOutput, {
+  type: "Storage Movement", direction: "Storage In", item: "Navy Revolver", quantity: 2, unitPrice: 0
+});
+context.writeManualMovement({
+  getSheetByName: name => sheets[name] || null
+}, {
+  id: "production-output-row",
+  kind: "Production Output",
+  location: "Storage",
+  itemName: "Navy Revolver",
+  quantity: 2,
+  employee: "Test Worker"
+}, "manual_operation");
+assert.equal(writes["Manual Movements"][0].values[0][2], "Storage Movement");
+assert.equal(writes["Manual Movements"][0].values[0][7], 0, "production output must not feed the storefront signed-quantity formula");
 
 assert.equal(context.manualStockDelta(
   [new Date(), "", "Adjustment", "Transfer to Storefront", "Iron", 5, 0, 0, 0, "GUI type: Storefront Transfer"],
@@ -114,6 +136,14 @@ assert.equal(context.manualStockDelta(
 assert.equal(context.manualStockDelta(
   [new Date(), "", "Sale", "Stock Out", "Ledger Adjustment", 1, 12.5, 0, 12.5, "GUI type: Correction"],
   "storage"
+), 0);
+assert.equal(context.manualStockDelta(
+  [new Date(), "", "Storage Movement", "Storage In", "Navy Revolver", 2, 0, 0, 0, "GUI type: Production Output"],
+  "storage"
+), 2);
+assert.equal(context.manualStockDelta(
+  [new Date(), "", "Storage Movement", "Storage In", "Navy Revolver", 2, 0, 0, 0, "GUI type: Production Output"],
+  "storefront"
 ), 0);
 
 const ledgerAfterCashOut = plain(context.readLedgerSnapshot({
