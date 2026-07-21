@@ -93,6 +93,15 @@ assert.equal(positiveCorrection.type, "Sale");
 assert.equal(positiveCorrection.unitPrice, 12.5);
 assert.equal(negativeCorrection.type, "Purchase");
 assert.equal(negativeCorrection.unitPrice, 7.5);
+const ownerDeposit = plain(context.normalizeManualMovement({ kind: "Owner Capital Deposit", amount: 500 }));
+const ownerWithdrawal = plain(context.normalizeManualMovement({ kind: "Owner Withdrawal", amount: 50 }));
+const safekeepingDeposit = plain(context.normalizeManualMovement({ kind: "Safekeeping Deposit", amount: 200 }));
+assert.deepEqual(ownerDeposit, {
+  type: "Owner Capital", direction: "Cash In", item: "William Owner Capital", quantity: 1, unitPrice: 500
+});
+assert.equal(ownerWithdrawal.direction, "Cash Out");
+assert.equal(safekeepingDeposit.type, "Safekeeping");
+assert.equal(safekeepingDeposit.direction, "Cash In");
 
 assert.equal(context.manualStockDelta(
   [new Date(), "", "Adjustment", "Transfer to Storefront", "Iron", 5, 0, 0, 0, "GUI type: Storefront Transfer"],
@@ -132,6 +141,49 @@ function dataSheet(rows) {
     getRange: () => ({ getValues: () => rows })
   };
 }
+
+const financeSheets = {
+  "Transactions": dataSheet([
+    [new Date("2026-07-10T10:00:00.000Z"), "Still Water Discord", "Sale", "Stock Out", "Navy Revolver", 1, 100, -1, 100, 1100, "sale-finance"],
+    [new Date("2026-07-11T10:00:00.000Z"), "Still Water Discord", "Purchase", "Purchase", "Nitrite", 20, 1, 20, -20, 1080, "purchase-finance"]
+  ]),
+  "Manual Movements": dataSheet([
+    [new Date("2026-07-12T10:00:00.000Z"), "Still Water GUI", "Sale", "Stock Out", "P2P Sale", 1, 30, 0, 30, "GUI type: P2P Sale"],
+    [new Date("2026-07-13T10:00:00.000Z"), "Still Water GUI", "Purchase", "Purchase", "Operating Cost", 1, 10, 0, -10, "GUI type: Cash Out"],
+    [new Date("2026-07-14T10:00:00.000Z"), "Still Water GUI", "Owner Capital", "Cash In", "William Owner Capital", 1, 500, 0, 500, "GUI type: Owner Capital Deposit"],
+    [new Date("2026-07-15T10:00:00.000Z"), "Still Water GUI", "Owner Capital", "Cash Out", "William Owner Capital", 1, 50, 0, -50, "GUI type: Owner Withdrawal"],
+    [new Date("2026-07-16T10:00:00.000Z"), "Still Water GUI", "Safekeeping", "Cash In", "William Safekeeping Funds", 1, 200, 0, 200, "GUI type: Safekeeping Deposit"],
+    [new Date("2026-07-17T10:00:00.000Z"), "Still Water GUI", "Safekeeping", "Cash Out", "William Safekeeping Funds", 1, 25, 0, -25, "GUI type: Safekeeping Withdrawal"],
+    [new Date("2026-07-18T10:00:00.000Z"), "Still Water GUI", "Sale", "Stock Out", "Ledger Adjustment", 1, 50, 0, 50, "GUI type: Correction"]
+  ]),
+  "Payroll Payments": dataSheet([
+    [new Date("2026-07-19T10:00:00.000Z"), "Employee", "2026-07-01", "2026-07-15", 15, "Ledger", "", "", "payroll-finance"]
+  ]),
+  "Cash Ledger Counts": dataSheet([
+    [new Date("2026-07-01T00:00:00.000Z"), "Store Ledger", 1000]
+  ])
+};
+context.SpreadsheetApp = {
+  openById: () => ({
+    getSpreadsheetTimeZone: () => "Europe/Oslo",
+    getSheetByName: name => financeSheets[name] || null
+  })
+};
+const finance = plain(context.readFinanceSnapshot({ from: "2026-07-01", to: "2026-07-31" }));
+assert.deepEqual(finance.totals, { revenue: 130, expenses: 45, profit: 85 });
+assert.equal(finance.balances.ownerCapitalDeposits, 500);
+assert.equal(finance.balances.ownerWithdrawals, 50);
+assert.equal(finance.balances.ownerCapital, 450);
+assert.equal(finance.balances.safekeepingDeposits, 200);
+assert.equal(finance.balances.safekeepingWithdrawals, 25);
+assert.equal(finance.balances.safekeeping, 175);
+assert.equal(finance.ledger.balance, 1760);
+assert(finance.breakdown.some(row => row.category === "Storefront Sales" && row.amount === 100));
+assert(finance.breakdown.some(row => row.category === "P2P Sales" && row.amount === 30));
+assert(finance.breakdown.some(row => row.category === "Operating Expenses" && row.amount === 10));
+assert(finance.breakdown.some(row => row.category === "Payroll" && row.amount === 15));
+assert.equal(finance.breakdown.some(row => row.label === "Ledger Adjustment"), false, "corrections must not distort operating P&L");
+assert.deepEqual(finance.monthly, [{ month: "2026-07", revenue: 130, expenses: 45, profit: 85 }]);
 
 const mappedReviewEvent = plain(context.applyStoredItemMapping({
   getSheetByName(name) {

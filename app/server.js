@@ -76,6 +76,7 @@ const server = http.createServer(async (request, response) => {
         productionBatches: true,
         sharedSalesOrders: true,
         dailyCloses: true,
+        financeReporting: true,
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -102,6 +103,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleSalesOrderRoute(request, response, url, user)) return;
       if (await handleProductionBatchRoute(request, response, url, user)) return;
       if (await handleDailyCloseRoute(request, response, url, user)) return;
+      if (await handleFinanceRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(user));
         return;
@@ -158,6 +160,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleSalesOrderRoute(request, response, url, user)) return;
       if (await handleProductionBatchRoute(request, response, url, user)) return;
       if (await handleDailyCloseRoute(request, response, url, user)) return;
+      if (await handleFinanceRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(null));
         return;
@@ -324,6 +327,195 @@ async function handleSupplierRoute(request, response, url, user) {
     }, error.status || 500);
   }
   return true;
+}
+
+async function handleFinanceRoute(request, response, url, user) {
+  if (url.pathname !== "/api/finance") return false;
+  if (!requireManagement(response, user)) return true;
+  if (request.method !== "GET") {
+    sendJson(response, { ok: false, error: "Finance route not found", code: "not_found" }, 404);
+    return true;
+  }
+
+  const from = cleanDateParameter(url.searchParams.get("from"));
+  const to = cleanDateParameter(url.searchParams.get("to"));
+  if (from && to && from > to) {
+    sendJson(response, { ok: false, error: "Finance start date must be before the end date", code: "invalid_finance_period" }, 400);
+    return true;
+  }
+
+  const finance = await readAppsScriptAction("finance", { from, to });
+  if (!finance?.ok || !finance.totals || !finance.balances) {
+    sendJson(response, {
+      ok: false,
+      error: finance?.error || "Apps Script deployment does not expose finance data yet",
+      code: "finance_snapshot_unavailable"
+    }, 502);
+    return true;
+  }
+  const sheet = await readSheetSnapshot();
+  const commitments = buildFinanceCommitments(sheet);
+  const ledgerBalance = finiteOrNull(finance.ledger?.balance ?? sheet?.inventory?.ledger?.balance);
+  const safekeepingHeld = Number(finance.balances.safekeeping || 0);
+  const businessCash = ledgerBalance === null ? null : ledgerBalance - safekeepingHeld;
+  const availableAfterCommitments = businessCash === null ? null : businessCash - commitments.total;
+  sendJson(response, {
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    period: { from: finance.from || from, to: finance.to || to },
+    totals: finance.totals,
+    balances: finance.balances,
+    breakdown: Array.isArray(finance.breakdown) ? finance.breakdown : [],
+    monthly: Array.isArray(finance.monthly) ? finance.monthly : [],
+    cash: {
+      ledgerBalance,
+      safekeepingHeld,
+      businessCash,
+      committed: commitments.total,
+      availableAfterCommitments
+    },
+    commitments
+  });
+  return true;
+}
+
+function buildFinanceCommitments(sheet) {
+  const supplyLines = [];
+  businessStore.listSupplyOrders()
+    .filter(order => order.status === "Ordered" || order.status === "Partially Received")
+    .forEach(order => order.lines.forEach(line => {
+      const quantity = Math.max(0, Number(line.quantity || 0) - Number(line.receivedQuantity || 0));
+      const unitPrice = Math.max(0, Number(line.unitPrice || 0));
+      if (!quantity) return;
+      supplyLines.push({
+        orderId: order.id,
+        producer: order.producer,
+        label: line.label || line.name,
+        quantity,
+        unitPrice,
+        amount: roundFinanceMoney(quantity * unitPrice)
+      });
+    }));
+
+  const buyOrderLines = businessStore.listStorefrontBuyOrders()
+    .filter(order => order.status === "Active" || order.status === "Paused")
+    .map(order => {
+      const quantity = Math.max(0, Number(order.quantity || 0) - Number(order.filledQuantity || 0));
+      const unitPrice = Math.max(0, Number(order.unitPrice || 0));
+      return {
+        orderId: order.id,
+        label: order.itemLabel || order.itemName,
+        quantity,
+        unitPrice,
+        amount: roundFinanceMoney(quantity * unitPrice)
+      };
+    })
+    .filter(line => line.quantity > 0);
+
+  const restock = buildRestockCommitment(sheet, [...supplyLines, ...buyOrderLines]);
+  const supplyOrders = roundFinanceMoney(supplyLines.reduce((sum, line) => sum + line.amount, 0));
+  const storefrontBuyOrders = roundFinanceMoney(buyOrderLines.reduce((sum, line) => sum + line.amount, 0));
+  const total = roundFinanceMoney(supplyOrders + storefrontBuyOrders + restock.amount);
+  return {
+    total,
+    supplyOrders,
+    storefrontBuyOrders,
+    missingStock: restock.amount,
+    supplyLines,
+    buyOrderLines,
+    restockLines: restock.lines,
+    missingProducts: restock.missingProducts,
+    unpricedLines: restock.unpricedLines
+  };
+}
+
+function buildRestockCommitment(sheet, committedPurchaseLines) {
+  const catalog = readCatalogFiles();
+  const inventory = sheet?.inventory || {};
+  const demand = new Map();
+  const missingProducts = [];
+  const storage = new Map();
+  const storageRows = Array.isArray(inventory.storage) && inventory.storage.length
+    ? inventory.storage
+    : inventory.materials;
+  (Array.isArray(storageRows) ? storageRows : []).forEach(row => {
+    const name = row.ingredient || row.itemName || row.itemLabel || row.name;
+    storage.set(inventoryKey(name), Math.max(0, Number(row.storageCount ?? row.quantity ?? 0)));
+  });
+  (Array.isArray(inventory.products) ? inventory.products : []).forEach(product => {
+    const name = product.itemName || product.itemLabel;
+    const storefrontMissing = Math.max(0, Number(product.target || 0) - Number(product.currentStock || 0));
+    const storageAvailable = storage.get(inventoryKey(name)) || 0;
+    const missing = Math.max(0, storefrontMissing - storageAvailable);
+    if (!missing) return;
+    const recipe = catalog.recipes[name];
+    missingProducts.push({
+      label: product.itemLabel || name,
+      quantity: missing,
+      storefrontMissing,
+      storageAvailable,
+      recipeAvailable: Boolean(recipe)
+    });
+    if (!recipe) return;
+    const batches = Math.ceil(missing / Math.max(1, Number(catalog.recipeYields[name] || 1)));
+    recipe.forEach(([ingredient, quantity]) => {
+      const key = inventoryKey(ingredient);
+      const current = demand.get(key) || { ingredient, quantity: 0 };
+      current.quantity += Number(quantity || 0) * batches;
+      demand.set(key, current);
+    });
+  });
+
+  const ordered = new Map();
+  committedPurchaseLines.forEach(line => {
+    const key = inventoryKey(line.label);
+    ordered.set(key, (ordered.get(key) || 0) + Number(line.quantity || 0));
+  });
+
+  const lines = [];
+  let unpricedLines = 0;
+  demand.forEach((line, key) => {
+    const quantity = Math.max(0, line.quantity - (storage.get(key) || 0) - (ordered.get(key) || 0));
+    if (!quantity) return;
+    const unitPrice = preferredFinanceMaterialPrice(line.ingredient, catalog.pricing);
+    if (!unitPrice) unpricedLines += 1;
+    lines.push({
+      label: line.ingredient,
+      quantity,
+      unitPrice,
+      amount: roundFinanceMoney(quantity * unitPrice)
+    });
+  });
+  lines.sort((a, b) => b.amount - a.amount || a.label.localeCompare(b.label));
+  return {
+    amount: roundFinanceMoney(lines.reduce((sum, line) => sum + line.amount, 0)),
+    lines,
+    missingProducts,
+    unpricedLines
+  };
+}
+
+function preferredFinanceMaterialPrice(name, pricing) {
+  const key = inventoryKey(name);
+  const supplierPrices = businessStore.listSuppliers().flatMap(supplier =>
+    supplier.products
+      .filter(product => inventoryKey(product.name || product.label) === key)
+      .map(product => Number(product.unitPrice || 0))
+      .filter(price => price > 0)
+  );
+  if (supplierPrices.length) return Math.min(...supplierPrices);
+  const matched = Object.entries(pricing?.materials || {})
+    .find(([material]) => inventoryKey(material) === key);
+  return Math.max(0, Number(matched?.[1]?.midpoint || 0));
+}
+
+function cleanDateParameter(value) {
+  const date = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "";
+}
+
+function roundFinanceMoney(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
 async function handleSupplyOrderRoute(request, response, url, user) {
@@ -1062,7 +1254,13 @@ async function recordSupplyReceiptAudit(order, line, receipt, user) {
 
 function requiresAdmin(payload) {
   if (payload.action !== "manual_operation") return false;
-  return payload.entry?.kind === "Payroll Payment";
+  return new Set([
+    "Payroll Payment",
+    "Owner Capital Deposit",
+    "Owner Withdrawal",
+    "Safekeeping Deposit",
+    "Safekeeping Withdrawal"
+  ]).has(payload.entry?.kind);
 }
 
 function requiresManagement(payload) {
@@ -1124,9 +1322,16 @@ async function auditGuiPayload(payload, user, syncResult) {
     return;
   }
   if (payload.action === "manual_operation" && payload.entry) {
+    const financeKinds = new Set([
+      "Owner Capital Deposit",
+      "Owner Withdrawal",
+      "Safekeeping Deposit",
+      "Safekeeping Withdrawal"
+    ]);
+    const financeEntry = financeKinds.has(payload.entry.kind);
     await accountStore.recordAudit({
-      category: "operations",
-      action: "operation.recorded",
+      category: financeEntry ? "finance" : "operations",
+      action: financeEntry ? "finance.funds_recorded" : "operation.recorded",
       actorId: user.id,
       actorName: user.fullName,
       subjectId: user.id,
@@ -1349,7 +1554,8 @@ async function getBootstrapData(user) {
       webhookReview: "/api/sync",
       productionBatches: "/api/production-batches",
       salesOrders: "/api/sales-orders",
-      dailyCloses: "/api/daily-closes"
+      dailyCloses: "/api/daily-closes",
+      finance: "/api/finance"
     }
   };
 }
@@ -1455,11 +1661,18 @@ function businessDateKey(value = new Date()) {
 }
 
 async function readSheetSnapshot() {
+  return readAppsScriptAction("bootstrap");
+}
+
+async function readAppsScriptAction(action, parameters = {}) {
   if (!process.env.APPS_SCRIPT_URL) return null;
 
   try {
     const url = new URL(process.env.APPS_SCRIPT_URL);
-    url.searchParams.set("action", "bootstrap");
+    url.searchParams.set("action", action);
+    Object.entries(parameters).forEach(([key, value]) => {
+      if (value !== "" && value !== null && value !== undefined) url.searchParams.set(key, String(value));
+    });
     const response = await fetch(url, {
       headers: { accept: "application/json" },
       signal: AbortSignal.timeout(45000)
@@ -1509,11 +1722,13 @@ function readCatalogFiles() {
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(root, "items.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(root, "recipes.js"), "utf8"), context);
+  const pricing = require(path.join(root, "pricing.js"));
   return {
     categories: context.window.FRONTIER_CATEGORIES || [],
     items: context.window.FRONTIER_ITEMS || [],
     recipes: context.window.FRONTIER_RECIPES || {},
-    recipeYields: context.window.FRONTIER_RECIPE_YIELDS || {}
+    recipeYields: context.window.FRONTIER_RECIPE_YIELDS || {},
+    pricing
   };
 }
 

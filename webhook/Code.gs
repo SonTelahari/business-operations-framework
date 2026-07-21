@@ -14,15 +14,19 @@ const GUI_SOURCE_NAME = 'Frontier GUI - Still Water';
 const TIMESTAMP_FORMAT = 'dd.mm.yyyy hh:mm';
 
 function doGet(e) {
-  if (e && e.parameter && e.parameter.action === 'bootstrap') {
+  const action = e && e.parameter ? String(e.parameter.action || '') : '';
+  if (action === 'bootstrap') {
     return jsonResponse(readWorkbookSnapshot());
+  }
+  if (action === 'finance') {
+    return jsonResponse(readFinanceSnapshot(e.parameter || {}));
   }
 
   return jsonResponse({
     ok: true,
     service: 'Frontier Firearms - Still Water webhook receiver',
     expectedMethod: 'POST',
-    readActions: ['bootstrap']
+    readActions: ['bootstrap', 'finance']
   });
 }
 
@@ -397,7 +401,7 @@ function writeManualMovement(spreadsheet, entry, action) {
   const signedQtyFormula = isTransfer
     ? 0
     : `=IF(E${row}="";"";IF(OR(D${row}="Stock In";D${row}="Purchase";D${row}="Return");F${row};-F${row}))`;
-  const cashFlowFormula = `=IF(E${row}="";"";IF(C${row}="Sale";F${row}*G${row};IF(C${row}="Purchase";-F${row}*G${row};0)))`;
+  const cashFlowFormula = `=IF(E${row}="";"";IF(OR(C${row}="Sale";D${row}="Cash In");F${row}*G${row};IF(OR(C${row}="Purchase";D${row}="Cash Out");-F${row}*G${row};0)))`;
   sheet.getRange(row, 1, 1, 9).setValues([[
     new Date(),
     GUI_SOURCE_NAME,
@@ -430,6 +434,25 @@ function normalizeManualMovement(entry) {
   const item = entry.itemName || entry.itemLabel || (kind === 'Payroll Payout' ? 'Payroll Payout' : 'Ledger Adjustment');
   const stockQuantity = item === 'Ledger Adjustment' || item === 'Payroll Payout' ? 1 : quantity;
   const unitPrice = stockQuantity ? totalAmount / stockQuantity : 0;
+
+  if (kind === 'Owner Capital Deposit' || kind === 'Owner Withdrawal') {
+    return {
+      type: 'Owner Capital',
+      direction: kind === 'Owner Capital Deposit' ? 'Cash In' : 'Cash Out',
+      item: 'William Owner Capital',
+      quantity: 1,
+      unitPrice: totalAmount
+    };
+  }
+  if (kind === 'Safekeeping Deposit' || kind === 'Safekeeping Withdrawal') {
+    return {
+      type: 'Safekeeping',
+      direction: kind === 'Safekeeping Deposit' ? 'Cash In' : 'Cash Out',
+      item: 'William Safekeeping Funds',
+      quantity: 1,
+      unitPrice: totalAmount
+    };
+  }
 
   if (kind === 'P2P Sale' || kind === 'Cash In') {
     return { type: 'Sale', direction: 'Stock Out', item, quantity: stockQuantity, unitPrice };
@@ -752,13 +775,183 @@ function readWorkbookSnapshot() {
 
   return {
     ok: true,
-    schemaVersion: 4,
+    schemaVersion: 5,
     spreadsheetId: SPREADSHEET_ID,
     generatedAt: new Date().toISOString(),
     sheets,
     reviewExceptions: readWebhookExceptions(spreadsheet),
     inventory: readInventorySnapshot(spreadsheet)
   };
+}
+
+// Returns management-ready aggregates without exposing customer, actor, or employee identities.
+function readFinanceSnapshot(parameters) {
+  const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const timezone = spreadsheet.getSpreadsheetTimeZone
+    ? spreadsheet.getSpreadsheetTimeZone()
+    : 'Europe/Oslo';
+  const from = cleanFinanceDate(parameters && parameters.from) || '0000-01-01';
+  const to = cleanFinanceDate(parameters && parameters.to) || '9999-12-31';
+  const breakdown = {};
+  const monthly = {};
+  const totals = { revenue: 0, expenses: 0, profit: 0 };
+  const balances = {
+    ownerCapitalDeposits: 0,
+    ownerWithdrawals: 0,
+    ownerCapital: 0,
+    safekeepingDeposits: 0,
+    safekeepingWithdrawals: 0,
+    safekeeping: 0
+  };
+
+  function addEntry(entry) {
+    const amount = Math.abs(numberOrZero(entry.amount));
+    if (!amount) return;
+    const date = financeDateKey(entry.date, timezone);
+    const direction = inventoryKey(entry.direction);
+
+    if (entry.type === 'Owner Capital') {
+      if (direction === 'cash in') balances.ownerCapitalDeposits += amount;
+      if (direction === 'cash out') balances.ownerWithdrawals += amount;
+      balances.ownerCapital = balances.ownerCapitalDeposits - balances.ownerWithdrawals;
+      return;
+    }
+    if (entry.type === 'Safekeeping') {
+      if (direction === 'cash in') balances.safekeepingDeposits += amount;
+      if (direction === 'cash out') balances.safekeepingWithdrawals += amount;
+      balances.safekeeping = balances.safekeepingDeposits - balances.safekeepingWithdrawals;
+      return;
+    }
+    if (!date || date < from || date > to) return;
+    if (entry.type !== 'Revenue' && entry.type !== 'Expense') return;
+
+    if (entry.type === 'Revenue') totals.revenue += amount;
+    else totals.expenses += amount;
+    const key = [entry.type, entry.category, entry.label, entry.source].join('|');
+    if (!breakdown[key]) {
+      breakdown[key] = {
+        type: entry.type,
+        category: String(entry.category || ''),
+        label: String(entry.label || entry.category || ''),
+        source: String(entry.source || ''),
+        amount: 0,
+        count: 0
+      };
+    }
+    breakdown[key].amount += amount;
+    breakdown[key].count += 1;
+
+    const month = date.slice(0, 7);
+    if (!monthly[month]) monthly[month] = { month, revenue: 0, expenses: 0, profit: 0 };
+    if (entry.type === 'Revenue') monthly[month].revenue += amount;
+    else monthly[month].expenses += amount;
+  }
+
+  const transactions = requireSheet(spreadsheet, TRANSACTION_SHEET);
+  const transactionRows = Math.max(0, transactions.getLastRow() - 1);
+  if (transactionRows) {
+    transactions.getRange(2, 1, transactionRows, 11).getValues().forEach(row => {
+      const type = inventoryKey(row[2]);
+      const amount = Math.abs(numberOrZero(row[5]) * numberOrZero(row[6]));
+      if (type === 'sale') {
+        addEntry({
+          date: row[0], type: 'Revenue', category: 'Storefront Sales',
+          label: row[4], source: row[1] || SOURCE_NAME, amount
+        });
+      }
+      if (type === 'purchase') {
+        addEntry({
+          date: row[0], type: 'Expense', category: 'Storefront Purchases',
+          label: row[4], source: row[1] || SOURCE_NAME, amount
+        });
+      }
+    });
+  }
+
+  const movements = requireSheet(spreadsheet, MANUAL_MOVEMENT_SHEET);
+  const movementRows = Math.max(0, movements.getLastRow() - 1);
+  if (movementRows) {
+    movements.getRange(2, 1, movementRows, 12).getValues().forEach(row => {
+      const type = inventoryKey(row[2]);
+      const kind = guiMovementKind(row[9]);
+      const amount = Math.abs(numberOrZero(row[5]) * numberOrZero(row[6]));
+      const entryType = type === 'owner capital'
+        ? 'Owner Capital'
+        : type === 'safekeeping'
+          ? 'Safekeeping'
+          : type === 'sale'
+            ? 'Revenue'
+            : type === 'purchase'
+              ? 'Expense'
+              : '';
+      if (!entryType || kind === 'Correction') return;
+      const category = entryType === 'Revenue'
+        ? kind === 'P2P Sale' ? 'P2P Sales' : kind === 'Cash In' ? 'Other Income' : 'Manual Sales'
+        : entryType === 'Expense'
+          ? kind === 'P2P Purchase' ? 'P2P Purchases' : kind === 'Cash Out' ? 'Operating Expenses' : 'Manual Purchases'
+          : entryType;
+      addEntry({
+        date: row[0],
+        type: entryType,
+        category,
+        label: row[4] || category,
+        source: row[1] || GUI_SOURCE_NAME,
+        direction: row[3],
+        amount
+      });
+    });
+  }
+
+  const payroll = requireSheet(spreadsheet, PAYROLL_PAYMENT_SHEET);
+  const payrollRows = Math.max(0, payroll.getLastRow() - 1);
+  if (payrollRows) {
+    payroll.getRange(2, 1, payrollRows, 9).getValues().forEach(row => {
+      addEntry({
+        date: row[0], type: 'Expense', category: 'Payroll', label: 'Employee Payroll',
+        source: row[5] || 'Payroll', amount: row[4]
+      });
+    });
+  }
+
+  totals.revenue = roundMoney(totals.revenue);
+  totals.expenses = roundMoney(totals.expenses);
+  totals.profit = roundMoney(totals.revenue - totals.expenses);
+  Object.keys(balances).forEach(key => { balances[key] = roundMoney(balances[key]); });
+  Object.keys(monthly).forEach(key => {
+    monthly[key].revenue = roundMoney(monthly[key].revenue);
+    monthly[key].expenses = roundMoney(monthly[key].expenses);
+    monthly[key].profit = roundMoney(monthly[key].revenue - monthly[key].expenses);
+  });
+
+  return {
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    from: from === '0000-01-01' ? '' : from,
+    to: to === '9999-12-31' ? '' : to,
+    totals,
+    balances,
+    ledger: readLedgerSnapshot(spreadsheet),
+    breakdown: Object.keys(breakdown).map(key => {
+      breakdown[key].amount = roundMoney(breakdown[key].amount);
+      return breakdown[key];
+    }).sort((a, b) => a.type.localeCompare(b.type) || b.amount - a.amount || a.label.localeCompare(b.label)),
+    monthly: Object.keys(monthly).map(key => monthly[key]).sort((a, b) => a.month.localeCompare(b.month))
+  };
+}
+
+function cleanFinanceDate(value) {
+  const text = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : '';
+}
+
+function financeDateKey(value, timezone) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (isNaN(date.getTime())) return '';
+  return String(Utilities.formatDate(date, timezone, 'yyyy-MM-dd')).slice(0, 10);
+}
+
+function roundMoney(value) {
+  return Math.round((numberOrZero(value) + Number.EPSILON) * 100) / 100;
 }
 
 function backfillWebhookExceptions(spreadsheet) {
@@ -988,9 +1181,10 @@ function applyCashFlowRows(sheet, applyMovement) {
 
   sheet.getRange(2, 1, rowCount, 7).getValues().forEach(row => {
     const type = inventoryKey(row[2]);
+    const direction = inventoryKey(row[3]);
     const amount = Math.abs(numberOrZero(row[5]) * numberOrZero(row[6]));
-    if (type === 'sale') applyMovement(row[0], amount);
-    if (type === 'purchase') applyMovement(row[0], -amount);
+    if (type === 'sale' || direction === 'cash in') applyMovement(row[0], amount);
+    else if (type === 'purchase' || direction === 'cash out') applyMovement(row[0], -amount);
   });
 }
 
@@ -1057,7 +1251,11 @@ function manualStockDelta(row, location) {
   if (kind === 'P2P Purchase' || kind === 'Correction In' || kind === 'Storage Transfer') {
     return quantity;
   }
-  if (kind === 'Cash In' || kind === 'Cash Out' || kind === 'Payroll Payout' || kind === 'Correction') return 0;
+  if (
+    kind === 'Cash In' || kind === 'Cash Out' || kind === 'Payroll Payout' || kind === 'Correction'
+    || kind === 'Owner Capital Deposit' || kind === 'Owner Withdrawal'
+    || kind === 'Safekeeping Deposit' || kind === 'Safekeeping Withdrawal'
+  ) return 0;
 
   const type = inventoryKey(row[2]);
   const direction = inventoryKey(row[3]);

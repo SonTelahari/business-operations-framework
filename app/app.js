@@ -36,6 +36,7 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "clock.in": "Clocked in",
   "clock.out": "Clocked out",
   "operation.recorded": "Operation recorded",
+  "finance.funds_recorded": "Owner funds recorded",
   "target.updated": "Storefront target updated",
   "target.removed": "Storefront target removed",
   "supplier.saved": "Supplier record saved",
@@ -99,6 +100,8 @@ let activeReviewExceptionId = "";
 let activeProductionBatchId = "";
 let activeView = "quote";
 let activeSection = "dashboard";
+let financeSnapshot = null;
+let financeLoading = false;
 
 const elements = {
   currentUserName: document.querySelector("#currentUserName"),
@@ -285,6 +288,40 @@ const elements = {
   storageOverviewCount: document.querySelector("#storageOverviewCount"),
   storefrontOverviewBody: document.querySelector("#storefrontOverviewBody"),
   storageOverviewBody: document.querySelector("#storageOverviewBody"),
+  financeSection: document.querySelector("#financeSection"),
+  financeDataStatus: document.querySelector("#financeDataStatus"),
+  financePeriod: document.querySelector("#financePeriodSelect"),
+  financeFrom: document.querySelector("#financeFromInput"),
+  financeTo: document.querySelector("#financeToInput"),
+  refreshFinance: document.querySelector("#refreshFinanceButton"),
+  financeRevenue: document.querySelector("#financeRevenueValue"),
+  financeExpense: document.querySelector("#financeExpenseValue"),
+  financeProfit: document.querySelector("#financeProfitValue"),
+  financeLedger: document.querySelector("#financeLedgerValue"),
+  financeSafekeeping: document.querySelector("#financeSafekeepingValue"),
+  financeBusinessCash: document.querySelector("#financeBusinessCashValue"),
+  financeCommitted: document.querySelector("#financeCommittedValue"),
+  financeAvailable: document.querySelector("#financeAvailableValue"),
+  financeOwnerCapital: document.querySelector("#financeOwnerCapitalValue"),
+  financeOwnerCapitalDetail: document.querySelector("#financeOwnerCapitalDetail"),
+  financeSupplyCommitment: document.querySelector("#financeSupplyCommitmentValue"),
+  financeSupplyCommitmentDetail: document.querySelector("#financeSupplyCommitmentDetail"),
+  financeBuyCommitment: document.querySelector("#financeBuyCommitmentValue"),
+  financeBuyCommitmentDetail: document.querySelector("#financeBuyCommitmentDetail"),
+  financeRestockCommitment: document.querySelector("#financeRestockCommitmentValue"),
+  financeRestockCommitmentDetail: document.querySelector("#financeRestockCommitmentDetail"),
+  financeSupplyCommitmentList: document.querySelector("#financeSupplyCommitmentList"),
+  financeBuyCommitmentList: document.querySelector("#financeBuyCommitmentList"),
+  financeRestockCommitmentList: document.querySelector("#financeRestockCommitmentList"),
+  financeBreakdownFilter: document.querySelector("#financeBreakdownFilter"),
+  financeBreakdownBody: document.querySelector("#financeBreakdownBody"),
+  financeMonthlyBody: document.querySelector("#financeMonthlyBody"),
+  financeFundsType: document.querySelector("#financeFundsTypeInput"),
+  financeFundsAmount: document.querySelector("#financeFundsAmountInput"),
+  financeFundsEmployee: document.querySelector("#financeFundsEmployeeInput"),
+  financeFundsNote: document.querySelector("#financeFundsNoteInput"),
+  saveFinanceFunds: document.querySelector("#saveFinanceFundsButton"),
+  financeFundsStatus: document.querySelector("#financeFundsStatus"),
   stockAlertList: document.querySelector("#stockAlertList"),
   missingStockCount: document.querySelector("#missingStockCount"),
   materialShortageCount: document.querySelector("#materialShortageCount"),
@@ -366,6 +403,7 @@ const elements = {
 
 seedDatalist();
 wireEvents();
+setFinancePeriod("month", false);
 render();
 loadSessionAndData();
 
@@ -640,6 +678,18 @@ function wireEvents() {
   elements.supplierProduct.addEventListener("input", updateSupplierProductDefaults);
   elements.supplierSearch.addEventListener("input", renderSupplierDirectory);
   elements.storeOverviewSearch.addEventListener("input", renderStoreOverview);
+  elements.financePeriod.addEventListener("change", () => setFinancePeriod(elements.financePeriod.value));
+  elements.financeFrom.addEventListener("change", () => {
+    elements.financePeriod.value = "custom";
+    loadFinance();
+  });
+  elements.financeTo.addEventListener("change", () => {
+    elements.financePeriod.value = "custom";
+    loadFinance();
+  });
+  elements.refreshFinance.addEventListener("click", () => loadFinance());
+  elements.financeBreakdownFilter.addEventListener("change", renderFinanceBreakdown);
+  elements.saveFinanceFunds.addEventListener("click", recordFinanceFunds);
   [
     elements.supplierName,
     elements.supplierCategory,
@@ -684,6 +734,7 @@ function wireEvents() {
       }
       if (activeSection === "buy-orders" && isManagement()) loadStorefrontBuyOrders({ silent: true });
       if (activeSection === "review" && isManagement()) loadBackendSnapshot({ silent: true });
+      if (activeSection === "finance" && isManagement()) loadFinance();
       if (activeSection === "production") loadProductionBatches({ silent: true });
       if (activeSection === "daily-close" && isManagement()) renderDailyCloseWorkspace();
     });
@@ -1711,6 +1762,7 @@ function render() {
   renderDashboard();
   renderLatestHandoff();
   renderStoreOverview();
+  renderFinance();
   renderTimeClock();
   renderOperations();
   renderReviewWorkspace();
@@ -1928,6 +1980,7 @@ function renderSection() {
   });
   elements.dashboardSection.classList.toggle("hidden", activeSection !== "dashboard");
   elements.storeSection.classList.toggle("hidden", activeSection !== "store");
+  elements.financeSection.classList.toggle("hidden", activeSection !== "finance");
   elements.restockSection.classList.toggle("hidden", activeSection !== "restock");
   elements.buyOrdersSection.classList.toggle("hidden", activeSection !== "buy-orders");
   elements.supplySection.classList.toggle("hidden", activeSection !== "supplies");
@@ -1940,6 +1993,9 @@ function renderSection() {
   const supplyMode = activeSection === "supplies";
   const buyOrderMode = activeSection === "buy-orders";
   const closeMode = activeSection === "daily-close";
+  const financeMode = activeSection === "finance";
+  elements.newDocument.classList.toggle("hidden", financeMode);
+  elements.saveDocument.classList.toggle("hidden", financeMode);
   elements.newDocument.textContent = supplyMode ? "New Supply" : buyOrderMode ? "New Buy Order" : closeMode ? "Today's Close" : "New Sale";
   elements.saveDocument.textContent = supplyMode ? "Save Supply" : buyOrderMode ? "Save Buy Order" : closeMode ? "Save Draft" : "Save Sale";
 }
@@ -2040,6 +2096,219 @@ function renderStoreOverview() {
   elements.ledgerOverviewDetail.textContent = ledger.countedAt
     ? `Counted ${formatDateTime(ledger.countedAt)} / ${movementText} since count`
     : `Recorded cash movement ${movementText}`;
+}
+
+function setFinancePeriod(preset, refresh = true) {
+  const now = new Date();
+  let from = elements.financeFrom.value;
+  let to = elements.financeTo.value;
+  if (preset === "month") {
+    from = localDateKey(new Date(now.getFullYear(), now.getMonth(), 1));
+    to = localDateKey(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  } else if (preset === "last-month") {
+    from = localDateKey(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+    to = localDateKey(new Date(now.getFullYear(), now.getMonth(), 0));
+  } else if (preset === "year") {
+    from = `${now.getFullYear()}-01-01`;
+    to = `${now.getFullYear()}-12-31`;
+  } else if (preset === "all") {
+    from = "";
+    to = "";
+  }
+  elements.financePeriod.value = preset;
+  elements.financeFrom.value = from;
+  elements.financeTo.value = to;
+  if (refresh && currentUser && activeSection === "finance" && isManagement()) loadFinance();
+}
+
+async function loadFinance({ silent = false } = {}) {
+  if (!isManagement() || financeLoading) return false;
+  const from = elements.financeFrom.value;
+  const to = elements.financeTo.value;
+  if (from && to && from > to) {
+    elements.financeDataStatus.textContent = "The start date must be before the end date";
+    return false;
+  }
+
+  financeLoading = true;
+  elements.refreshFinance.disabled = true;
+  if (!silent || !financeSnapshot) elements.financeDataStatus.textContent = "Balancing the shared accounts";
+  try {
+    const parameters = new URLSearchParams();
+    if (from) parameters.set("from", from);
+    if (to) parameters.set("to", to);
+    const response = await fetch(`/api/finance${parameters.size ? `?${parameters}` : ""}`, {
+      headers: { accept: "application/json" }
+    });
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return false;
+    }
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    financeSnapshot = result;
+    renderFinance();
+    const period = result.period?.from || result.period?.to
+      ? `${result.period.from ? formatDelivery(result.period.from) : "Beginning"} to ${result.period.to ? formatDelivery(result.period.to) : "Today"}`
+      : "All recorded activity";
+    elements.financeDataStatus.textContent = `${period} / refreshed ${formatDateTime(result.generatedAt)}`;
+    return true;
+  } catch (error) {
+    elements.financeDataStatus.textContent = `Finance unavailable: ${error.message}`;
+    return false;
+  } finally {
+    financeLoading = false;
+    elements.refreshFinance.disabled = false;
+  }
+}
+
+function renderFinance() {
+  if (!financeSnapshot || !elements.financeSection) return;
+  const totals = financeSnapshot.totals || {};
+  const balances = financeSnapshot.balances || {};
+  const cash = financeSnapshot.cash || {};
+  const commitments = financeSnapshot.commitments || {};
+
+  elements.financeRevenue.textContent = formatFinanceCurrency(totals.revenue);
+  elements.financeExpense.textContent = formatFinanceCurrency(totals.expenses);
+  elements.financeProfit.textContent = formatFinanceCurrency(totals.profit);
+  elements.financeProfit.closest(".finance-profit-cell")?.classList.toggle("loss", Number(totals.profit || 0) < 0);
+  elements.financeLedger.textContent = formatFinanceAvailableCurrency(cash.ledgerBalance);
+  elements.financeSafekeeping.textContent = formatFinanceCurrency(cash.safekeepingHeld);
+  elements.financeBusinessCash.textContent = formatFinanceAvailableCurrency(cash.businessCash);
+  elements.financeCommitted.textContent = formatFinanceCurrency(cash.committed);
+  elements.financeAvailable.textContent = formatFinanceAvailableCurrency(cash.availableAfterCommitments);
+  elements.financeAvailable.closest(".finance-available-cell")?.classList.toggle("short", Number(cash.availableAfterCommitments) < 0);
+  elements.financeOwnerCapital.textContent = formatFinanceCurrency(balances.ownerCapital);
+  elements.financeOwnerCapitalDetail.textContent = `${formatFinanceCurrency(balances.ownerCapitalDeposits)} deposited / ${formatFinanceCurrency(balances.ownerWithdrawals)} withdrawn`;
+
+  elements.financeSupplyCommitment.textContent = formatFinanceCurrency(commitments.supplyOrders);
+  elements.financeSupplyCommitmentDetail.textContent = `${(commitments.supplyLines || []).length} remaining ${(commitments.supplyLines || []).length === 1 ? "line" : "lines"}`;
+  elements.financeBuyCommitment.textContent = formatFinanceCurrency(commitments.storefrontBuyOrders);
+  elements.financeBuyCommitmentDetail.textContent = `${(commitments.buyOrderLines || []).length} open ${(commitments.buyOrderLines || []).length === 1 ? "order" : "orders"}`;
+  elements.financeRestockCommitment.textContent = formatFinanceCurrency(commitments.missingStock);
+  const restockCount = (commitments.restockLines || []).length;
+  const unpriced = Number(commitments.unpricedLines || 0);
+  const missingRecipes = (commitments.missingProducts || []).filter(product => !product.recipeAvailable);
+  elements.financeRestockCommitmentDetail.textContent = `${restockCount} material ${restockCount === 1 ? "shortage" : "shortages"}${unpriced ? ` / ${unpriced} awaiting a price` : ""}${missingRecipes.length ? ` / ${missingRecipes.length} without a recipe` : ""}`;
+  elements.financeSupplyCommitmentList.innerHTML = renderFinanceCommitmentLines(commitments.supplyLines, "supplier");
+  elements.financeBuyCommitmentList.innerHTML = renderFinanceCommitmentLines(commitments.buyOrderLines, "buy-order");
+  const restockLines = commitments.restockLines || [];
+  elements.financeRestockCommitmentList.innerHTML = [
+    restockLines.length || !missingRecipes.length ? renderFinanceCommitmentLines(restockLines, "restock") : "",
+    ...missingRecipes.map(product => `
+      <div class="finance-detail-row">
+        <span>${escapeHtml(product.label)}</span>
+        <small>${formatNumber(product.quantity)} needed / recipe required for costing</small>
+        <strong>Unpriced</strong>
+      </div>
+    `)
+  ].join("");
+  renderFinanceBreakdown();
+  renderFinanceMonthly();
+}
+
+function renderFinanceCommitmentLines(lines = [], type) {
+  if (!lines.length) return `<div class="empty-card">Nothing committed here</div>`;
+  return lines.map(line => {
+    const context = type === "supplier"
+      ? `${line.producer || "Supplier"} / ${formatNumber(line.quantity)} at ${formatFinanceCurrency(line.unitPrice)}`
+      : type === "buy-order"
+        ? `${formatNumber(line.quantity)} remaining at ${formatFinanceCurrency(line.unitPrice)}`
+        : `${formatNumber(line.quantity)} needed${Number(line.unitPrice || 0) ? ` at ${formatFinanceCurrency(line.unitPrice)}` : " / price needed"}`;
+    return `
+      <div class="finance-detail-row">
+        <span>${escapeHtml(line.label || "Unlabelled line")}</span>
+        <small>${escapeHtml(context)}</small>
+        <strong>${formatFinanceCurrency(line.amount)}</strong>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderFinanceBreakdown() {
+  if (!elements.financeBreakdownBody) return;
+  const filter = elements.financeBreakdownFilter.value || "All";
+  const rows = (financeSnapshot?.breakdown || []).filter(row => filter === "All" || row.type === filter);
+  if (!rows.length) {
+    elements.financeBreakdownBody.innerHTML = `<tr><td colspan="5" class="empty-line">No matching entries in this period</td></tr>`;
+    return;
+  }
+  elements.financeBreakdownBody.innerHTML = rows.map(row => `
+    <tr>
+      <td><span class="status-pill ${normalize(row.type)}">${escapeHtml(row.type)}</span></td>
+      <td><strong>${escapeHtml(row.category)}</strong><span>${escapeHtml(row.source || "Shared ledger")}</span></td>
+      <td>${escapeHtml(row.label || row.category)}</td>
+      <td>${formatNumber(row.count)}</td>
+      <td>${formatFinanceCurrency(row.amount)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderFinanceMonthly() {
+  const rows = [...(financeSnapshot?.monthly || [])].sort((a, b) => b.month.localeCompare(a.month));
+  if (!rows.length) {
+    elements.financeMonthlyBody.innerHTML = `<tr><td colspan="4" class="empty-line">No monthly results in this period</td></tr>`;
+    return;
+  }
+  elements.financeMonthlyBody.innerHTML = rows.map(row => `
+    <tr>
+      <td><strong>${escapeHtml(formatFinanceMonth(row.month))}</strong></td>
+      <td>${formatFinanceCurrency(row.revenue)}</td>
+      <td>${formatFinanceCurrency(row.expenses)}</td>
+      <td class="${Number(row.profit || 0) < 0 ? "metric-short" : ""}">${formatFinanceCurrency(row.profit)}</td>
+    </tr>
+  `).join("");
+}
+
+async function recordFinanceFunds() {
+  if (currentRole !== "admin" || financeLoading) return;
+  const amount = Number(elements.financeFundsAmount.value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    elements.financeFundsStatus.textContent = "Enter an amount greater than zero";
+    elements.financeFundsAmount.focus();
+    return;
+  }
+  elements.saveFinanceFunds.disabled = true;
+  elements.financeFundsStatus.textContent = "Writing the entry to the shared ledger";
+  const result = await addOperation({
+    kind: elements.financeFundsType.value,
+    location: "Ledger",
+    itemName: "",
+    itemLabel: "",
+    itemTag: "",
+    quantity: "",
+    employee: currentUser.fullName,
+    amount,
+    note: elements.financeFundsNote.value.trim()
+  });
+  if (!result?.ok) {
+    elements.financeFundsStatus.textContent = `Saved locally; sheet sync pending${result?.error ? `: ${result.error}` : ""}`;
+    elements.saveFinanceFunds.disabled = false;
+    return;
+  }
+  elements.financeFundsAmount.value = "0";
+  elements.financeFundsNote.value = "";
+  elements.financeFundsStatus.textContent = "Recorded in the shared ledger";
+  await loadBackendSnapshot({ silent: true });
+  await loadFinance();
+  elements.saveFinanceFunds.disabled = false;
+}
+
+function formatFinanceMonth(value) {
+  const date = new Date(`${value}-01T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? String(value || "")
+    : new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(date);
+}
+
+function formatFinanceAvailableCurrency(value) {
+  return Number.isFinite(value) ? formatFinanceCurrency(value) : "Unavailable";
+}
+
+function formatFinanceCurrency(value) {
+  const amount = Number(value || 0);
+  return amount < 0 ? `-$${formatNumber(Math.abs(amount))}` : `$${formatNumber(amount)}`;
 }
 
 function updateDailyCloseFromInputs() {
@@ -2437,7 +2706,7 @@ function renderRole() {
     activeSection = "dashboard";
     renderSection();
   }
-  if (!isManagement() && (activeSection === "operations" || activeSection === "supplies" || activeSection === "buy-orders" || activeSection === "review")) {
+  if (!isManagement() && (activeSection === "operations" || activeSection === "supplies" || activeSection === "buy-orders" || activeSection === "review" || activeSection === "finance")) {
     activeSection = "dashboard";
     renderSection();
   }
@@ -3423,7 +3692,7 @@ function addOperation(entry) {
   persistOperations();
   renderOperations();
   renderStoreOverview();
-  syncOperation(savedEntry.id);
+  return syncOperation(savedEntry.id);
 }
 
 function renderOperations() {
@@ -3572,7 +3841,8 @@ function applyIdentityDefaults() {
     elements.countEmployee,
     elements.movementEmployee,
     elements.ledgerEmployee,
-    elements.payrollEnteredBy
+    elements.payrollEnteredBy,
+    elements.financeFundsEmployee
   ];
   identityFields.forEach(field => {
     if (!field) return;
@@ -3802,6 +4072,7 @@ async function syncOperation(entryId) {
   persistOperations();
   renderOperations();
   renderStoreOverview();
+  return result;
 }
 
 async function syncStockTarget(targetKey) {
@@ -3869,6 +4140,7 @@ function refreshBackendIfStale() {
   loadBackendSnapshot({ silent: true });
   if (isManagement()) {
     loadSupplyOrders({ silent: true });
+    if (activeSection === "finance") loadFinance({ silent: true });
   }
 }
 
@@ -3934,6 +4206,7 @@ async function performBackendRefresh({ silent = false } = {}) {
       renderSupplyWorkspace();
       renderStorefrontBuyOrderWorkspace();
       renderReviewWorkspace();
+      if (activeSection === "finance" && isManagement()) loadFinance({ silent: true });
       if (!silent) retryPendingSyncs();
     } else {
       renderStoreOverview();
@@ -4229,10 +4502,13 @@ function uniqueOrders(items) {
 }
 
 function todayKey() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
+  return localDateKey(new Date());
+}
+
+function localDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 

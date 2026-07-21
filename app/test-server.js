@@ -30,6 +30,32 @@ let failNextReceiverWrite = false;
 let failReceiverAfterSuccessfulWrites = -1;
 const mockReceiver = http.createServer(async (request, response) => {
   if (request.method === "GET") {
+    const action = new URL(request.url, `http://127.0.0.1:${receiverPort}`).searchParams.get("action");
+    if (action === "finance") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        ok: true,
+        generatedAt: "2026-07-13T03:30:00.000Z",
+        from: "2026-07-01",
+        to: "2026-07-31",
+        totals: { revenue: 300, expenses: 125, profit: 175 },
+        balances: {
+          ownerCapitalDeposits: 500,
+          ownerWithdrawals: 50,
+          ownerCapital: 450,
+          safekeepingDeposits: 200,
+          safekeepingWithdrawals: 25,
+          safekeeping: 175
+        },
+        ledger: { balance: 6025 },
+        breakdown: [
+          { type: "Revenue", category: "Storefront Sales", label: "Navy Revolver", source: "Discord", amount: 300, count: 3 },
+          { type: "Expense", category: "Payroll", label: "Employee Payroll", source: "Cash", amount: 125, count: 1 }
+        ],
+        monthly: [{ month: "2026-07", revenue: 300, expenses: 125, profit: 175 }]
+      }));
+      return;
+    }
     const materials = [...storageCounts.entries()].map(([key, storageCount]) => ({
       ingredient: key === "softwood" ? "Softwood" : key.replace(/^./, character => character.toUpperCase()),
       storageCount
@@ -147,9 +173,10 @@ async function run() {
       result.supplyReceipts,
       result.productionBatches,
       result.sharedSalesOrders,
-      result.dailyCloses
+      result.dailyCloses,
+      result.financeReporting
     ]),
-    ["accounts", true, true, true, true, true]
+    ["accounts", true, true, true, true, true, true]
   );
 
   const loginPage = await fetch(`${baseUrl}/login.html`);
@@ -184,6 +211,8 @@ async function run() {
   assert.match(authenticatedHtml, /Exceptions Inbox/);
   assert.match(authenticatedHtml, /Production Queue/);
   assert.match(authenticatedHtml, /Daily Close and Handoff/);
+  assert.match(authenticatedHtml, /Profit and Loss/);
+  assert.match(authenticatedHtml, /Record Capital or Safekeeping/);
 
   const inventoryResolver = await fetch(`${baseUrl}/inventory-counts.js`, { headers: { cookie: ownerCookie } });
   assert.equal(inventoryResolver.status, 200);
@@ -316,6 +345,8 @@ async function run() {
   assert.equal(employeeSupplyAttempt.response.status, 403);
   const employeeBuyOrderAttempt = await getJson(`${baseUrl}/api/storefront-buy-orders`, employeeCookie);
   assert.equal(employeeBuyOrderAttempt.response.status, 403);
+  const employeeFinanceAttempt = await getJson(`${baseUrl}/api/finance`, employeeCookie);
+  assert.equal(employeeFinanceAttempt.response.status, 403);
   const employeeSupplierAttempt = await getJson(`${baseUrl}/api/suppliers`, employeeCookie);
   assert.equal(employeeSupplierAttempt.response.status, 403);
   const employeeDailyCloseAttempt = await getJson(`${baseUrl}/api/daily-closes`, employeeCookie);
@@ -540,6 +571,19 @@ async function run() {
   }, managerCookie);
   assert.equal(savedBuyOrder.response.status, 200);
   assert.equal(savedBuyOrder.body.order.filledQuantity, 0);
+  const financeWithBuyOrder = await getJson(`${baseUrl}/api/finance?from=2026-07-01&to=2026-07-31`, managerCookie);
+  assert.equal(financeWithBuyOrder.response.status, 200);
+  assert.deepEqual(financeWithBuyOrder.body.totals, { revenue: 300, expenses: 125, profit: 175 });
+  assert.equal(financeWithBuyOrder.body.cash.ledgerBalance, 6025);
+  assert.equal(financeWithBuyOrder.body.cash.safekeepingHeld, 175);
+  assert.equal(financeWithBuyOrder.body.cash.businessCash, 5850);
+  assert.equal(financeWithBuyOrder.body.commitments.storefrontBuyOrders, 10);
+  assert(financeWithBuyOrder.body.commitments.missingStock >= 0);
+  assert.equal(
+    financeWithBuyOrder.body.commitments.missingProducts.find(product => product.label === "Navy Revolver").quantity,
+    2,
+    "finished guns in storage must offset the storefront shortage before material cash is reserved"
+  );
   buyOrderPurchases.push({
     eventId: "buy-fill-1",
     occurredAt: "2026-07-13T04:00:00.000Z",
@@ -607,6 +651,14 @@ async function run() {
   assert.equal(savedSupplyOrder.body.order.lines[0].receivedQuantity, 0);
   const sharedSupplyOrders = await getJson(`${baseUrl}/api/supply-orders`, ownerCookie);
   assert.equal(sharedSupplyOrders.body.orders[0].producer, "Van Horn Foundry");
+  const financeWithSupplyOrder = await getJson(`${baseUrl}/api/finance`, ownerCookie);
+  assert.equal(financeWithSupplyOrder.response.status, 200);
+  assert.equal(financeWithSupplyOrder.body.commitments.supplyOrders, 30);
+  assert.equal(financeWithSupplyOrder.body.commitments.storefrontBuyOrders, 0);
+  assert.equal(
+    financeWithSupplyOrder.body.cash.availableAfterCommitments,
+    financeWithSupplyOrder.body.cash.businessCash - financeWithSupplyOrder.body.commitments.total
+  );
 
   const partialReceipt = await post(`${baseUrl}/api/supply-orders/supply-order-1/receive`, {
     receipts: [{ lineId: "iron-line", quantity: 7 }]
@@ -703,6 +755,19 @@ async function run() {
   }, managerCookie);
   assert.equal(managerPayrollAttempt.response.status, 403);
   assert.equal(managerPayrollAttempt.body.code, "admin_required");
+  const managerOwnerFundsAttempt = await post(`${baseUrl}/api/sync`, {
+    action: "manual_operation",
+    entry: { id: "manager-owner-funds", kind: "Owner Capital Deposit", location: "Ledger", amount: 200 }
+  }, managerCookie);
+  assert.equal(managerOwnerFundsAttempt.response.status, 403);
+  assert.equal(managerOwnerFundsAttempt.body.code, "admin_required");
+
+  const ownerFundsEntry = await post(`${baseUrl}/api/sync`, {
+    action: "manual_operation",
+    entry: { id: "owner-funds", kind: "Safekeeping Deposit", location: "Ledger", amount: 200, employee: "Spoofed" }
+  }, ownerCookie);
+  assert.equal(ownerFundsEntry.response.status, 200);
+  assert.equal(receiverPayloads.at(-1).entry.employee, "Frontier Owner");
 
   const managerPromotionAttempt = await post(`${baseUrl}/api/admin/users/${worker.id}/promote`, {}, managerCookie);
   assert.equal(managerPromotionAttempt.response.status, 403);

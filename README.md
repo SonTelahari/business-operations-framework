@@ -11,8 +11,8 @@ Employees request access with their in-game character name and a password. No re
 Roles are intentionally separated:
 
 - Employees can use the shared sales-order register, restock information, the shared production queue, and their time clock. They can start batches and record completed craft cycles.
-- Managers can also queue or cancel production, run counts and adjustments, maintain storefront targets, finalize daily closes, approve or disable employee accounts, and review the employee audit ledger.
-- Admins can additionally run payroll, promote or demote managers, and reopen a signed daily close when a correction is required.
+- Managers can also queue or cancel production, run counts and adjustments, maintain storefront targets, review the finance ledger, finalize daily closes, approve or disable employee accounts, and review the employee audit ledger.
+- Admins can additionally run payroll, record owner capital and safekeeping movements, promote or demote managers, and reopen a signed daily close when a correction is required.
 
 The server-side audit ledger records account requests, successful sign-ins and sign-outs, staff actions, sales-order changes, time-clock events, counts, adjustments, and storefront target changes. It does not record passwords, IP addresses, or real-life identity data.
 
@@ -29,6 +29,14 @@ Management can keep one shared reconciliation record per business date. A draft 
 A close cannot be finalized until storefront and storage are confirmed and a ledger count is entered. Any difference from the shared ledger requires an explanation. Finalized records are locked, the latest signed handoff is shown to every employee on the dashboard, and only an admin can reopen a close. Saves, finalizations, and reopenings are written to the employee audit ledger.
 
 The Railway GUI service needs one persistent volume so accounts survive deployments. See `docs/hosting.md` for the migration from the shared login.
+
+## Finance Ledger
+
+The management-only Finance page reports cash-basis earnings, expenses, and operating profit for selectable periods. Storefront sales and purchases, P2P cash movements, operating costs, and payroll feed the P&L. Ledger corrections remain part of cash reconciliation but are excluded from operating profit.
+
+William's owner capital and safekeeping money are tracked separately from earnings. Capital remains available business equity; safekeeping is deducted from ledger cash to show the actual business cash position. Only an admin can record deposits or withdrawals for either balance.
+
+Committed cash combines remaining ordered supplier lines, open storefront buy orders, and the estimated materials still needed for storefront targets. Finished stock in Storage and quantities already on order are deducted before the restock reserve is calculated, preventing the same requirement from being reserved twice.
 
 ## Current Catalog Categories
 
