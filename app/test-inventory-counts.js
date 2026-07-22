@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { normalizeKey, selectLatestCounts, selectCurrentLedger } = require("./inventory-counts");
+const { normalizeKey, resolveCatalogItem, selectLatestCounts, selectCurrentLedger } = require("./inventory-counts");
 const pricing = require("./pricing");
 
 global.window = {};
@@ -11,6 +11,17 @@ assert.equal(normalizeKey("Wood"), "softwood");
 assert.equal(normalizeKey("Soft Wood"), "softwood");
 assert.equal(pricing.materials.Softwood.midpoint, 0.175);
 assert(Object.values(recipes).flat().every(([ingredient]) => ingredient !== "Wood"));
+
+const navyItems = [
+  { name: "Navy Crossover Revolver", label: "Revolver Navy Crossover", tag: "WEAPON_REVOLVER_NAVY_CROSSOVER", category: "Revolvers" },
+  { name: "Navy Revolver", label: "Revolver Navy", tag: "WEAPON_REVOLVER_NAVY", category: "Revolvers" }
+];
+assert.equal(
+  resolveCatalogItem(navyItems, "Revolver Navy").name,
+  "Navy Revolver",
+  "an exact stock label must win over an earlier partial label match"
+);
+assert.equal(resolveCatalogItem(navyItems, "WEAPON_REVOLVER_NAVY").name, "Navy Revolver");
 
 const staleSheet = selectLatestCounts({
   location: "Storage",

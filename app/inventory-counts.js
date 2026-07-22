@@ -22,6 +22,23 @@
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
+  function resolveCatalogItem(catalog, value) {
+    const needle = normalizeKey(value);
+    if (!needle || !Array.isArray(catalog)) return null;
+    const fieldsFor = item => [
+      item?.name,
+      item?.label,
+      item?.tag,
+      ...(Array.isArray(item?.aliases) ? item.aliases : [])
+    ].filter(Boolean).map(normalizeKey);
+    const exact = catalog.find(item => fieldsFor(item).includes(needle));
+    if (exact) return exact;
+    return catalog.find(item => [
+      ...fieldsFor(item),
+      normalizeKey(item?.category)
+    ].some(field => field.includes(needle))) || null;
+  }
+
   function selectLatestCounts({ location, inventory = {}, operations = [], snapshotGeneratedAt = "" }) {
     const backendCounts = new Map();
     const sourceRows = location === "Storefront"
@@ -158,5 +175,5 @@
     };
   }
 
-  return { normalizeKey, selectLatestCounts, selectCurrentLedger };
+  return { normalizeKey, resolveCatalogItem, selectLatestCounts, selectCurrentLedger };
 });

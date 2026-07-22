@@ -853,18 +853,7 @@ function addItemLine() {
 }
 
 function findCatalogItem(value) {
-  const needle = normalize(value);
-  if (!needle) return null;
-
-  const exactMatch = itemCatalog.find(item => [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])]
-    .map(normalize)
-    .includes(needle));
-  if (exactMatch) return exactMatch;
-
-  return itemCatalog.find(item => {
-    const fields = [item.name, item.label, item.tag, item.category, ...(Array.isArray(item.aliases) ? item.aliases : [])].map(normalize);
-    return fields.some(field => field.includes(needle));
-  });
+  return window.FRONTIER_INVENTORY_COUNTS.resolveCatalogItem(itemCatalog, value);
 }
 
 async function saveActiveOrder() {
@@ -3797,11 +3786,7 @@ function resolveItem(value) {
 function resolveStockItem(value) {
   const trimmed = value.trim();
   if (!trimmed) return { name: "", label: "", tag: "" };
-  const needle = normalize(trimmed);
-  const item = stockCatalog.find(entry => {
-    const haystack = normalize(`${entry.name} ${entry.label || ""} ${entry.tag || ""} ${entry.category || ""} ${(entry.aliases || []).join(" ")}`);
-    return haystack.includes(needle);
-  });
+  const item = window.FRONTIER_INVENTORY_COUNTS.resolveCatalogItem(stockCatalog, trimmed);
   return item || { name: trimmed, label: trimmed, tag: "", category: "Manual" };
 }
 
