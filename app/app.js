@@ -80,6 +80,13 @@ const pricingCatalog = window.FRONTIER_PRICING || { materials: {} };
 const { buildSupplyQuoteTelegram } = window.FRONTIER_SUPPLY_TELEGRAM;
 const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
+const productCatalogByKey = new Map();
+itemCatalog.forEach(item => {
+  [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])].forEach(value => {
+    const key = normalize(value);
+    if (key && !productCatalogByKey.has(key)) productCatalogByKey.set(key, item);
+  });
+});
 
 let legacyOrdersPendingMigration = loadOrders();
 let orders = [];
@@ -117,6 +124,9 @@ let activeView = "quote";
 let activeSection = "dashboard";
 let financeSnapshot = null;
 let financeLoading = false;
+let activeProductCardKey = "";
+let productInsightRequestId = 0;
+const productInsightCache = new Map();
 
 const elements = {
   currentUserName: document.querySelector("#currentUserName"),
@@ -303,6 +313,12 @@ const elements = {
   storageOverviewCount: document.querySelector("#storageOverviewCount"),
   storefrontOverviewBody: document.querySelector("#storefrontOverviewBody"),
   storageOverviewBody: document.querySelector("#storageOverviewBody"),
+  productCardPanel: document.querySelector("#productCardPanel"),
+  productCardCategory: document.querySelector("#productCardCategory"),
+  productCardTitle: document.querySelector("#productCardTitle"),
+  productCardMeta: document.querySelector("#productCardMeta"),
+  productCardBody: document.querySelector("#productCardBody"),
+  closeProductCard: document.querySelector("#closeProductCardButton"),
   financeSection: document.querySelector("#financeSection"),
   financeDataStatus: document.querySelector("#financeDataStatus"),
   financeCoverageStatus: document.querySelector("#financeCoverageStatus"),
@@ -695,6 +711,7 @@ function wireEvents() {
   elements.supplierProduct.addEventListener("input", updateSupplierProductDefaults);
   elements.supplierSearch.addEventListener("input", renderSupplierDirectory);
   elements.storeOverviewSearch.addEventListener("input", renderStoreOverview);
+  elements.closeProductCard.addEventListener("click", closeProductCard);
   elements.financePeriod.addEventListener("change", () => setFinancePeriod(elements.financePeriod.value));
   elements.financeFrom.addEventListener("change", () => {
     elements.financePeriod.value = "custom";
@@ -2078,6 +2095,8 @@ function renderStoreOverview() {
   elements.storageOverviewCount.textContent = inventoryLineCountText(visibleStorage.length, storageRows.length, query);
   elements.storefrontOverviewBody.innerHTML = renderInventoryOverviewRows(visibleStorefront, true);
   elements.storageOverviewBody.innerHTML = renderInventoryOverviewRows(visibleStorage, false);
+  wireProductCardRows();
+  if (activeProductCardKey) renderProductCard();
 
   const sheetGeneratedAt = backendSnapshot?.sheet?.generatedAt;
   elements.storeOverviewMeta.textContent = sheetGeneratedAt
@@ -2107,6 +2126,170 @@ function renderStoreOverview() {
   elements.ledgerOverviewDetail.textContent = ledger.countedAt
     ? `Counted ${formatDateTime(ledger.countedAt)} / ${movementText} since count`
     : `Recorded cash movement ${movementText}`;
+}
+
+function wireProductCardRows() {
+  document.querySelectorAll("[data-product-key]").forEach(row => {
+    const open = () => openProductCard(row.dataset.productKey);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      open();
+    });
+  });
+}
+
+function openProductCard(productKey) {
+  const item = catalogProductFor(productKey);
+  if (!item) return;
+  activeProductCardKey = normalize(item.name);
+  elements.productCardPanel.classList.remove("hidden");
+  renderProductCard();
+  document.querySelectorAll("[data-product-key]").forEach(row => {
+    row.classList.toggle("selected", row.dataset.productKey === activeProductCardKey);
+  });
+  loadProductInsight(item);
+  if (window.matchMedia("(max-width: 980px)").matches) {
+    elements.productCardPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+function closeProductCard() {
+  activeProductCardKey = "";
+  productInsightRequestId += 1;
+  elements.productCardPanel.classList.add("hidden");
+  document.querySelectorAll("[data-product-key].selected").forEach(row => row.classList.remove("selected"));
+}
+
+function renderProductCard() {
+  const item = catalogProductFor(activeProductCardKey);
+  if (!item) {
+    elements.productCardPanel.classList.add("hidden");
+    return;
+  }
+
+  const recipe = Array.isArray(recipeCatalog[item.name]) ? recipeCatalog[item.name] : [];
+  const yieldQuantity = recipeYield(item.name);
+  const storefront = Number(getLatestCounts("Storefront").get(inventoryOverviewKey(item)) || 0);
+  const storageCounts = getLatestCounts("Storage");
+  const storage = Number(storageCounts.get(inventoryOverviewKey(item)) || 0);
+  const target = stockTargets.find(entry => !entry.deleting && inventoryOverviewKey(entry) === inventoryOverviewKey(item));
+  const retailPrice = Number(item.price || 0);
+  const productPricing = pricingCatalog.products?.[item.name];
+  const ingredients = recipe.map(([ingredient, quantity]) => {
+    const pricing = pricingCatalog.materials?.[ingredient];
+    const unitCost = Number(pricing?.midpoint || 0);
+    return {
+      ingredient,
+      quantity: Number(quantity || 0),
+      unitCost,
+      costKnown: Boolean(pricing),
+      available: Number(storageCounts.get(inventoryOverviewKey({ ingredient })) || 0)
+    };
+  });
+  const costKnown = ingredients.length > 0 && ingredients.every(ingredient => ingredient.costKnown);
+  const batchCost = ingredients.reduce((sum, ingredient) => sum + ingredient.quantity * ingredient.unitCost, 0);
+  const unitCost = yieldQuantity ? batchCost / yieldQuantity : batchCost;
+  const unitProfit = retailPrice > 0 && costKnown ? retailPrice - unitCost : null;
+  const margin = unitProfit !== null && retailPrice > 0 ? (unitProfit / retailPrice) * 100 : null;
+
+  elements.productCardCategory.textContent = item.category || "Product Record";
+  elements.productCardTitle.textContent = item.label || item.name;
+  elements.productCardMeta.textContent = item.tag
+    ? `${item.name} / ${item.tag}`
+    : item.name;
+  const insight = productInsightCache.get(activeProductCardKey);
+  const managementPricing = isManagement() ? `
+    <div><dt>Est. gross / unit</dt><dd class="${unitProfit !== null && unitProfit < 0 ? "negative" : ""}">${unitProfit === null ? "Unavailable" : `$${formatNumber(unitProfit)}`}</dd></div>
+    <div><dt>Est. gross margin</dt><dd>${margin === null ? "Unavailable" : `${formatNumber(margin)}%`}</dd></div>
+  ` : "";
+  const salesSection = isManagement() ? renderProductSalesInsight(insight) : "";
+  const recipeRows = ingredients.length
+    ? ingredients.map(ingredient => `
+      <div class="product-recipe-row ${ingredient.available < ingredient.quantity ? "short" : ""}">
+        <div><strong>${escapeHtml(ingredient.ingredient)}</strong><span>${formatNumber(ingredient.available)} in storage</span></div>
+        <span>${formatNumber(ingredient.quantity)} needed</span>
+        <span>${ingredient.costKnown ? `$${formatNumber(ingredient.quantity * ingredient.unitCost)}` : "Unpriced"}</span>
+      </div>
+    `).join("")
+    : `<div class="empty-card">No recipe recorded</div>`;
+  const image = item.image ? `
+    <img class="product-card-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.label || item.name)}">
+  ` : "";
+  const wiki = item.wikiUrl ? `
+    <a class="product-card-link" href="${escapeHtml(item.wikiUrl)}" target="_blank" rel="noreferrer">Open reference</a>
+  ` : "";
+
+  elements.productCardBody.innerHTML = `
+    ${image}
+    <dl class="product-card-stock">
+      <div><dt>Storefront</dt><dd>${formatNumber(storefront)}</dd></div>
+      <div><dt>Storage</dt><dd>${formatNumber(storage)}</dd></div>
+      <div><dt>Target</dt><dd>${target ? formatNumber(target.target) : "-"}</dd></div>
+    </dl>
+    <section class="product-card-section">
+      <h3>Price and Cost</h3>
+      <dl class="product-card-facts">
+        <div><dt>Store price</dt><dd>${retailPrice > 0 ? `$${formatNumber(retailPrice)}` : "Not priced"}</dd></div>
+        <div><dt>MSRP range</dt><dd>${productPricing ? `$${formatNumber(productPricing.low)}-$${formatNumber(productPricing.high)}` : "Unavailable"}</dd></div>
+        <div><dt>MSRP material cost</dt><dd>${costKnown ? `$${formatNumber(unitCost)} / unit` : "Unavailable"}</dd></div>
+        <div><dt>Recipe yield</dt><dd>${formatNumber(yieldQuantity)}</dd></div>
+        ${managementPricing}
+      </dl>
+    </section>
+    <section class="product-card-section">
+      <div class="product-card-section-heading"><h3>Recipe</h3><span>${costKnown ? `$${formatNumber(batchCost)} / batch` : "Cost incomplete"}</span></div>
+      <div class="product-recipe-list">${recipeRows}</div>
+    </section>
+    ${salesSection}
+    ${wiki}
+  `;
+}
+
+function renderProductSalesInsight(insight) {
+  if (!insight || insight.status === "loading") {
+    return `<section class="product-card-section"><h3>Recorded Sales</h3><p class="product-card-status">Loading sales history</p></section>`;
+  }
+  if (insight.status === "error") {
+    return `<section class="product-card-section"><h3>Recorded Sales</h3><p class="product-card-status">${escapeHtml(insight.error || "Sales history unavailable")}</p></section>`;
+  }
+  const sales = insight.data?.sales || {};
+  const channels = Array.isArray(sales.channels) ? sales.channels : [];
+  return `
+    <section class="product-card-section">
+      <div class="product-card-section-heading"><h3>Recorded Sales</h3><span>All history</span></div>
+      <dl class="product-card-facts product-sales-facts">
+        <div><dt>Revenue</dt><dd>$${formatNumber(sales.revenue || 0)}</dd></div>
+        <div><dt>Transactions</dt><dd>${formatNumber(sales.transactions || 0)}</dd></div>
+        <div><dt>Average ticket</dt><dd>$${formatNumber(sales.averageTransaction || 0)}</dd></div>
+      </dl>
+      ${channels.length ? `<div class="product-sales-channels">${channels.map(channel => `
+        <div><span>${escapeHtml(channel.category)}</span><strong>$${formatNumber(channel.revenue)} / ${formatNumber(channel.transactions)}</strong></div>
+      `).join("")}</div>` : `<p class="product-card-status">No recorded sales yet</p>`}
+    </section>
+  `;
+}
+
+async function loadProductInsight(item) {
+  if (!isManagement()) return;
+  const key = normalize(item.name);
+  const cached = productInsightCache.get(key);
+  if (cached?.status === "ready" && Date.now() - cached.fetchedAt < 60000) return;
+  const requestId = ++productInsightRequestId;
+  productInsightCache.set(key, { status: "loading" });
+  if (activeProductCardKey === key) renderProductCard();
+  try {
+    const response = await fetch(`/api/product-insights/${encodeURIComponent(item.name)}`, {
+      headers: { accept: "application/json" }
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    productInsightCache.set(key, { status: "ready", data: result, fetchedAt: Date.now() });
+  } catch (error) {
+    productInsightCache.set(key, { status: "error", error: error.message, fetchedAt: Date.now() });
+  }
+  if (requestId === productInsightRequestId && activeProductCardKey === key) renderProductCard();
 }
 
 function setFinancePeriod(preset, refresh = true) {
@@ -2633,7 +2816,8 @@ function buildInventoryOverviewRows(catalog, counts, location) {
       label: item.label || item.name,
       name: item.name,
       category: isMaterial ? "Material" : (item.category || "Counted Item"),
-      quantity: Number(counts.get(key) || 0)
+      quantity: Number(counts.get(key) || 0),
+      productKey: isMaterial ? "" : (catalogProductFor(item.name)?.name || "")
     };
     rowsByKey.set(key, row);
     rows.push(row);
@@ -2688,7 +2872,8 @@ function renderInventoryOverviewRows(rows, showTarget) {
   const columns = showTarget ? 4 : 3;
   if (!rows.length) return `<tr><td colspan="${columns}" class="empty-line">No matching inventory lines</td></tr>`;
   return rows.map(row => `
-    <tr>
+    <tr class="${row.productKey ? `inventory-product-row${normalize(row.productKey) === activeProductCardKey ? " selected" : ""}` : ""}"
+        ${row.productKey ? `data-product-key="${escapeHtml(normalize(row.productKey))}" tabindex="0" title="Open product record"` : ""}>
       <td>
         <strong>${escapeHtml(row.label)}</strong>
         ${row.name && normalize(row.name) !== normalize(row.label) ? `<span>${escapeHtml(row.name)}</span>` : ""}
@@ -2698,6 +2883,10 @@ function renderInventoryOverviewRows(rows, showTarget) {
       ${showTarget ? `<td class="${row.target ? "" : "inventory-zero"}">${row.target ? formatNumber(row.target) : "-"}</td>` : ""}
     </tr>
   `).join("");
+}
+
+function catalogProductFor(value) {
+  return productCatalogByKey.get(normalize(value)) || null;
 }
 
 function inventoryOverviewKey(entry) {

@@ -2,19 +2,15 @@
 
 ## Product Cards
 
-Create an easily searchable product page for every manufactured and sold item.
+The first product-card release is available from finished-product rows in the Store tab. It includes identity, live storefront and storage counts, target, current price and MSRP range, recipe, recipe yield, ingredient availability, estimated current material cost, and shortage cues. Managers and admins additionally receive all-time recorded sales aggregates and estimated gross profit and margin per unit using MSRP midpoint costs.
 
-Each card should include:
+The next product-card phase should add:
 
-- In-game name, label, tag, category, and optional item-icon image
-- Current storefront and storage counts, storefront target, and active restock demand
-- Current sale price and price history
-- Recipe, recipe yield, and material quantities
-- Current manufacturing cost with the supplier or MSRP source and price date
-- Profit and gross-margin percentage per unit
-- Units sold, sales revenue, and average realized sale price by selectable period
+- Searchable product directory and optional item-icon image
+- Active restock demand
+- Sale-price and material-cost history
+- Units sold and average realized unit price by selectable period
 - Open customer orders, production batches, and storefront buy orders involving the item
 - Wiki or roleplay-reference link when one exists
 
 Cost history must use price snapshots so later supplier-price changes do not rewrite old profit figures. Product images should be optional uploaded assets with a neutral placeholder when no in-game icon has been captured yet.
-

@@ -184,9 +184,10 @@ async function run() {
       result.productionBatches,
       result.sharedSalesOrders,
       result.dailyCloses,
-      result.financeReporting
+      result.financeReporting,
+      result.productInsights
     ]),
-    ["accounts", true, true, true, true, true, true]
+    ["accounts", true, true, true, true, true, true, true]
   );
 
   const loginPage = await fetch(`${baseUrl}/login.html`);
@@ -284,6 +285,9 @@ async function run() {
   const employeeSession = await getJson(`${baseUrl}/api/auth/session`, employeeCookie);
   assert.equal(employeeSession.body.user.fullName, "Ada Employee");
   assert.equal(employeeSession.body.user.accountManagement, true);
+  const employeeProductInsight = await getJson(`${baseUrl}/api/product-insights/Navy%20Revolver`, employeeCookie);
+  assert.equal(employeeProductInsight.response.status, 403);
+  assert.equal(employeeProductInsight.body.code, "manager_required");
 
   const createdSalesOrder = await post(`${baseUrl}/api/sales-orders`, {
     id: "sales-order-1",
@@ -411,6 +415,16 @@ async function run() {
   const managerFinanceAttempt = await getJson(`${baseUrl}/api/finance`, managerCookie);
   assert.equal(managerFinanceAttempt.response.status, 403);
   assert.equal(managerFinanceAttempt.body.code, "admin_required");
+  const managerProductInsight = await getJson(`${baseUrl}/api/product-insights/Navy%20Revolver`, managerCookie);
+  assert.equal(managerProductInsight.response.status, 200);
+  assert.equal(managerProductInsight.body.item.name, "Navy Revolver");
+  assert.equal(managerProductInsight.body.sales.revenue, 300);
+  assert.equal(managerProductInsight.body.sales.transactions, 3);
+  assert.equal(managerProductInsight.body.sales.averageTransaction, 100);
+  assert.equal(managerProductInsight.body.sales.channels[0].category, "Storefront Sales");
+  const missingProductInsight = await getJson(`${baseUrl}/api/product-insights/Unknown%20Product`, managerCookie);
+  assert.equal(missingProductInsight.response.status, 404);
+  assert.equal(missingProductInsight.body.code, "product_not_found");
 
   const createdDailyClose = await post(`${baseUrl}/api/daily-closes`, {
     id: "daily-close-2026-07-13",

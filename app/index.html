@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Frontier Firearms - Still Water</title>
     <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png?v=20260713-van-horn">
-    <link rel="stylesheet" href="styles.css?v=20260722-role-access">
+    <link rel="stylesheet" href="styles.css?v=20260722-product-cards">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -241,6 +241,18 @@
             </table>
           </div>
         </section>
+
+        <aside class="panel product-card hidden" id="productCardPanel" aria-live="polite">
+          <div class="panel-header product-card-heading">
+            <div>
+              <p class="eyebrow" id="productCardCategory">Product Record</p>
+              <h2 id="productCardTitle">Select a product</h2>
+              <p id="productCardMeta">Click a storefront line for its price, stock, and recipe</p>
+            </div>
+            <button class="icon-button product-card-close" id="closeProductCardButton" type="button" title="Close product card" aria-label="Close product card">&times;</button>
+          </div>
+          <div id="productCardBody"></div>
+        </aside>
 
         <section class="panel inventory-overview-panel">
           <div class="panel-header">
@@ -1552,6 +1564,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260722-role-access"></script>
+    <script src="app.js?v=20260722-product-cards"></script>
   </body>
 </html>

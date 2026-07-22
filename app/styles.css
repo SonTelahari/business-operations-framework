@@ -2193,6 +2193,203 @@ body.auth-page {
   color: var(--muted);
 }
 
+.inventory-product-row {
+  cursor: pointer;
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.inventory-product-row:hover {
+  background: rgba(84, 113, 124, 0.11);
+}
+
+.inventory-product-row.selected {
+  background: rgba(84, 113, 124, 0.16);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.inventory-product-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.product-card {
+  position: sticky;
+  top: 16px;
+  min-width: 0;
+  max-height: calc(100vh - 32px);
+  padding: 18px;
+  overflow: auto;
+  scrollbar-color: var(--accent) rgba(126, 105, 75, 0.16);
+  scrollbar-width: thin;
+}
+
+.product-card-heading {
+  align-items: flex-start;
+}
+
+.product-card-heading > div {
+  min-width: 0;
+}
+
+.product-card-heading h2,
+.product-card-heading p {
+  overflow-wrap: anywhere;
+}
+
+.product-card-close {
+  flex: 0 0 32px;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.product-card-image {
+  display: block;
+  width: min(100%, 320px);
+  max-height: 190px;
+  margin: 0 auto 16px;
+  object-fit: contain;
+  filter: sepia(0.16) contrast(1.04);
+}
+
+.product-card-stock,
+.product-card-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.product-card-stock > div,
+.product-card-facts > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border-left: 1px solid rgba(126, 105, 75, 0.42);
+}
+
+.product-card-stock > div:first-child,
+.product-card-facts > div:first-child {
+  border-left: 0;
+}
+
+.product-card-stock {
+  padding: 7px 0;
+  background: rgba(84, 113, 124, 0.09);
+  border-top: 1px solid rgba(78, 104, 113, 0.46);
+  border-bottom: 1px solid rgba(78, 104, 113, 0.46);
+}
+
+.product-card-stock dt,
+.product-card-facts dt {
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.product-card-stock dd,
+.product-card-facts dd {
+  margin: 5px 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.04rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.product-card-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(126, 105, 75, 0.5);
+}
+
+.product-card-section h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.product-card-section-heading,
+.product-sales-channels > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.product-card-section-heading span,
+.product-card-status,
+.product-sales-channels span,
+.product-recipe-row span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.product-card-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  row-gap: 8px;
+}
+
+.product-card-facts > div:nth-child(odd) {
+  border-left: 0;
+}
+
+.product-card-facts dd.negative {
+  color: #7a3037;
+}
+
+.product-recipe-list,
+.product-sales-channels {
+  border-top: 1px solid rgba(126, 105, 75, 0.32);
+}
+
+.product-recipe-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 7px 4px;
+  border-bottom: 1px solid rgba(126, 105, 75, 0.32);
+}
+
+.product-recipe-row > div {
+  min-width: 0;
+}
+
+.product-recipe-row strong,
+.product-recipe-row > div span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.product-recipe-row.short {
+  box-shadow: inset 3px 0 0 rgba(128, 48, 53, 0.72);
+}
+
+.product-recipe-row.short strong,
+.product-recipe-row.short > div span:first-of-type {
+  color: #7a3037;
+}
+
+.product-sales-facts {
+  margin-bottom: 10px;
+}
+
+.product-sales-channels > div {
+  min-height: 36px;
+  padding: 7px 4px;
+  border-bottom: 1px solid rgba(126, 105, 75, 0.32);
+}
+
+.product-card-status {
+  margin: 0;
+}
+
+.product-card-link {
+  display: inline-block;
+  margin-top: 16px;
+  color: #4d625f;
+  font-weight: 700;
+}
+
 .buy-orders {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.8fr);
@@ -2571,6 +2768,11 @@ body.auth-page {
     grid-template-columns: 1fr;
   }
 
+  .product-card {
+    position: static;
+    max-height: none;
+  }
+
   .buy-orders {
     grid-template-columns: 1fr;
   }
@@ -2589,6 +2791,32 @@ body.auth-page {
     width: 100%;
     padding: 10px 8px 16px;
     box-shadow: none;
+  }
+
+  .product-card-stock,
+  .product-card-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .product-card-stock > div,
+  .product-card-facts > div,
+  .product-card-stock > div:first-child,
+  .product-card-facts > div:first-child {
+    border-left: 0;
+    border-top: 1px solid rgba(126, 105, 75, 0.32);
+  }
+
+  .product-card-stock > div:first-child,
+  .product-card-facts > div:first-child {
+    border-top: 0;
+  }
+
+  .product-recipe-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .product-recipe-row > span:last-child {
+    grid-column: 2;
   }
 
   .workspace,

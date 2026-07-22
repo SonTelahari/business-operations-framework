@@ -16,6 +16,12 @@ Roles are intentionally separated:
 
 The server-side audit ledger records account requests, successful sign-ins and sign-outs, staff actions, sales-order changes, time-clock events, counts, adjustments, and storefront target changes. It does not record passwords, IP addresses, or real-life identity data.
 
+## Product Cards
+
+Finished-product rows in the Store tab open a compact product record beside the inventory table. Every employee can quickly check the current storefront and storage counts, stock target, store price, MSRP range, recipe yield, ingredient requirements, storage availability, and current material cost. Recipe lines with insufficient storage are marked directly in the card.
+
+Managers and admins also see estimated gross profit and margin per unit plus all-time recorded sales revenue, transaction count, average ticket, and sales channels. Cost and margin estimates use the server MSRP midpoint catalog; they are not booked accounting costs. Those aggregates are exposed through a limited product-insight endpoint rather than granting managers access to the full admin Finance report. Catalog entries can later add an optional item image and roleplay-reference URL without changing the card layout.
+
 ## Shared Sales Orders
 
 Customer quotes and work orders are stored in the server-side business register so every signed-in employee sees the same queue. Saves use revisions to prevent an older browser tab from silently overwriting a colleague's changes. Production can only be queued after the current order revision has saved successfully, and orders linked to production are retained instead of being deleted.
@@ -88,4 +94,4 @@ Interrupted Sheet writes remain attached to the batch and can be retried without
 
 See `docs/categories.md` for captured category sources and `docs/hosting.md` for deployment details.
 See `docs/pricing.md` for the MSRP midpoint policy, ingredient aliases, and unresolved prices.
-See `docs/roadmap.md` for the planned per-product sales, cost, margin, recipe, and item-icon cards.
+See `docs/roadmap.md` for the next product-card additions, including period filters, operational links, price history, and item icons.

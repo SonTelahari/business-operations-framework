@@ -77,6 +77,7 @@ const server = http.createServer(async (request, response) => {
         sharedSalesOrders: true,
         dailyCloses: true,
         financeReporting: true,
+        productInsights: true,
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -103,6 +104,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleSalesOrderRoute(request, response, url, user)) return;
       if (await handleProductionBatchRoute(request, response, url, user)) return;
       if (await handleDailyCloseRoute(request, response, url, user)) return;
+      if (await handleProductInsightRoute(request, response, url, user)) return;
       if (await handleFinanceRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(user));
@@ -160,6 +162,7 @@ const server = http.createServer(async (request, response) => {
       if (await handleSalesOrderRoute(request, response, url, user)) return;
       if (await handleProductionBatchRoute(request, response, url, user)) return;
       if (await handleDailyCloseRoute(request, response, url, user)) return;
+      if (await handleProductInsightRoute(request, response, url, user)) return;
       if (await handleFinanceRoute(request, response, url, user)) return;
       if (url.pathname === "/api/bootstrap") {
         sendJson(response, await getBootstrapData(null));
@@ -377,6 +380,79 @@ async function handleFinanceRoute(request, response, url, user) {
       availableAfterCommitments
     },
     commitments
+  });
+  return true;
+}
+
+async function handleProductInsightRoute(request, response, url, user) {
+  const route = url.pathname.match(/^\/api\/product-insights\/([^/]+)$/);
+  if (!route) return false;
+  if (!requireManagement(response, user)) return true;
+  if (request.method !== "GET") {
+    sendJson(response, { ok: false, error: "Product insight route not found", code: "not_found" }, 404);
+    return true;
+  }
+
+  const requested = decodeURIComponent(route[1]);
+  const catalog = readCatalogFiles();
+  const requestedKey = inventoryKey(requested);
+  const item = catalog.items.find(candidate => [
+    candidate.name,
+    candidate.label,
+    candidate.tag,
+    ...(Array.isArray(candidate.aliases) ? candidate.aliases : [])
+  ].some(value => inventoryKey(value) === requestedKey));
+  if (!item) {
+    sendJson(response, { ok: false, error: "Product not found", code: "product_not_found" }, 404);
+    return true;
+  }
+
+  const finance = await readAppsScriptAction("finance");
+  if (!finance?.ok || !Array.isArray(finance.breakdown)) {
+    sendJson(response, {
+      ok: false,
+      error: finance?.error || "Sales history is temporarily unavailable",
+      code: "product_sales_unavailable"
+    }, 502);
+    return true;
+  }
+
+  const productKeys = new Set([
+    item.name,
+    item.label,
+    item.tag,
+    ...(Array.isArray(item.aliases) ? item.aliases : [])
+  ].map(inventoryKey).filter(Boolean));
+  const channels = new Map();
+  finance.breakdown.forEach(row => {
+    if (row.type !== "Revenue" || !productKeys.has(inventoryKey(row.label))) return;
+    const category = String(row.category || "Other Sales");
+    const current = channels.get(category) || { category, revenue: 0, transactions: 0 };
+    current.revenue += Number(row.amount || 0);
+    current.transactions += Number(row.count || 0);
+    channels.set(category, current);
+  });
+  const channelRows = [...channels.values()]
+    .map(channel => ({
+      ...channel,
+      revenue: roundFinanceMoney(channel.revenue),
+      averageTransaction: channel.transactions
+        ? roundFinanceMoney(channel.revenue / channel.transactions)
+        : 0
+    }))
+    .sort((a, b) => b.revenue - a.revenue || a.category.localeCompare(b.category));
+  const revenue = roundFinanceMoney(channelRows.reduce((sum, channel) => sum + channel.revenue, 0));
+  const transactions = channelRows.reduce((sum, channel) => sum + channel.transactions, 0);
+  sendJson(response, {
+    ok: true,
+    generatedAt: finance.generatedAt || new Date().toISOString(),
+    item: { name: item.name, label: item.label, category: item.category },
+    sales: {
+      revenue,
+      transactions,
+      averageTransaction: transactions ? roundFinanceMoney(revenue / transactions) : 0,
+      channels: channelRows
+    }
   });
   return true;
 }
