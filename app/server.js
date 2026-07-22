@@ -348,25 +348,27 @@ async function handleFinanceRoute(request, response, url, user) {
   if (!finance?.ok || !finance.totals || !finance.balances) {
     sendJson(response, {
       ok: false,
-      error: finance?.error || "Apps Script deployment does not expose finance data yet",
+      error: finance?.error || "The live Apps Script is outdated and does not expose finance data. Deploy the current webhook/Code.gs version.",
       code: "finance_snapshot_unavailable"
     }, 502);
     return true;
   }
+  const reconciledFinance = mergeRecordedPurchaseFinance(finance, buildRecordedPurchaseFinance(from, to));
   const sheet = await readSheetSnapshot();
   const commitments = buildFinanceCommitments(sheet);
   const ledgerBalance = finiteOrNull(finance.ledger?.balance ?? sheet?.inventory?.ledger?.balance);
-  const safekeepingHeld = Number(finance.balances.safekeeping || 0);
+  const safekeepingHeld = Number(reconciledFinance.balances.safekeeping || 0);
   const businessCash = ledgerBalance === null ? null : ledgerBalance - safekeepingHeld;
   const availableAfterCommitments = businessCash === null ? null : businessCash - commitments.total;
   sendJson(response, {
     ok: true,
     generatedAt: new Date().toISOString(),
     period: { from: finance.from || from, to: finance.to || to },
-    totals: finance.totals,
-    balances: finance.balances,
-    breakdown: Array.isArray(finance.breakdown) ? finance.breakdown : [],
-    monthly: Array.isArray(finance.monthly) ? finance.monthly : [],
+    totals: reconciledFinance.totals,
+    balances: reconciledFinance.balances,
+    breakdown: reconciledFinance.breakdown,
+    monthly: reconciledFinance.monthly,
+    coverage: reconciledFinance.coverage,
     cash: {
       ledgerBalance,
       safekeepingHeld,
@@ -516,6 +518,129 @@ function cleanDateParameter(value) {
 
 function roundFinanceMoney(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
+function buildRecordedPurchaseFinance(from, to) {
+  const breakdown = new Map();
+  const monthly = new Map();
+  let expenses = 0;
+  let receiptCount = 0;
+  let legacyReceiptCount = 0;
+  let supplierReceiptExpenses = 0;
+  let manualBuyOrderUnits = 0;
+  let manualBuyOrderExpenses = 0;
+
+  function addExpense({ date, amount, category, label, source }) {
+    if (!date || (from && date < from) || (to && date > to) || !amount) return false;
+    expenses += amount;
+    const key = `${category}|${label}|${source}`;
+    const existing = breakdown.get(key) || {
+      type: "Expense",
+      category,
+      label,
+      source,
+      amount: 0,
+      count: 0
+    };
+    existing.amount += amount;
+    existing.count += 1;
+    breakdown.set(key, existing);
+    const month = date.slice(0, 7);
+    const monthEntry = monthly.get(month) || { month, revenue: 0, expenses: 0, profit: 0 };
+    monthEntry.expenses += amount;
+    monthly.set(month, monthEntry);
+    return true;
+  }
+
+  businessStore.listSupplyOrders().forEach(order => {
+    order.lines.forEach(line => {
+      (Array.isArray(line.receipts) ? line.receipts : []).forEach(receipt => {
+        const date = financeDateKey(receipt.receivedAt);
+        const amount = roundFinanceMoney(Number(receipt.quantity || 0) * Number(receipt.unitPrice || 0));
+        if (!addExpense({
+          date,
+          amount,
+          category: "Supplier Purchases",
+          label: line.label || line.name || "Supplier materials",
+          source: order.producer || "Supplier"
+        })) return;
+        receiptCount += 1;
+        supplierReceiptExpenses += amount;
+        if (String(receipt.id || "").startsWith("legacy-receipt:")) legacyReceiptCount += 1;
+      });
+    });
+  });
+
+  const buyOrders = businessStore.listStorefrontBuyOrders();
+  buyOrders.forEach(order => {
+    const quantity = Math.max(0, Number(order.manualFilledQuantity || 0));
+    const amount = roundFinanceMoney(quantity * Number(order.unitPrice || 0));
+    if (!addExpense({
+      date: financeDateKey(order.updatedAt || order.postedAt),
+      amount,
+      category: "Storefront Buy Orders",
+      label: order.itemLabel || order.itemName || "Buy order purchase",
+      source: "Manual fill"
+    })) return;
+    manualBuyOrderUnits += quantity;
+    manualBuyOrderExpenses += amount;
+  });
+
+  return {
+    expenses: roundFinanceMoney(expenses),
+    breakdown: [...breakdown.values()].map(row => ({ ...row, amount: roundFinanceMoney(row.amount) })),
+    monthly: [...monthly.values()].map(row => ({
+      ...row,
+      expenses: roundFinanceMoney(row.expenses),
+      profit: roundFinanceMoney(row.revenue - row.expenses)
+    })),
+    coverage: {
+      supplierReceipts: receiptCount,
+      legacySupplierReceipts: legacyReceiptCount,
+      supplierReceiptExpenses: roundFinanceMoney(supplierReceiptExpenses),
+      buyOrdersReviewed: buyOrders.length,
+      webhookBuyOrderFills: buyOrders.reduce((sum, order) => sum + (order.fillEvents || []).length, 0),
+      manualBuyOrderUnits,
+      manualBuyOrderExpenses: roundFinanceMoney(manualBuyOrderExpenses)
+    }
+  };
+}
+
+function mergeRecordedPurchaseFinance(finance, recorded) {
+  const totals = {
+    revenue: roundFinanceMoney(finance.totals.revenue),
+    expenses: roundFinanceMoney(Number(finance.totals.expenses || 0) + recorded.expenses),
+    profit: 0
+  };
+  totals.profit = roundFinanceMoney(totals.revenue - totals.expenses);
+  const monthly = new Map((Array.isArray(finance.monthly) ? finance.monthly : []).map(row => [row.month, {
+    month: row.month,
+    revenue: Number(row.revenue || 0),
+    expenses: Number(row.expenses || 0),
+    profit: Number(row.profit || 0)
+  }]));
+  recorded.monthly.forEach(row => {
+    const existing = monthly.get(row.month) || { month: row.month, revenue: 0, expenses: 0, profit: 0 };
+    existing.expenses = roundFinanceMoney(existing.expenses + row.expenses);
+    existing.profit = roundFinanceMoney(existing.revenue - existing.expenses);
+    monthly.set(row.month, existing);
+  });
+  return {
+    totals,
+    balances: finance.balances,
+    breakdown: [...(Array.isArray(finance.breakdown) ? finance.breakdown : []), ...recorded.breakdown]
+      .sort((a, b) => a.type.localeCompare(b.type) || Number(b.amount || 0) - Number(a.amount || 0)),
+    monthly: [...monthly.values()].sort((a, b) => a.month.localeCompare(b.month)),
+    coverage: {
+      ...(finance.coverage && typeof finance.coverage === "object" ? finance.coverage : {}),
+      ...recorded.coverage
+    }
+  };
+}
+
+function financeDateKey(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
 }
 
 async function handleSupplyOrderRoute(request, response, url, user) {
@@ -1040,7 +1165,11 @@ async function receiveSupplyOrder(orderId, payload, user) {
       );
     }
 
-    updatedOrder = await businessStore.receiveSupplyLine(orderId, line.id, quantity, user);
+    updatedOrder = await businessStore.receiveSupplyLine(orderId, line.id, quantity, user, {
+      id: operationId,
+      receivedAt: new Date().toISOString(),
+      unitPrice: line.unitPrice
+    });
     storage.set(key, { quantity: absoluteCount, name: itemName });
     const receipt = {
       id: operationId,
@@ -1248,6 +1377,8 @@ async function recordSupplyReceiptAudit(order, line, receipt, user) {
       status: order.status,
       item: line.label || line.name,
       quantity: receipt.quantity,
+      unitPrice: line.unitPrice,
+      amount: roundFinanceMoney(Number(receipt.quantity || 0) * Number(line.unitPrice || 0)),
       receivedQuantity: receipt.receivedQuantity,
       storageCount: receipt.storageCount
     }

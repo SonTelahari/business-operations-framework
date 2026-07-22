@@ -780,7 +780,7 @@ function readWorkbookSnapshot() {
 
   return {
     ok: true,
-    schemaVersion: 6,
+    schemaVersion: 7,
     spreadsheetId: SPREADSHEET_ID,
     generatedAt: new Date().toISOString(),
     sheets,
@@ -807,6 +807,16 @@ function readFinanceSnapshot(parameters) {
     safekeepingDeposits: 0,
     safekeepingWithdrawals: 0,
     safekeeping: 0
+  };
+  const coverage = {
+    transactionsScanned: 0,
+    storefrontSales: 0,
+    storefrontPurchases: 0,
+    manualMovementsScanned: 0,
+    manualEntries: 0,
+    ownerFundEntries: 0,
+    safekeepingEntries: 0,
+    payrollPayments: 0
   };
 
   function addEntry(entry) {
@@ -856,15 +866,18 @@ function readFinanceSnapshot(parameters) {
   const transactionRows = Math.max(0, transactions.getLastRow() - 1);
   if (transactionRows) {
     transactions.getRange(2, 1, transactionRows, 11).getValues().forEach(row => {
+      coverage.transactionsScanned += 1;
       const type = inventoryKey(row[2]);
-      const amount = Math.abs(numberOrZero(row[5]) * numberOrZero(row[6]));
+      const amount = financeRowAmount(row);
       if (type === 'sale') {
+        if (amount) coverage.storefrontSales += 1;
         addEntry({
           date: row[0], type: 'Revenue', category: 'Storefront Sales',
           label: row[4], source: row[1] || SOURCE_NAME, amount
         });
       }
       if (type === 'purchase') {
+        if (amount) coverage.storefrontPurchases += 1;
         addEntry({
           date: row[0], type: 'Expense', category: 'Storefront Purchases',
           label: row[4], source: row[1] || SOURCE_NAME, amount
@@ -877,9 +890,10 @@ function readFinanceSnapshot(parameters) {
   const movementRows = Math.max(0, movements.getLastRow() - 1);
   if (movementRows) {
     movements.getRange(2, 1, movementRows, 12).getValues().forEach(row => {
+      coverage.manualMovementsScanned += 1;
       const type = inventoryKey(row[2]);
       const kind = guiMovementKind(row[9]);
-      const amount = Math.abs(numberOrZero(row[5]) * numberOrZero(row[6]));
+      const amount = financeRowAmount(row);
       const entryType = type === 'owner capital'
         ? 'Owner Capital'
         : type === 'safekeeping'
@@ -890,6 +904,11 @@ function readFinanceSnapshot(parameters) {
               ? 'Expense'
               : '';
       if (!entryType || kind === 'Correction') return;
+      if (amount) {
+        coverage.manualEntries += 1;
+        if (entryType === 'Owner Capital') coverage.ownerFundEntries += 1;
+        if (entryType === 'Safekeeping') coverage.safekeepingEntries += 1;
+      }
       const category = entryType === 'Revenue'
         ? kind === 'P2P Sale' ? 'P2P Sales' : kind === 'Cash In' ? 'Other Income' : 'Manual Sales'
         : entryType === 'Expense'
@@ -911,6 +930,7 @@ function readFinanceSnapshot(parameters) {
   const payrollRows = Math.max(0, payroll.getLastRow() - 1);
   if (payrollRows) {
     payroll.getRange(2, 1, payrollRows, 9).getValues().forEach(row => {
+      if (numberOrZero(row[4])) coverage.payrollPayments += 1;
       addEntry({
         date: row[0], type: 'Expense', category: 'Payroll', label: 'Employee Payroll',
         source: row[5] || 'Payroll', amount: row[4]
@@ -935,6 +955,7 @@ function readFinanceSnapshot(parameters) {
     to: to === '9999-12-31' ? '' : to,
     totals,
     balances,
+    coverage,
     ledger: readLedgerSnapshot(spreadsheet),
     breakdown: Object.keys(breakdown).map(key => {
       breakdown[key].amount = roundMoney(breakdown[key].amount);
@@ -942,6 +963,12 @@ function readFinanceSnapshot(parameters) {
     }).sort((a, b) => a.type.localeCompare(b.type) || b.amount - a.amount || a.label.localeCompare(b.label)),
     monthly: Object.keys(monthly).map(key => monthly[key]).sort((a, b) => a.month.localeCompare(b.month))
   };
+}
+
+function financeRowAmount(row) {
+  const cashFlow = Math.abs(numberOrZero(row && row[8]));
+  if (cashFlow) return cashFlow;
+  return Math.abs(numberOrZero(row && row[5]) * numberOrZero(row && row[6]));
 }
 
 function cleanFinanceDate(value) {

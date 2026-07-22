@@ -47,6 +47,16 @@ const mockReceiver = http.createServer(async (request, response) => {
           safekeepingWithdrawals: 25,
           safekeeping: 175
         },
+        coverage: {
+          transactionsScanned: 9,
+          storefrontSales: 3,
+          storefrontPurchases: 2,
+          manualMovementsScanned: 4,
+          manualEntries: 2,
+          ownerFundEntries: 1,
+          safekeepingEntries: 1,
+          payrollPayments: 1
+        },
         ledger: { balance: 6025 },
         breakdown: [
           { type: "Revenue", category: "Storefront Sales", label: "Navy Revolver", source: "Discord", amount: 300, count: 3 },
@@ -213,6 +223,7 @@ async function run() {
   assert.match(authenticatedHtml, /Daily Close and Handoff/);
   assert.match(authenticatedHtml, /Profit and Loss/);
   assert.match(authenticatedHtml, /Record Capital or Safekeeping/);
+  assert.match(authenticatedHtml, /Reconcile All History/);
 
   const inventoryResolver = await fetch(`${baseUrl}/inventory-counts.js`, { headers: { cookie: ownerCookie } });
   assert.equal(inventoryResolver.status, 200);
@@ -578,6 +589,9 @@ async function run() {
   assert.equal(financeWithBuyOrder.body.cash.safekeepingHeld, 175);
   assert.equal(financeWithBuyOrder.body.cash.businessCash, 5850);
   assert.equal(financeWithBuyOrder.body.commitments.storefrontBuyOrders, 10);
+  assert.equal(financeWithBuyOrder.body.coverage.storefrontSales, 3);
+  assert.equal(financeWithBuyOrder.body.coverage.supplierReceipts, 0);
+  assert.equal(financeWithBuyOrder.body.coverage.buyOrdersReviewed, 1);
   assert(financeWithBuyOrder.body.commitments.missingStock >= 0);
   assert.equal(
     financeWithBuyOrder.body.commitments.missingProducts.find(product => product.label === "Navy Revolver").quantity,
@@ -666,6 +680,9 @@ async function run() {
   assert.equal(partialReceipt.response.status, 200);
   assert.equal(partialReceipt.body.order.status, "Partially Received");
   assert.equal(partialReceipt.body.order.lines[0].receivedQuantity, 7);
+  assert.equal(partialReceipt.body.order.lines[0].receipts.length, 1);
+  assert.equal(partialReceipt.body.order.lines[0].receipts[0].quantity, 7);
+  assert.equal(partialReceipt.body.order.lines[0].receipts[0].unitPrice, 1.5);
   assert.equal(storageCounts.get("iron"), 19);
   assert.equal(partialReceipt.body.receipts[0].storageCount, 19);
   assert.equal(receiverPayloads.at(-1).entry.kind, "Stock Count");
@@ -680,7 +697,17 @@ async function run() {
   assert.equal(completeReceipt.response.status, 200);
   assert.equal(completeReceipt.body.order.status, "Received");
   assert.equal(completeReceipt.body.order.lines[0].receivedQuantity, 20);
+  assert.equal(completeReceipt.body.order.lines[0].receipts.length, 2);
   assert.equal(storageCounts.get("iron"), 32);
+  const financeAfterSupplyReceipts = await getJson(`${baseUrl}/api/finance?from=2026-07-01&to=2026-07-31`, ownerCookie);
+  assert.deepEqual(financeAfterSupplyReceipts.body.totals, { revenue: 300, expenses: 157, profit: 143 });
+  assert.equal(financeAfterSupplyReceipts.body.coverage.supplierReceipts, 2);
+  assert.equal(financeAfterSupplyReceipts.body.coverage.supplierReceiptExpenses, 30);
+  assert.equal(financeAfterSupplyReceipts.body.coverage.manualBuyOrderUnits, 2);
+  assert.equal(financeAfterSupplyReceipts.body.coverage.manualBuyOrderExpenses, 2);
+  assert(financeAfterSupplyReceipts.body.breakdown.some(row =>
+    row.category === "Supplier Purchases" && row.label === "Iron" && row.amount === 30 && row.count === 2
+  ));
 
   const writesBeforeRepeat = receiverPayloads.length;
   const repeatedReceipt = await post(`${baseUrl}/api/supply-orders/supply-order-1/receive`, {

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Frontier Firearms - Still Water</title>
     <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png?v=20260713-van-horn">
-    <link rel="stylesheet" href="styles.css?v=20260722-finance">
+    <link rel="stylesheet" href="styles.css?v=20260722-finance-reconcile">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -274,6 +274,7 @@
               <p class="eyebrow">Accounts Ledger</p>
               <h2>Profit and Loss</h2>
               <p id="financeDataStatus">Choose a period to load the shared accounts</p>
+              <p class="finance-coverage" id="financeCoverageStatus">No finance records reconciled yet</p>
             </div>
             <div class="finance-period-controls">
               <label>
@@ -294,7 +295,10 @@
                 To
                 <input id="financeToInput" type="date">
               </label>
-              <button class="ghost-button" id="refreshFinanceButton" type="button">Refresh</button>
+              <div class="finance-period-actions">
+                <button class="ghost-button" id="refreshFinanceButton" type="button">Refresh</button>
+                <button class="ghost-button" id="reconcileFinanceButton" type="button">Reconcile All History</button>
+              </div>
             </div>
           </div>
           <div class="finance-pnl-stats">
@@ -1548,6 +1552,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260722-production-selection"></script>
+    <script src="app.js?v=20260722-finance-reconcile"></script>
   </body>
 </html>

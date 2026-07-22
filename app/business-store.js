@@ -12,7 +12,7 @@ class BusinessStore {
   constructor({ filePath }) {
     this.filePath = filePath;
     this.data = {
-      version: 6,
+      version: 7,
       salesOrders: [],
       supplyOrders: [],
       suppliers: [],
@@ -453,7 +453,7 @@ class BusinessStore {
     });
   }
 
-  async receiveSupplyLine(orderId, lineId, quantity, actor) {
+  async receiveSupplyLine(orderId, lineId, quantity, actor, receiptInput = {}) {
     return this.mutate(async () => {
       const order = this.data.supplyOrders.find(candidate => candidate.id === cleanText(orderId, 100));
       if (!order) throw businessError("Supply order not found", 404, "not_found");
@@ -470,7 +470,14 @@ class BusinessStore {
       }
 
       line.receivedQuantity = receivedQuantity + receiptQuantity;
-      const now = new Date().toISOString();
+      const now = cleanDateTime(receiptInput.receivedAt) || new Date().toISOString();
+      if (!Array.isArray(line.receipts)) line.receipts = [];
+      line.receipts.push({
+        id: cleanText(receiptInput.id, 100) || crypto.randomUUID(),
+        receivedAt: now,
+        quantity: receiptQuantity,
+        unitPrice: Math.max(0, finiteNumber(receiptInput.unitPrice, line.unitPrice))
+      });
       order.status = order.lines.every(candidate => Number(candidate.receivedQuantity || 0) >= Number(candidate.quantity || 0))
         ? "Received"
         : "Partially Received";
@@ -500,13 +507,13 @@ class BusinessStore {
       if (!Array.isArray(parsed.salesOrders)) parsed.salesOrders = [];
       if (!Array.isArray(parsed.dailyCloses)) parsed.dailyCloses = [];
       return {
-        version: 6,
+        version: 7,
         salesOrders: parsed.salesOrders
           .filter(order => order && typeof order === "object")
           .map(order => cleanStoredSalesOrder(order)),
         supplyOrders: parsed.supplyOrders
           .filter(order => order && typeof order === "object")
-          .map(order => order.status === "Draft" ? { ...order, status: "Active" } : order),
+          .map(order => cleanStoredSupplyOrder(order)),
         suppliers: parsed.suppliers
           .filter(supplier => supplier && typeof supplier === "object")
           .map(supplier => ({
@@ -527,7 +534,7 @@ class BusinessStore {
     } catch (error) {
       if (error.code === "ENOENT") {
         return {
-          version: 6,
+          version: 7,
           salesOrders: [],
           supplyOrders: [],
           suppliers: [],
@@ -994,8 +1001,62 @@ function cleanSupplyLine(line, existingLine) {
     category: cleanText(line.category || "Recipe Ingredient", 60),
     quantity,
     unitPrice: Math.max(0, finiteNumber(line.unitPrice, 0)),
-    receivedQuantity
+    receivedQuantity,
+    receipts: cleanSupplyReceipts(existingLine?.receipts)
   };
+}
+
+function cleanStoredSupplyOrder(order) {
+  const id = cleanText(order.id, 100) || crypto.randomUUID();
+  const updatedAt = cleanDateTime(order.updatedAt) || cleanDateTime(order.createdAt) || new Date().toISOString();
+  const lines = (Array.isArray(order.lines) ? order.lines : []).slice(0, 100).map(line => {
+    const lineId = cleanText(line?.id, 100) || crypto.randomUUID();
+    const receivedQuantity = Math.max(0, finiteNumber(line?.receivedQuantity, 0));
+    const receipts = cleanSupplyReceipts(line?.receipts);
+    const recordedQuantity = receipts.reduce((sum, receipt) => sum + receipt.quantity, 0);
+    if (receivedQuantity > recordedQuantity) {
+      receipts.push({
+        id: `legacy-receipt:${id}:${lineId}`.slice(0, 100),
+        receivedAt: updatedAt,
+        quantity: receivedQuantity - recordedQuantity,
+        unitPrice: Math.max(0, finiteNumber(line?.unitPrice, 0))
+      });
+    }
+    return {
+      ...line,
+      id: lineId,
+      name: cleanText(line?.name || line?.label, 100),
+      label: cleanText(line?.label || line?.name, 100),
+      category: cleanText(line?.category || "Recipe Ingredient", 60),
+      quantity: Math.max(1, finiteNumber(line?.quantity, 1), receivedQuantity),
+      unitPrice: Math.max(0, finiteNumber(line?.unitPrice, 0)),
+      receivedQuantity,
+      receipts
+    };
+  });
+  let status = SUPPLY_ORDER_STATUSES.has(order.status) ? order.status : "Active";
+  if (status === "Draft") status = "Active";
+  if (status !== "Cancelled" && lines.some(line => line.receivedQuantity > 0)) {
+    status = lines.every(line => line.receivedQuantity >= line.quantity) ? "Received" : "Partially Received";
+  }
+  return {
+    ...order,
+    id,
+    producer: cleanText(order.producer, 100),
+    status,
+    lines,
+    createdAt: cleanDateTime(order.createdAt) || updatedAt,
+    updatedAt
+  };
+}
+
+function cleanSupplyReceipts(receipts) {
+  return (Array.isArray(receipts) ? receipts : []).slice(0, 1000).map(receipt => ({
+    id: cleanText(receipt?.id, 100) || crypto.randomUUID(),
+    receivedAt: cleanDateTime(receipt?.receivedAt) || new Date(0).toISOString(),
+    quantity: Math.max(0, finiteNumber(receipt?.quantity, 0)),
+    unitPrice: Math.max(0, finiteNumber(receipt?.unitPrice, 0))
+  })).filter(receipt => receipt.quantity > 0);
 }
 
 function cleanDate(value) {

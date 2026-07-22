@@ -3049,7 +3049,24 @@ body.auth-page {
   grid-template-columns: minmax(130px, 1fr) repeat(2, minmax(130px, 1fr)) auto;
   gap: 8px;
   align-items: end;
-  width: min(100%, 620px);
+  width: min(100%, 760px);
+}
+
+.finance-period-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.finance-period-actions button {
+  white-space: nowrap;
+}
+
+.finance-coverage {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.74rem;
 }
 
 .finance-pnl-stats,
@@ -3516,6 +3533,10 @@ body.auth-page {
     width: 100%;
   }
 
+  .finance-period-actions {
+    justify-content: flex-end;
+  }
+
   .finance-commitment-columns {
     grid-template-columns: 1fr;
   }
@@ -3573,6 +3594,11 @@ body.auth-page {
 
   .finance-owner-strip {
     grid-template-columns: 1fr;
+  }
+
+  .finance-period-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .finance-owner-strip strong,

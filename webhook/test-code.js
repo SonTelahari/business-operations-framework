@@ -201,6 +201,16 @@ context.SpreadsheetApp = {
 };
 const finance = plain(context.readFinanceSnapshot({ from: "2026-07-01", to: "2026-07-31" }));
 assert.deepEqual(finance.totals, { revenue: 130, expenses: 45, profit: 85 });
+assert.deepEqual(finance.coverage, {
+  transactionsScanned: 2,
+  storefrontSales: 1,
+  storefrontPurchases: 1,
+  manualMovementsScanned: 7,
+  manualEntries: 6,
+  ownerFundEntries: 2,
+  safekeepingEntries: 2,
+  payrollPayments: 1
+});
 assert.equal(finance.balances.ownerCapitalDeposits, 500);
 assert.equal(finance.balances.ownerWithdrawals, 50);
 assert.equal(finance.balances.ownerCapital, 450);
@@ -214,6 +224,7 @@ assert(finance.breakdown.some(row => row.category === "Operating Expenses" && ro
 assert(finance.breakdown.some(row => row.category === "Payroll" && row.amount === 15));
 assert.equal(finance.breakdown.some(row => row.label === "Ledger Adjustment"), false, "corrections must not distort operating P&L");
 assert.deepEqual(finance.monthly, [{ month: "2026-07", revenue: 130, expenses: 45, profit: 85 }]);
+assert.equal(context.financeRowAmount(["", "", "Sale", "Stock Out", "Navy Revolver", 1, 0, -1, 105]), 105);
 
 const mappedReviewEvent = plain(context.applyStoredItemMapping({
   getSheetByName(name) {

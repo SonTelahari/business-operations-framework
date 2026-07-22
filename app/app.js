@@ -290,10 +290,12 @@ const elements = {
   storageOverviewBody: document.querySelector("#storageOverviewBody"),
   financeSection: document.querySelector("#financeSection"),
   financeDataStatus: document.querySelector("#financeDataStatus"),
+  financeCoverageStatus: document.querySelector("#financeCoverageStatus"),
   financePeriod: document.querySelector("#financePeriodSelect"),
   financeFrom: document.querySelector("#financeFromInput"),
   financeTo: document.querySelector("#financeToInput"),
   refreshFinance: document.querySelector("#refreshFinanceButton"),
+  reconcileFinance: document.querySelector("#reconcileFinanceButton"),
   financeRevenue: document.querySelector("#financeRevenueValue"),
   financeExpense: document.querySelector("#financeExpenseValue"),
   financeProfit: document.querySelector("#financeProfitValue"),
@@ -688,6 +690,10 @@ function wireEvents() {
     loadFinance();
   });
   elements.refreshFinance.addEventListener("click", () => loadFinance());
+  elements.reconcileFinance.addEventListener("click", () => {
+    setFinancePeriod("all", false);
+    loadFinance();
+  });
   elements.financeBreakdownFilter.addEventListener("change", renderFinanceBreakdown);
   elements.saveFinanceFunds.addEventListener("click", recordFinanceFunds);
   [
@@ -2121,6 +2127,7 @@ async function loadFinance({ silent = false } = {}) {
 
   financeLoading = true;
   elements.refreshFinance.disabled = true;
+  elements.reconcileFinance.disabled = true;
   if (!silent || !financeSnapshot) elements.financeDataStatus.textContent = "Balancing the shared accounts";
   try {
     const parameters = new URLSearchParams();
@@ -2148,6 +2155,7 @@ async function loadFinance({ silent = false } = {}) {
   } finally {
     financeLoading = false;
     elements.refreshFinance.disabled = false;
+    elements.reconcileFinance.disabled = false;
   }
 }
 
@@ -2157,6 +2165,7 @@ function renderFinance() {
   const balances = financeSnapshot.balances || {};
   const cash = financeSnapshot.cash || {};
   const commitments = financeSnapshot.commitments || {};
+  const coverage = financeSnapshot.coverage || {};
 
   elements.financeRevenue.textContent = formatFinanceCurrency(totals.revenue);
   elements.financeExpense.textContent = formatFinanceCurrency(totals.expenses);
@@ -2170,6 +2179,15 @@ function renderFinance() {
   elements.financeAvailable.closest(".finance-available-cell")?.classList.toggle("short", Number(cash.availableAfterCommitments) < 0);
   elements.financeOwnerCapital.textContent = formatFinanceCurrency(balances.ownerCapital);
   elements.financeOwnerCapitalDetail.textContent = `${formatFinanceCurrency(balances.ownerCapitalDeposits)} deposited / ${formatFinanceCurrency(balances.ownerWithdrawals)} withdrawn`;
+  elements.financeCoverageStatus.textContent = [
+    `${formatNumber(coverage.storefrontSales || 0)} storefront sales`,
+    `${formatNumber(coverage.storefrontPurchases || 0)} storefront purchases`,
+    `${formatNumber(coverage.buyOrdersReviewed || 0)} buy orders reviewed`,
+    `${formatNumber(coverage.manualEntries || 0)} manual entries`,
+    `${formatNumber(coverage.supplierReceipts || 0)} supplier receipts`,
+    `${formatNumber(coverage.payrollPayments || 0)} payroll payments`,
+    `${formatNumber(coverage.ownerFundEntries || 0)} owner-fund entries`
+  ].join(" / ");
 
   elements.financeSupplyCommitment.textContent = formatFinanceCurrency(commitments.supplyOrders);
   elements.financeSupplyCommitmentDetail.textContent = `${(commitments.supplyLines || []).length} remaining ${(commitments.supplyLines || []).length === 1 ? "line" : "lines"}`;

@@ -34,6 +34,8 @@ The Railway GUI service needs one persistent volume so accounts survive deployme
 
 The management-only Finance page reports cash-basis earnings, expenses, and operating profit for selectable periods. Storefront sales and purchases, P2P cash movements, operating costs, and payroll feed the P&L. Ledger corrections remain part of cash reconciliation but are excluded from operating profit.
 
+`Reconcile All History` scans every Sheet transaction and manual cash record without creating duplicate rows. The coverage line shows the number of storefront sales, storefront purchases, buy orders, manual entries, supplier receipts, payroll payments, and owner-fund entries examined. Received supplier-order quantities are retained as dated, price-snapshotted expenses; older received quantities are migrated into one legacy receipt per line.
+
 William's owner capital and safekeeping money are tracked separately from earnings. Capital remains available business equity; safekeeping is deducted from ledger cash to show the actual business cash position. Only an admin can record deposits or withdrawals for either balance.
 
 Committed cash combines remaining ordered supplier lines, open storefront buy orders, and the estimated materials still needed for storefront targets. Finished stock in Storage and quantities already on order are deducted before the restock reserve is calculated, preventing the same requirement from being reserved twice.
@@ -86,3 +88,4 @@ Interrupted Sheet writes remain attached to the batch and can be retried without
 
 See `docs/categories.md` for captured category sources and `docs/hosting.md` for deployment details.
 See `docs/pricing.md` for the MSRP midpoint policy, ingredient aliases, and unresolved prices.
+See `docs/roadmap.md` for the planned per-product sales, cost, margin, recipe, and item-icon cards.
