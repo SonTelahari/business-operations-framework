@@ -3271,6 +3271,9 @@ function renderProductionQueue() {
   const filter = elements.productionFilter.value || "Active";
   const visible = productionBatches.filter(batch => filter === "All"
     || (filter === "Active" ? PRODUCTION_ACTIVE_STATUSES.has(batch.status) : batch.status === filter));
+  if (!visible.some(batch => batch.id === activeProductionBatchId)) {
+    activeProductionBatchId = visible[0]?.id || "";
+  }
   elements.productionBatchList.innerHTML = visible.length
     ? visible.map(batch => {
       const planned = batch.lines.reduce((sum, line) => sum + Number(line.plannedCrafts || 0), 0);
@@ -3292,7 +3295,7 @@ function renderProductionQueue() {
       renderProductionQueue();
     });
   });
-  renderProductionDetail(productionBatches.find(batch => batch.id === activeProductionBatchId));
+  renderProductionDetail(visible.find(batch => batch.id === activeProductionBatchId));
 }
 
 function renderProductionDetail(batch) {
@@ -3444,7 +3447,7 @@ async function cancelSelectedProductionBatch() {
   const batch = productionBatches.find(candidate => candidate.id === activeProductionBatchId);
   if (!batch || !isManagement() || productionActionPending) return;
   if (!window.confirm(`Cancel production batch ${batch.reference || batch.id}?`)) return;
-  await runProductionAction(batch, "cancel", {}, "Production batch cancelled");
+  await runProductionAction(batch, "cancel", {}, "Production batch cancelled / available under Cancelled");
 }
 
 async function runProductionAction(batch, action, payload, successMessage) {
@@ -3462,7 +3465,7 @@ async function runProductionAction(batch, action, payload, successMessage) {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     productionBatches = Array.isArray(result.batches) ? result.batches : [];
     activeProductionBatchId = result.batch.id;
-    finalMessage = result.batch.sourceType === "Storefront Restock"
+    finalMessage = action === "progress" && result.batch.sourceType === "Storefront Restock"
       ? "Materials recorded / awaiting storefront deposit"
       : successMessage;
   } catch (error) {
@@ -3472,7 +3475,13 @@ async function runProductionAction(batch, action, payload, successMessage) {
     productionActionPending = false;
     renderProductionQueue();
     renderReplenishment();
-    if (finalMessage) elements.productionActionStatus.textContent = finalMessage;
+    if (finalMessage) {
+      if (activeProductionBatchId === batch.id) {
+        elements.productionActionStatus.textContent = finalMessage;
+      } else {
+        elements.productionDataStatus.textContent = finalMessage;
+      }
+    }
   }
 }
 
