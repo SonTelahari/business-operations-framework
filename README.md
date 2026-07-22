@@ -10,9 +10,9 @@ Employees request access with their in-game character name and a password. No re
 
 Roles are intentionally separated:
 
-- Employees can use the shared sales-order register, restock information, the shared production queue, and their time clock. They can start batches and record completed craft cycles.
-- Managers can also queue or cancel production, run counts and adjustments, maintain storefront targets, review the finance ledger, finalize daily closes, approve or disable employee accounts, and review the employee audit ledger.
-- Admins can additionally run payroll, record owner capital and safekeeping movements, promote or demote managers, and reopen a signed daily close when a correction is required.
+- Employees see Dashboard, Store, Workbench, and Production. They can clock in, work with shared customer orders, start assigned batches, and record completed craft cycles. Ledger cash and daily-close reconciliation amounts are removed from employee API responses.
+- Managers also see Restock, Supplies, Buy Orders, Operations, Daily Close, Review, and Staff. They can queue or cancel production, run counts and operational adjustments, maintain targets and suppliers, reconcile webhook exceptions, finalize daily closes, approve or disable employee accounts, and review the employee audit ledger.
+- Admins additionally see Finance and can run payroll, record owner capital and safekeeping movements, promote or demote managers, and reopen a signed daily close when a correction is required.
 
 The server-side audit ledger records account requests, successful sign-ins and sign-outs, staff actions, sales-order changes, time-clock events, counts, adjustments, and storefront target changes. It does not record passwords, IP addresses, or real-life identity data.
 
@@ -32,7 +32,7 @@ The Railway GUI service needs one persistent volume so accounts survive deployme
 
 ## Finance Ledger
 
-The management-only Finance page reports cash-basis earnings, expenses, and operating profit for selectable periods. Storefront sales and purchases, P2P cash movements, operating costs, and payroll feed the P&L. Ledger corrections remain part of cash reconciliation but are excluded from operating profit.
+The admin-only Finance page reports cash-basis earnings, expenses, and operating profit for selectable periods. Storefront sales and purchases, P2P cash movements, operating costs, and payroll feed the P&L. Ledger corrections remain part of cash reconciliation but are excluded from operating profit.
 
 `Reconcile All History` scans every Sheet transaction and manual cash record without creating duplicate rows. The coverage line shows the number of storefront sales, storefront purchases, buy orders, manual entries, supplier receipts, payroll payments, and owner-fund entries examined. Received supplier-order quantities are retained as dated, price-snapshotted expenses; older received quantities are migrated into one legacy receipt per line.
 

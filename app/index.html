@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Frontier Firearms - Still Water</title>
     <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png?v=20260713-van-horn">
-    <link rel="stylesheet" href="styles.css?v=20260722-finance-reconcile">
+    <link rel="stylesheet" href="styles.css?v=20260722-role-access">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -30,21 +30,21 @@
 
       <nav class="section-tabs" aria-label="Main sections">
         <button class="section-button active" data-section="dashboard" type="button">Dashboard</button>
-        <button class="section-button" data-section="store" type="button">Store</button>
-        <button class="section-button management-only" data-section="finance" type="button">Finance</button>
-        <button class="section-button" data-section="restock" type="button">Restock</button>
-        <button class="section-button management-only" data-section="buy-orders" type="button">Buy Orders</button>
-        <button class="section-button management-only" data-section="supplies" type="button">Supplies</button>
         <button class="section-button" data-section="workbench" type="button">Workbench</button>
         <button class="section-button production-tab-button" data-section="production" type="button">
           Production <span class="nav-count hidden" id="productionNavCount">0</span>
         </button>
+        <button class="section-button" data-section="store" type="button">Store</button>
+        <button class="section-button management-only" data-section="restock" type="button">Restock</button>
+        <button class="section-button management-only" data-section="supplies" type="button">Supplies</button>
+        <button class="section-button management-only" data-section="buy-orders" type="button">Buy Orders</button>
         <button class="section-button management-only" data-section="operations" type="button">Operations</button>
         <button class="section-button management-only" data-section="daily-close" type="button">Daily Close</button>
         <button class="section-button management-only review-tab-button" data-section="review" type="button">
           Review <span class="nav-count hidden" id="exceptionNavCount">0</span>
         </button>
         <button class="section-button management-only accounts-only" data-section="employees" type="button">Staff</button>
+        <button class="section-button admin-only" data-section="finance" type="button">Finance</button>
       </nav>
 
       <main class="dashboard workspace-section" id="dashboardSection">
@@ -267,7 +267,7 @@
         </section>
       </main>
 
-      <main class="finance workspace-section hidden management-only" id="financeSection">
+      <main class="finance workspace-section hidden admin-only" id="financeSection">
         <section class="panel finance-overview-panel">
           <div class="panel-header finance-heading">
             <div>
@@ -463,7 +463,7 @@
         </section>
       </main>
 
-      <main class="restock workspace-section hidden" id="restockSection">
+      <main class="restock workspace-section hidden management-only" id="restockSection">
         <section class="panel dashboard-list-panel replenishment-panel priority-panel">
           <div class="panel-header">
             <div>
@@ -1384,10 +1384,10 @@
                 <option value="Cash In">Cash In</option>
                 <option value="Cash Out">Cash Out</option>
                 <option value="Correction">Correction (+/-)</option>
-                <option value="Owner Capital Deposit">Owner Capital Deposit</option>
-                <option value="Owner Withdrawal">Owner Withdrawal</option>
-                <option value="Safekeeping Deposit">Safekeeping Deposit</option>
-                <option value="Safekeeping Withdrawal">Safekeeping Withdrawal</option>
+                <option value="Owner Capital Deposit" data-admin-only-option>Owner Capital Deposit</option>
+                <option value="Owner Withdrawal" data-admin-only-option>Owner Withdrawal</option>
+                <option value="Safekeeping Deposit" data-admin-only-option>Safekeeping Deposit</option>
+                <option value="Safekeeping Withdrawal" data-admin-only-option>Safekeeping Withdrawal</option>
               </select>
             </label>
             <label>
@@ -1552,6 +1552,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260722-finance-reconcile"></script>
+    <script src="app.js?v=20260722-role-access"></script>
   </body>
 </html>

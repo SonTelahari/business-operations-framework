@@ -9,6 +9,21 @@ const PRODUCTION_ACTIVE_STATUSES = new Set(["Planned", "In Progress"]);
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
+const ROLE_RANK = Object.freeze({ employee: 1, manager: 2, admin: 3 });
+const SECTION_MIN_ROLE = Object.freeze({
+  dashboard: "employee",
+  workbench: "employee",
+  production: "employee",
+  store: "employee",
+  restock: "manager",
+  supplies: "manager",
+  "buy-orders": "manager",
+  operations: "manager",
+  "daily-close": "manager",
+  review: "manager",
+  employees: "manager",
+  finance: "admin"
+});
 const DELIVERY_DATE_FORMATTER = new Intl.DateTimeFormat("en-GB", {
   day: "2-digit",
   month: "2-digit",
@@ -731,6 +746,7 @@ function wireEvents() {
 
   document.querySelectorAll("[data-section]").forEach(button => {
     button.addEventListener("click", () => {
+      if (!canAccessSection(button.dataset.section)) return;
       activeSection = button.dataset.section;
       renderSection();
       if (activeSection === "employees" && isManagement()) loadStaffData();
@@ -740,7 +756,7 @@ function wireEvents() {
       }
       if (activeSection === "buy-orders" && isManagement()) loadStorefrontBuyOrders({ silent: true });
       if (activeSection === "review" && isManagement()) loadBackendSnapshot({ silent: true });
-      if (activeSection === "finance" && isManagement()) loadFinance();
+      if (activeSection === "finance" && isAdmin()) loadFinance();
       if (activeSection === "production") loadProductionBatches({ silent: true });
       if (activeSection === "daily-close" && isManagement()) renderDailyCloseWorkspace();
     });
@@ -1988,9 +2004,9 @@ function renderSection() {
   const supplyMode = activeSection === "supplies";
   const buyOrderMode = activeSection === "buy-orders";
   const closeMode = activeSection === "daily-close";
-  const financeMode = activeSection === "finance";
-  elements.newDocument.classList.toggle("hidden", financeMode);
-  elements.saveDocument.classList.toggle("hidden", financeMode);
+  const documentMode = activeSection === "workbench" || supplyMode || buyOrderMode || closeMode;
+  elements.newDocument.classList.toggle("hidden", !documentMode);
+  elements.saveDocument.classList.toggle("hidden", !documentMode);
   elements.newDocument.textContent = supplyMode ? "New Supply" : buyOrderMode ? "New Buy Order" : closeMode ? "Today's Close" : "New Sale";
   elements.saveDocument.textContent = supplyMode ? "Save Supply" : buyOrderMode ? "Save Buy Order" : closeMode ? "Save Draft" : "Save Sale";
 }
@@ -2113,11 +2129,11 @@ function setFinancePeriod(preset, refresh = true) {
   elements.financePeriod.value = preset;
   elements.financeFrom.value = from;
   elements.financeTo.value = to;
-  if (refresh && currentUser && activeSection === "finance" && isManagement()) loadFinance();
+  if (refresh && currentUser && activeSection === "finance" && isAdmin()) loadFinance();
 }
 
 async function loadFinance({ silent = false } = {}) {
-  if (!isManagement() || financeLoading) return false;
+  if (!isAdmin() || financeLoading) return false;
   const from = elements.financeFrom.value;
   const to = elements.financeTo.value;
   if (from && to && from > to) {
@@ -2709,18 +2725,31 @@ function renderRole() {
   document.body.classList.toggle("accounts-disabled", !currentUser?.accountManagement);
   elements.currentUserName.textContent = currentUser?.fullName || "Loading account";
   elements.currentUserRole.textContent = ({ admin: "Admin", manager: "Manager", employee: "Employee" })[currentRole] || "Employee";
-  if ((!isManagement() || !currentUser?.accountManagement) && activeSection === "employees") {
-    activeSection = "dashboard";
-    renderSection();
+  document.querySelectorAll("[data-admin-only-option]").forEach(option => {
+    option.hidden = !isAdmin();
+    option.disabled = !isAdmin();
+  });
+  if (!isAdmin() && elements.ledgerType?.selectedOptions[0]?.dataset.adminOnlyOption !== undefined) {
+    elements.ledgerType.value = "Ledger Count";
   }
-  if (!isManagement() && (activeSection === "operations" || activeSection === "supplies" || activeSection === "buy-orders" || activeSection === "review" || activeSection === "finance")) {
+  if (!canAccessSection(activeSection)) {
     activeSection = "dashboard";
     renderSection();
   }
 }
 
+function canAccessSection(section) {
+  const requiredRole = SECTION_MIN_ROLE[section] || "admin";
+  if ((ROLE_RANK[currentRole] || 0) < ROLE_RANK[requiredRole]) return false;
+  return section !== "employees" || Boolean(currentUser?.accountManagement);
+}
+
 function isManagement() {
   return currentRole === "admin" || currentRole === "manager";
+}
+
+function isAdmin() {
+  return currentRole === "admin";
 }
 
 function renderReviewIndicators() {
@@ -4154,8 +4183,8 @@ function refreshBackendIfStale() {
   loadBackendSnapshot({ silent: true });
   if (isManagement()) {
     loadSupplyOrders({ silent: true });
-    if (activeSection === "finance") loadFinance({ silent: true });
   }
+  if (activeSection === "finance" && isAdmin()) loadFinance({ silent: true });
 }
 
 async function loadBackendSnapshot(options = {}) {
@@ -4220,7 +4249,7 @@ async function performBackendRefresh({ silent = false } = {}) {
       renderSupplyWorkspace();
       renderStorefrontBuyOrderWorkspace();
       renderReviewWorkspace();
-      if (activeSection === "finance" && isManagement()) loadFinance({ silent: true });
+      if (activeSection === "finance" && isAdmin()) loadFinance({ silent: true });
       if (!silent) retryPendingSyncs();
     } else {
       renderStoreOverview();

@@ -364,6 +364,7 @@ async function run() {
   assert.equal(employeeDailyCloseAttempt.response.status, 403);
   const employeeBootstrap = await getJson(`${baseUrl}/api/bootstrap`, employeeCookie);
   assert.equal(Object.prototype.hasOwnProperty.call(employeeBootstrap.body.sheet, "reviewExceptions"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(employeeBootstrap.body.sheet.inventory, "ledger"), false);
   const employeeReviewAttempt = await post(`${baseUrl}/api/sync`, {
     action: "resolve_exception",
     exception: { webhookId: "review-1", itemName: "Navy Revolver", quantity: 1 }
@@ -407,6 +408,9 @@ async function run() {
 
   const managerUsers = await getJson(`${baseUrl}/api/admin/users`, managerCookie);
   assert.equal(managerUsers.response.status, 200);
+  const managerFinanceAttempt = await getJson(`${baseUrl}/api/finance`, managerCookie);
+  assert.equal(managerFinanceAttempt.response.status, 403);
+  assert.equal(managerFinanceAttempt.body.code, "admin_required");
 
   const createdDailyClose = await post(`${baseUrl}/api/daily-closes`, {
     id: "daily-close-2026-07-13",
@@ -582,7 +586,7 @@ async function run() {
   }, managerCookie);
   assert.equal(savedBuyOrder.response.status, 200);
   assert.equal(savedBuyOrder.body.order.filledQuantity, 0);
-  const financeWithBuyOrder = await getJson(`${baseUrl}/api/finance?from=2026-07-01&to=2026-07-31`, managerCookie);
+  const financeWithBuyOrder = await getJson(`${baseUrl}/api/finance?from=2026-07-01&to=2026-07-31`, ownerCookie);
   assert.equal(financeWithBuyOrder.response.status, 200);
   assert.deepEqual(financeWithBuyOrder.body.totals, { revenue: 300, expenses: 125, profit: 175 });
   assert.equal(financeWithBuyOrder.body.cash.ledgerBalance, 6025);
@@ -807,6 +811,13 @@ async function run() {
     password: "WorkerPassword123!"
   });
   const workerCookie = cookieFrom(workerLogin.response);
+  const workerBootstrap = await getJson(`${baseUrl}/api/bootstrap`, workerCookie);
+  assert.equal(Object.prototype.hasOwnProperty.call(workerBootstrap.body.sheet.inventory, "ledger"), false);
+  assert.equal(workerBootstrap.body.dailyCloses.length, 1);
+  assert.equal(workerBootstrap.body.dailyCloses[0].status, "Finalized");
+  assert.equal(Object.prototype.hasOwnProperty.call(workerBootstrap.body.dailyCloses[0], "countedLedgerBalance"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(workerBootstrap.body.dailyCloses[0].snapshot, "ledgerBalance"), false);
+  assert.match(workerBootstrap.body.dailyCloses[0].handoffNotes, /Foundry delivery/);
 
   const workerCreateProduction = await post(`${baseUrl}/api/production-batches`, {
     reference: "Worker-created batch",

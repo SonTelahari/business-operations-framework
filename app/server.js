@@ -331,7 +331,7 @@ async function handleSupplierRoute(request, response, url, user) {
 
 async function handleFinanceRoute(request, response, url, user) {
   if (url.pathname !== "/api/finance") return false;
-  if (!requireManagement(response, user)) return true;
+  if (!requireAdmin(response, user)) return true;
   if (request.method !== "GET") {
     sendJson(response, { ok: false, error: "Finance route not found", code: "not_found" }, 404);
     return true;
@@ -1660,7 +1660,16 @@ async function getBootstrapData(user) {
   const canManage = !user || isManagementRole(user);
   if (canManage) await reconcileStorefrontBuyOrdersFromSheet(sheetSnapshot);
   if (sheetSnapshot?.inventory) delete sheetSnapshot.inventory.buyOrderPurchases;
-  if (!canManage && sheetSnapshot) delete sheetSnapshot.reviewExceptions;
+  if (!canManage && sheetSnapshot) {
+    delete sheetSnapshot.reviewExceptions;
+    if (sheetSnapshot.inventory) delete sheetSnapshot.inventory.ledger;
+  }
+  const dailyCloses = canManage
+    ? businessStore.listDailyCloses()
+    : businessStore.listDailyCloses()
+      .filter(close => close.status === "Finalized")
+      .slice(0, 20)
+      .map(employeeDailyCloseView);
   return {
     source: sheetSnapshot ? "apps-script-and-local-app-files" : "local-app-files",
     generatedAt: new Date().toISOString(),
@@ -1675,7 +1684,7 @@ async function getBootstrapData(user) {
     salesOrders: businessStore.listSalesOrders(),
     storefrontBuyOrders: canManage ? businessStore.listStorefrontBuyOrders() : [],
     productionBatches: businessStore.listProductionBatches(),
-    dailyCloses: businessStore.listDailyCloses(),
+    dailyCloses,
     syncTargets: {
       stockCounts: "/api/sync",
       manualMovements: "/api/sync",
@@ -1690,6 +1699,25 @@ async function getBootstrapData(user) {
       dailyCloses: "/api/daily-closes",
       finance: "/api/finance"
     }
+  };
+}
+
+function employeeDailyCloseView(close) {
+  const snapshot = close?.snapshot || {};
+  return {
+    id: close.id,
+    businessDate: close.businessDate,
+    status: close.status,
+    handoffNotes: close.handoffNotes || "",
+    priorityNotes: close.priorityNotes || "",
+    snapshot: {
+      capturedAt: snapshot.capturedAt || "",
+      openSalesOrders: Number(snapshot.openSalesOrders || 0),
+      activeProductionBatches: Number(snapshot.activeProductionBatches || 0),
+      issues: Array.isArray(snapshot.issues) ? snapshot.issues : []
+    },
+    finalizedAt: close.finalizedAt || "",
+    finalizedBy: close.finalizedBy || ""
   };
 }
 
