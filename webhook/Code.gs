@@ -179,9 +179,17 @@ function resolveWebhookException(spreadsheet, correction, action) {
   }
 
   const originalPayload = parseJsonObject(values[17]);
-  const itemName = String(correction.itemName || '').trim();
   const quantity = Number(correction.quantity);
-  if (!itemName || !Number.isFinite(quantity) || quantity <= 0) {
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error('Resolving an exception requires an item and positive quantity.');
+  }
+  const productResult = correction.newProduct && correction.newProduct.enabled
+    ? ensureReviewedProduct(spreadsheet, correction.newProduct)
+    : null;
+  const itemName = productResult
+    ? productResult.product.name
+    : String(correction.itemName || '').trim();
+  if (!itemName) {
     throw new Error('Resolving an exception requires an item and positive quantity.');
   }
 
@@ -205,6 +213,9 @@ function resolveWebhookException(spreadsheet, correction, action) {
   const transactionAlreadyWritten = alreadyRecordedInColumn(transactionSheet, 11, webhookId);
   if (!transactionAlreadyWritten) writeTransaction(transactionSheet, event);
   const controls = writeWebhookControls(spreadsheet, event, { stock: true, ledger: false });
+  if (productResult && productResult.created) {
+    controls.stock = establishReviewedProductStock(spreadsheet, event, productResult) || controls.stock;
+  }
   const resolvedBy = String(correction.resolvedBy || GUI_SOURCE_NAME);
   if (correction.rememberMapping !== false) {
     rememberItemMapping(spreadsheet, {
@@ -232,9 +243,123 @@ function resolveWebhookException(spreadsheet, correction, action) {
     webhookId,
     status: 'Resolved',
     itemName,
+    productCreated: productResult ? productResult.created : false,
+    productRow: productResult ? productResult.row : null,
     transactionWritten: !transactionAlreadyWritten,
     stockControlWritten: controls.stock
   };
+}
+
+function normalizeReviewedProduct(input) {
+  const product = {
+    name: String(input && input.name || '').trim(),
+    label: String(input && input.label || '').trim(),
+    tag: String(input && input.tag || '').trim(),
+    category: String(input && input.category || 'Resale').trim() || 'Resale',
+    price: Number(input && input.price)
+  };
+  if (!product.name || !product.label || !product.tag) {
+    throw new Error('A new ware requires a product name, display label, and game item tag.');
+  }
+  if (![product.name, product.label, product.tag, product.category].every(value => value.length <= 120)) {
+    throw new Error('New ware fields must be 120 characters or fewer.');
+  }
+  if (!Number.isFinite(product.price) || product.price < 0) {
+    throw new Error('A new ware requires a valid non-negative catalog sale price.');
+  }
+  return product;
+}
+
+function ensureReviewedProduct(spreadsheet, input) {
+  const product = normalizeReviewedProduct(input);
+  const sheet = requireSheet(spreadsheet, PRODUCTS_SHEET);
+  const rowCount = Math.max(0, sheet.getLastRow() - 1);
+  const rows = rowCount ? sheet.getRange(2, 1, rowCount, 12).getValues() : [];
+  const productNameKey = inventoryKey(product.name);
+  const productLabelKey = inventoryKey(product.label);
+  const productTagKey = inventoryKey(product.tag);
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const existing = rows[index];
+    const existingNameKey = inventoryKey(existing[0]);
+    const existingLabelKey = inventoryKey(existing[1]);
+    const existingTagKey = inventoryKey(existing[2]);
+    const row = index + 2;
+    if (existingNameKey === productNameKey) {
+      if (existingLabelKey !== productLabelKey || existingTagKey !== productTagKey) {
+        throw new Error('That product name already belongs to a different label or game item tag.');
+      }
+      return {
+        created: false,
+        row,
+        product: {
+          name: String(existing[0]),
+          label: String(existing[1] || existing[0]),
+          tag: String(existing[2] || ''),
+          category: String(existing[3] || product.category),
+          price: numberOrZero(existing[4])
+        }
+      };
+    }
+    if (productLabelKey && existingLabelKey === productLabelKey) {
+      throw new Error('That display label already belongs to another product.');
+    }
+    if (productTagKey && existingTagKey === productTagKey) {
+      throw new Error('That game item tag already belongs to another product.');
+    }
+  }
+
+  const row = firstEmptyRow(sheet, 2, 1);
+  sheet.getRange(row, 1, 1, 12).setValues([[
+    product.name,
+    product.label,
+    product.tag,
+    product.category,
+    product.price,
+    0,
+    0,
+    '=MAX(0,F' + row + '-G' + row + ')',
+    true,
+    '',
+    '',
+    'Webhook Review'
+  ]]);
+  sheet.getRange(row, 5).setNumberFormat('$0.00');
+  return { created: true, row, product };
+}
+
+function reviewedProductInitialStock(event) {
+  if (event.currentItemTotal !== null && event.currentItemTotal !== undefined) {
+    return Math.max(0, numberOrZero(event.currentItemTotal));
+  }
+  const direction = inventoryKey(event.direction);
+  const stockIn = direction === 'stock in'
+    || direction === 'purchase'
+    || direction === 'return'
+    || direction === 'storage in';
+  return stockIn ? Math.abs(numberOrZero(event.qty)) : 0;
+}
+
+function establishReviewedProductStock(spreadsheet, event, productResult) {
+  const quantity = reviewedProductInitialStock(event);
+  const productSheet = requireSheet(spreadsheet, PRODUCTS_SHEET);
+  productSheet.getRange(productResult.row, 7).setValue(quantity);
+  if (event.currentItemTotal !== null && event.currentItemTotal !== undefined) return false;
+
+  const stockSheet = requireSheet(spreadsheet, STOCK_COUNTS_SHEET);
+  const row = firstEmptyRow(stockSheet, 2, 1);
+  stockSheet.getRange(row, 1, 1, 4).setValues([[
+    eventDate(event),
+    'Storefront',
+    event.item,
+    quantity
+  ]]);
+  stockSheet.getRange(row, 7, 1, 2).setValues([[
+    false,
+    joinNotes('Initial count for webhook-reviewed product', '[Webhook ' + event.webhookId + ']')
+  ]]);
+  formatTimestampCell(stockSheet, row);
+  return true;
 }
 
 function ignoreWebhookException(spreadsheet, correction, action) {
@@ -780,7 +905,7 @@ function readWorkbookSnapshot() {
 
   return {
     ok: true,
-    schemaVersion: 7,
+    schemaVersion: 8,
     spreadsheetId: SPREADSHEET_ID,
     generatedAt: new Date().toISOString(),
     sheets,
@@ -1057,7 +1182,7 @@ function readInventorySnapshot(spreadsheet) {
   const productRowCount = Math.max(0, productsSheet.getLastRow() - 1);
   const materialRowCount = Math.max(0, materialsSheet.getLastRow() - 1);
   const productRows = productRowCount
-    ? productsSheet.getRange(2, 1, productRowCount, 8).getValues()
+    ? productsSheet.getRange(2, 1, productRowCount, 12).getValues()
     : [];
   const materialRows = materialRowCount
     ? materialsSheet.getRange(2, 1, materialRowCount, 3).getValues()
@@ -1071,13 +1196,20 @@ function readInventorySnapshot(spreadsheet) {
         return {
           itemName: String(row[0]),
           itemLabel: String(row[1] || row[0]),
+          itemTag: String(row[2] || ''),
+          category: String(row[3] || 'Resale'),
+          salePrice: numberOrZero(row[4]),
           target: numberOrZero(row[5]),
           currentStock: Math.max(
             0,
             (latestCount ? latestCount.quantity : numberOrZero(row[6]))
               + numberOrZero(storefrontMovements.deltas[key])
           ),
-          countedAt: latestCount ? latestCount.countedAt : ''
+          countedAt: latestCount ? latestCount.countedAt : '',
+          active: row[8] === '' ? true : row[8] === true || String(row[8]).toLowerCase() === 'true',
+          msrpLow: row[9] === '' ? null : numberOrZero(row[9]),
+          msrpHigh: row[10] === '' ? null : numberOrZero(row[10]),
+          pricingSource: String(row[11] || '')
         };
       });
   const materials = materialRows

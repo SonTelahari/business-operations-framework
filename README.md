@@ -58,7 +58,13 @@ Committed cash combines remaining ordered supplier lines, open storefront buy or
 - Tools
 - Ammunition
 
-The catalog and recipe checks require every sellable item to have exactly one recipe and prevent duplicate item names, labels, and tags.
+The checked-in manufacturing catalog requires one recipe per craftable product and prevents duplicate item names, labels, and tags. Native resale wares approved from webhook review are sheet-backed sellable products and do not require recipes.
+
+## Webhook-reviewed Wares
+
+Managers can resolve an unknown storefront event against an existing exact catalog match or explicitly choose `Add as a new sellable ware`. A new ware records its canonical name, storefront label, game item tag, category, and sale price in the shared `Products` sheet before the original movement is reconciled. The Discord label mapping is remembered for future events.
+
+New sheet-backed wares appear in product selectors, manual counts, the Store overview, sales orders, targets, and product cards after the next refresh. They remain outside production planning until a real recipe is added. Duplicate product names, labels, and item tags are rejected.
 
 ## Data Intake
 

@@ -394,7 +394,7 @@ async function handleProductInsightRoute(request, response, url, user) {
   }
 
   const requested = decodeURIComponent(route[1]);
-  const catalog = readCatalogFiles();
+  const catalog = mergeCatalogWithSheetProducts(readCatalogFiles(), await readSheetSnapshot());
   const requestedKey = inventoryKey(requested);
   const item = catalog.items.find(candidate => [
     candidate.name,
@@ -1731,8 +1731,8 @@ function readJsonBody(request) {
 }
 
 async function getBootstrapData(user) {
-  const data = readCatalogFiles();
   const sheetSnapshot = await readSheetSnapshot();
+  const data = mergeCatalogWithSheetProducts(readCatalogFiles(), sheetSnapshot);
   const canManage = !user || isManagementRole(user);
   if (canManage) await reconcileStorefrontBuyOrdersFromSheet(sheetSnapshot);
   if (sheetSnapshot?.inventory) delete sheetSnapshot.inventory.buyOrderPurchases;
@@ -1966,6 +1966,64 @@ function readCatalogFiles() {
     recipes: context.window.FRONTIER_RECIPES || {},
     recipeYields: context.window.FRONTIER_RECIPE_YIELDS || {},
     pricing
+  };
+}
+
+function mergeCatalogWithSheetProducts(data, sheetSnapshot) {
+  const sheetProducts = Array.isArray(sheetSnapshot?.inventory?.products)
+    ? sheetSnapshot.inventory.products
+    : [];
+  if (!sheetProducts.length) return data;
+
+  const items = data.items.map(item => ({ ...item }));
+  const lookup = new Map();
+  items.forEach((item, index) => {
+    [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])].forEach(value => {
+      const key = inventoryKey(value);
+      if (key && !lookup.has(key)) lookup.set(key, index);
+    });
+  });
+  const categories = new Set(data.categories);
+
+  sheetProducts.forEach(product => {
+    if (product.active === false) return;
+    const name = String(product.itemName || "").trim();
+    if (!name) return;
+    const label = String(product.itemLabel || name).trim() || name;
+    const tag = String(product.itemTag || "").trim();
+    const category = String(product.category || "Resale").trim() || "Resale";
+    const keys = [name, label, tag].map(inventoryKey).filter(Boolean);
+    const index = keys.map(key => lookup.get(key)).find(value => value !== undefined);
+    const base = index === undefined ? {} : items[index];
+    const merged = {
+      ...base,
+      name,
+      label,
+      tag,
+      category,
+      price: Number(product.salePrice || 0),
+      msrpLow: product.msrpLow === null || product.msrpLow === undefined
+        ? null
+        : Number(product.msrpLow),
+      msrpHigh: product.msrpHigh === null || product.msrpHigh === undefined
+        ? null
+        : Number(product.msrpHigh),
+      pricingSource: String(product.pricingSource || "")
+    };
+    const mergedIndex = index === undefined ? items.push(merged) - 1 : index;
+    if (index !== undefined) items[index] = merged;
+    [merged.name, merged.label, merged.tag, ...(Array.isArray(merged.aliases) ? merged.aliases : [])]
+      .forEach(value => {
+        const key = inventoryKey(value);
+        if (key) lookup.set(key, mergedIndex);
+      });
+    categories.add(category);
+  });
+
+  return {
+    ...data,
+    categories: [...categories],
+    items
   };
 }
 

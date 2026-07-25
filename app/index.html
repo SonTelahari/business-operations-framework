@@ -1147,8 +1147,8 @@
               </dl>
               <div class="review-correction-grid">
                 <label class="review-item-field">
-                  Catalog Item
-                  <input id="reviewItemInput" list="stockOptions" autocomplete="off" placeholder="Canonical item or material">
+                  Catalog Item or Product Name
+                  <input id="reviewItemInput" list="stockOptions" autocomplete="off" placeholder="Canonical item, material, or new product">
                 </label>
                 <label>
                   Event
@@ -1183,6 +1183,39 @@
                 <input id="reviewRememberMappingInput" type="checkbox" checked>
                 Remember this Discord label for future events
               </label>
+              <label class="checkbox-line review-new-product-option">
+                <input id="reviewCreateProductInput" type="checkbox">
+                Add as a new sellable ware
+              </label>
+              <div class="review-new-product-fields hidden" id="reviewNewProductFields">
+                <label>
+                  Display Label
+                  <input id="reviewProductLabelInput" type="text" autocomplete="off" placeholder="Name shown in the storefront">
+                </label>
+                <label>
+                  Game Item Tag
+                  <input id="reviewProductTagInput" type="text" autocomplete="off" placeholder="Webhook item name">
+                </label>
+                <label>
+                  Category
+                  <select id="reviewProductCategoryInput">
+                    <option value="Resale">Resale</option>
+                    <option value="Rifles">Rifles</option>
+                    <option value="Shotguns">Shotguns</option>
+                    <option value="Repeaters">Repeaters</option>
+                    <option value="Revolvers">Revolvers</option>
+                    <option value="Pistols">Pistols</option>
+                    <option value="Bows">Bows</option>
+                    <option value="Ammunition">Ammunition</option>
+                    <option value="Tools">Tools</option>
+                    <option value="Misc">Misc</option>
+                  </select>
+                </label>
+                <label>
+                  Catalog Sale Price
+                  <input id="reviewProductPriceInput" type="number" min="0" step="0.01" value="0">
+                </label>
+              </div>
               <div class="review-actions">
                 <button class="primary-button" id="resolveReviewButton" type="button">Resolve and Apply</button>
                 <button class="ghost-button" id="ignoreReviewButton" type="button">Ignore Event</button>
@@ -1564,6 +1597,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260722-product-cards"></script>
+    <script src="app.js?v=20260725-native-wares"></script>
   </body>
 </html>

@@ -727,6 +727,22 @@ label {
   text-transform: uppercase;
 }
 
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-line input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
 input,
 select,
 textarea {
@@ -2707,6 +2723,20 @@ body.auth-page {
   margin-top: 14px;
 }
 
+.review-new-product-option {
+  margin-top: 8px;
+}
+
+.review-new-product-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(86, 65, 43, 0.28);
+  border-bottom: 1px solid rgba(86, 65, 43, 0.28);
+}
+
 .review-actions {
   display: flex;
   gap: 8px;
@@ -3801,6 +3831,10 @@ body.auth-page {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .review-new-product-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .production-stats,
   .production-detail-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3868,6 +3902,10 @@ body.auth-page {
   .review-item-field,
   .review-note-field {
     grid-column: auto;
+  }
+
+  .review-new-product-fields {
+    grid-template-columns: 1fr;
   }
 
   .review-actions {

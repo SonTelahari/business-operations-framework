@@ -48,6 +48,67 @@ assert.equal(reviewEvent.qty, 5);
 assert.equal(reviewEvent.reviewRequired, true);
 assert.equal(reviewEvent.reviewReason, "unknown_item");
 
+const reviewedProduct = plain(context.normalizeReviewedProduct({
+  name: "Antique High Roller Revolver",
+  label: "High Roller Revolver",
+  tag: "WEAPON_REVOLVER_HIGHROLLER",
+  category: "Revolvers",
+  price: 135
+}));
+assert.deepEqual(reviewedProduct, {
+  name: "Antique High Roller Revolver",
+  label: "High Roller Revolver",
+  tag: "WEAPON_REVOLVER_HIGHROLLER",
+  category: "Revolvers",
+  price: 135
+});
+assert.throws(
+  () => context.normalizeReviewedProduct({ name: "Incomplete", label: "", tag: "", price: 10 }),
+  /requires a product name/
+);
+assert.throws(
+  () => context.normalizeReviewedProduct({ name: "Bad Price", label: "Bad Price", tag: "bad", price: -1 }),
+  /non-negative/
+);
+const existingProductsSheet = dataSheet([[
+  "Existing Revolver", "Existing Revolver", "WEAPON_REVOLVER_EXISTING", "Revolvers", 90,
+  0, 0, 0, true, 90, 90, "MSRP"
+]]);
+const existingReviewedProduct = plain(context.ensureReviewedProduct({
+  getSheetByName: name => name === "Products" ? existingProductsSheet : null
+}, {
+  name: "Existing Revolver",
+  label: "Existing Revolver",
+  tag: "WEAPON_REVOLVER_EXISTING",
+  category: "Revolvers",
+  price: 90
+}));
+assert.equal(existingReviewedProduct.created, false, "an identical retry must reuse the existing product");
+assert.throws(() => context.ensureReviewedProduct({
+  getSheetByName: name => name === "Products" ? existingProductsSheet : null
+}, {
+  name: "Other Revolver",
+  label: "Other Revolver",
+  tag: "WEAPON_REVOLVER_EXISTING",
+  category: "Revolvers",
+  price: 95
+}), /game item tag already belongs/);
+assert.equal(context.reviewedProductInitialStock({
+  direction: "Stock In",
+  qty: 3,
+  currentItemTotal: null
+}), 3);
+assert.equal(context.reviewedProductInitialStock({
+  direction: "Stock Out",
+  qty: 2,
+  currentItemTotal: null
+}), 0);
+assert.equal(context.reviewedProductInitialStock({
+  direction: "Stock Out",
+  qty: 2,
+  currentItemTotal: 7
+}), 7);
+
 const writes = {};
 function fakeSheet(name) {
   writes[name] = [];

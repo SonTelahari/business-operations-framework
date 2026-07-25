@@ -25,7 +25,42 @@ const reviewExceptions = [{
   quantity: 1,
   unitPrice: 105,
   rawText: "Item label: Custom Navy"
+}, {
+  webhookId: "review-native-1",
+  status: "Open",
+  reason: "unknown_item",
+  receivedAt: "2026-07-13T03:26:00.000Z",
+  discordTitle: "Deposit",
+  discordItemName: "WEAPON_REVOLVER_HIGHROLLER",
+  discordItemLabel: "High Roller Revolver",
+  eventType: "Stocking Movement",
+  direction: "Stock In",
+  quantity: 1,
+  unitPrice: 135,
+  rawText: "Item name: WEAPON_REVOLVER_HIGHROLLER"
 }];
+const inventoryProducts = [
+  {
+    itemName: "Navy Revolver",
+    itemLabel: "Navy Revolver",
+    itemTag: "WEAPON_REVOLVER_NAVY",
+    category: "Revolvers",
+    salePrice: 105,
+    target: 5,
+    currentStock: 1,
+    active: true
+  },
+  {
+    itemName: "Boltaction Rifle",
+    itemLabel: "BoltAction Rifle",
+    itemTag: "WEAPON_RIFLE_BOLTACTION",
+    category: "Rifles",
+    salePrice: 80,
+    target: 5,
+    currentStock: 3,
+    active: true
+  }
+];
 let failNextReceiverWrite = false;
 let failReceiverAfterSuccessfulWrites = -1;
 const mockReceiver = http.createServer(async (request, response) => {
@@ -73,14 +108,12 @@ const mockReceiver = http.createServer(async (request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       ok: true,
+      schemaVersion: 8,
       generatedAt: "2026-07-13T03:30:00.000Z",
       sheets: [{ name: "Products", lastRow: 3 }],
       reviewExceptions,
       inventory: {
-        products: [
-          { itemName: "Navy Revolver", itemLabel: "Navy Revolver", target: 5, currentStock: 1 },
-          { itemName: "Boltaction Rifle", itemLabel: "BoltAction Rifle", target: 5, currentStock: 3 }
-        ],
+        products: inventoryProducts,
         materials,
         storage: [...materials, { ingredient: "Navy Revolver", storageCount: 2, countedAt: "2026-07-13T03:20:00.000Z" }],
         ledger: {
@@ -117,6 +150,22 @@ const mockReceiver = http.createServer(async (request, response) => {
       exception.status = "Resolved";
       exception.resolvedItem = payload.exception.itemName;
       exception.resolvedBy = payload.exception.resolvedBy;
+    }
+    if (payload.exception?.newProduct?.enabled) {
+      const product = payload.exception.newProduct;
+      inventoryProducts.push({
+        itemName: product.name,
+        itemLabel: product.label,
+        itemTag: product.tag,
+        category: product.category,
+        salePrice: product.price,
+        target: 0,
+        currentStock: Number(payload.exception.quantity || 0),
+        active: true,
+        msrpLow: product.price,
+        msrpHigh: product.price,
+        pricingSource: "Webhook Review"
+      });
     }
   }
   if (payload.action === "ignore_exception") {
@@ -793,6 +842,45 @@ async function run() {
   assert.equal(managerReview.response.status, 200);
   assert.equal(receiverPayloads.at(-1).exception.resolvedBy, "Ada Employee");
   assert.equal((await getJson(`${baseUrl}/api/bootstrap`, managerCookie)).body.sheet.reviewExceptions[0].status, "Resolved");
+
+  const nativeReview = await post(`${baseUrl}/api/sync`, {
+    action: "resolve_exception",
+    exception: {
+      webhookId: "review-native-1",
+      itemName: "Antique High Roller Revolver",
+      eventType: "Stocking Movement",
+      direction: "Stock In",
+      quantity: 1,
+      unitPrice: 135,
+      rememberMapping: true,
+      note: "Approved native resale weapon",
+      newProduct: {
+        enabled: true,
+        name: "Antique High Roller Revolver",
+        label: "High Roller Revolver",
+        tag: "WEAPON_REVOLVER_HIGHROLLER",
+        category: "Revolvers",
+        price: 135
+      }
+    }
+  }, managerCookie);
+  assert.equal(nativeReview.response.status, 200);
+  assert.equal(receiverPayloads.at(-1).exception.newProduct.tag, "WEAPON_REVOLVER_HIGHROLLER");
+  assert.equal(receiverPayloads.at(-1).exception.resolvedBy, "Ada Employee");
+  const nativeBootstrap = await getJson(`${baseUrl}/api/bootstrap`, managerCookie);
+  const nativeWare = nativeBootstrap.body.items.find(item => item.name === "Antique High Roller Revolver");
+  assert.equal(nativeWare.label, "High Roller Revolver");
+  assert.equal(nativeWare.tag, "WEAPON_REVOLVER_HIGHROLLER");
+  assert.equal(nativeWare.category, "Revolvers");
+  assert.equal(nativeWare.price, 135);
+  assert.equal(Object.prototype.hasOwnProperty.call(nativeBootstrap.body.recipes, nativeWare.name), false);
+  const nativeInsight = await getJson(
+    `${baseUrl}/api/product-insights/${encodeURIComponent(nativeWare.name)}`,
+    managerCookie
+  );
+  assert.equal(nativeInsight.response.status, 200);
+  assert.equal(nativeInsight.body.item.name, "Antique High Roller Revolver");
+  assert.equal(nativeInsight.body.sales.revenue, 0);
 
   const managerPayrollAttempt = await post(`${baseUrl}/api/sync`, {
     action: "manual_operation",

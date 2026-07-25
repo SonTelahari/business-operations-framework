@@ -81,12 +81,7 @@ const { buildSupplyQuoteTelegram } = window.FRONTIER_SUPPLY_TELEGRAM;
 const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
 const productCatalogByKey = new Map();
-itemCatalog.forEach(item => {
-  [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])].forEach(value => {
-    const key = normalize(value);
-    if (key && !productCatalogByKey.has(key)) productCatalogByKey.set(key, item);
-  });
-});
+rebuildCatalogIndexes();
 
 let legacyOrdersPendingMigration = loadOrders();
 let orders = [];
@@ -289,6 +284,12 @@ const elements = {
   reviewUnitPrice: document.querySelector("#reviewUnitPriceInput"),
   reviewNote: document.querySelector("#reviewNoteInput"),
   reviewRememberMapping: document.querySelector("#reviewRememberMappingInput"),
+  reviewCreateProduct: document.querySelector("#reviewCreateProductInput"),
+  reviewNewProductFields: document.querySelector("#reviewNewProductFields"),
+  reviewProductLabel: document.querySelector("#reviewProductLabelInput"),
+  reviewProductTag: document.querySelector("#reviewProductTagInput"),
+  reviewProductCategory: document.querySelector("#reviewProductCategoryInput"),
+  reviewProductPrice: document.querySelector("#reviewProductPriceInput"),
   resolveReview: document.querySelector("#resolveReviewButton"),
   ignoreReview: document.querySelector("#ignoreReviewButton"),
   reviewRawText: document.querySelector("#reviewRawText"),
@@ -614,6 +615,24 @@ function seedDatalist() {
   seedCountDatalist();
 }
 
+function rebuildCatalogIndexes() {
+  productCatalogByKey.clear();
+  itemCatalog.forEach(item => {
+    [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])].forEach(value => {
+      const key = normalize(value);
+      if (key && !productCatalogByKey.has(key)) productCatalogByKey.set(key, item);
+    });
+  });
+  stockCatalog.splice(0, stockCatalog.length, ...itemCatalog, ...ingredientCatalog);
+}
+
+function hydrateSharedCatalog(items) {
+  if (!Array.isArray(items)) return;
+  itemCatalog.splice(0, itemCatalog.length, ...items.map(item => ({ ...item })));
+  rebuildCatalogIndexes();
+  seedDatalist();
+}
+
 function seedSupplyMaterialOptions() {
   const byName = new Map(ingredientCatalog.map(item => [normalize(item.name), item]));
   suppliers.flatMap(supplier => supplier.products || []).forEach(product => {
@@ -675,6 +694,7 @@ function wireEvents() {
   elements.reviewStatusFilter.addEventListener("change", renderReviewWorkspace);
   elements.reviewSearch.addEventListener("input", renderReviewWorkspace);
   elements.refreshReview.addEventListener("click", () => loadBackendSnapshot({ silent: false }));
+  elements.reviewCreateProduct.addEventListener("change", renderReviewProductMode);
   elements.resolveReview.addEventListener("click", resolveReviewException);
   elements.ignoreReview.addEventListener("click", ignoreReviewException);
   elements.clockToggle.addEventListener("click", toggleTimeClock);
@@ -2170,6 +2190,7 @@ function renderProductCard() {
   }
 
   const recipe = Array.isArray(recipeCatalog[item.name]) ? recipeCatalog[item.name] : [];
+  const hasRecipe = recipe.length > 0;
   const yieldQuantity = recipeYield(item.name);
   const storefront = Number(getLatestCounts("Storefront").get(inventoryOverviewKey(item)) || 0);
   const storageCounts = getLatestCounts("Storage");
@@ -2234,7 +2255,7 @@ function renderProductCard() {
         <div><dt>Store price</dt><dd>${retailPrice > 0 ? `$${formatNumber(retailPrice)}` : "Not priced"}</dd></div>
         <div><dt>MSRP range</dt><dd>${productPricing ? `$${formatNumber(productPricing.low)}-$${formatNumber(productPricing.high)}` : "Unavailable"}</dd></div>
         <div><dt>MSRP material cost</dt><dd>${costKnown ? `$${formatNumber(unitCost)} / unit` : "Unavailable"}</dd></div>
-        <div><dt>Recipe yield</dt><dd>${formatNumber(yieldQuantity)}</dd></div>
+        <div><dt>Recipe yield</dt><dd>${hasRecipe ? formatNumber(yieldQuantity) : "-"}</dd></div>
         ${managementPricing}
       </dl>
     </section>
@@ -3019,7 +3040,13 @@ function renderReviewEditor(entry) {
     elements.reviewItem.value = "";
     elements.reviewQuantity.value = 0;
     elements.reviewUnitPrice.value = 0;
+    elements.reviewCreateProduct.checked = false;
+    elements.reviewProductLabel.value = "";
+    elements.reviewProductTag.value = "";
+    elements.reviewProductCategory.value = "Resale";
+    elements.reviewProductPrice.value = 0;
     elements.reviewRawText.textContent = "No event selected";
+    renderReviewProductMode();
     setReviewEditorDisabled(true);
     return;
   }
@@ -3044,7 +3071,15 @@ function renderReviewEditor(entry) {
   elements.reviewUnitPrice.value = Number(entry.unitPrice || 0);
   elements.reviewNote.value = entry.note || "";
   elements.reviewRememberMapping.checked = true;
+  elements.reviewCreateProduct.checked = false;
+  elements.reviewProductLabel.value = entry.discordItemLabel || entry.discordItemName || "";
+  elements.reviewProductTag.value = entry.discordItemName || "";
+  elements.reviewProductCategory.value = suggestProductCategory(
+    entry.discordItemLabel || entry.discordItemName
+  );
+  elements.reviewProductPrice.value = Number(entry.unitPrice || 0);
   elements.reviewRawText.textContent = entry.rawText || "No webhook text was supplied";
+  renderReviewProductMode();
   setReviewEditorDisabled(entry.status !== "Open");
 }
 
@@ -3057,9 +3092,33 @@ function setReviewEditorDisabled(disabled) {
     elements.reviewUnitPrice,
     elements.reviewNote,
     elements.reviewRememberMapping,
+    elements.reviewCreateProduct,
+    elements.reviewProductLabel,
+    elements.reviewProductTag,
+    elements.reviewProductCategory,
+    elements.reviewProductPrice,
     elements.resolveReview,
     elements.ignoreReview
   ].forEach(element => { element.disabled = disabled; });
+}
+
+function renderReviewProductMode() {
+  const creating = elements.reviewCreateProduct.checked;
+  elements.reviewNewProductFields.classList.toggle("hidden", !creating);
+  elements.resolveReview.textContent = creating ? "Add Ware and Apply" : "Resolve and Apply";
+}
+
+function suggestProductCategory(value) {
+  const key = normalize(value);
+  if (key.includes("shotgun")) return "Shotguns";
+  if (key.includes("repeater")) return "Repeaters";
+  if (key.includes("revolver")) return "Revolvers";
+  if (key.includes("pistol")) return "Pistols";
+  if (key.includes("rifle")) return "Rifles";
+  if (key.includes("bow")) return "Bows";
+  if (key.includes("ammo") || key.includes("cartridge")) return "Ammunition";
+  if (key.includes("kit") || key.includes("tool")) return "Tools";
+  return "Resale";
 }
 
 function findExactStockItem(value) {
@@ -3086,11 +3145,38 @@ function reviewReasonText(value) {
 async function resolveReviewException() {
   const entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId);
   if (!entry || entry.status !== "Open") return;
+  const creating = elements.reviewCreateProduct.checked;
   const item = findExactStockItem(elements.reviewItem.value);
   const quantity = Number(elements.reviewQuantity.value);
-  if (!item) {
+  if (!creating && !item) {
     elements.reviewDataStatus.textContent = "Select an exact catalog item or recipe material";
     elements.reviewItem.focus();
+    return;
+  }
+  if (creating && Number(backendSnapshot?.sheet?.schemaVersion || 0) < 8) {
+    elements.reviewDataStatus.textContent = "Deploy Apps Script schema 8 before adding new wares";
+    return;
+  }
+  if (creating && item) {
+    elements.reviewDataStatus.textContent = "This ware already exists; uncheck the new ware option to apply it";
+    elements.reviewItem.focus();
+    return;
+  }
+  const newProduct = creating ? {
+    enabled: true,
+    name: elements.reviewItem.value.trim(),
+    label: elements.reviewProductLabel.value.trim(),
+    tag: elements.reviewProductTag.value.trim(),
+    category: elements.reviewProductCategory.value,
+    price: Number(elements.reviewProductPrice.value)
+  } : null;
+  if (creating && (!newProduct.name || !newProduct.label || !newProduct.tag)) {
+    elements.reviewDataStatus.textContent = "Enter a product name, display label, and game item tag";
+    return;
+  }
+  if (creating && (!Number.isFinite(newProduct.price) || newProduct.price < 0)) {
+    elements.reviewDataStatus.textContent = "Enter a valid non-negative catalog sale price";
+    elements.reviewProductPrice.focus();
     return;
   }
   if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -3105,13 +3191,14 @@ async function resolveReviewException() {
     exception: {
       webhookId: entry.webhookId,
       discordItemLabel: entry.discordItemLabel,
-      itemName: item.name,
+      itemName: creating ? newProduct.name : item.name,
       eventType: elements.reviewEventType.value,
       direction: elements.reviewDirection.value,
       quantity,
       unitPrice: Number(elements.reviewUnitPrice.value || 0),
       rememberMapping: elements.reviewRememberMapping.checked,
-      note: elements.reviewNote.value.trim()
+      note: elements.reviewNote.value.trim(),
+      newProduct
     }
   });
   if (!result.ok) {
@@ -4412,6 +4499,7 @@ async function performBackendRefresh({ silent = false } = {}) {
       return;
     }
     backendSnapshot = nextSnapshot;
+    hydrateSharedCatalog(nextSnapshot.items);
     if (isManagement()) {
       reviewExceptions = Array.isArray(nextSnapshot.sheet?.reviewExceptions)
         ? nextSnapshot.sheet.reviewExceptions
