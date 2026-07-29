@@ -36,10 +36,10 @@ The provisional parser uses Discord item labels as product names. As events are 
 
 The bridge can maintain two bot-authored Discord messages from the shared Apps Script inventory:
 
-- `INVENTORY_CHANNEL_ID` enables a paged storefront overview with current units, targets, sale prices, total stock, and known stock value.
+- `INVENTORY_CHANNEL_ID` enables a paged storefront overview with current units, targets, sale prices, total stock, and known stock value. Only active products with a target greater than zero are listed.
 - `STOCK_ALERT_CHANNEL_ID` enables a shortage message listing only products below their storefront targets.
 
-Both messages are edited in place. The bridge refreshes them after a successfully forwarded storefront event and every `INVENTORY_REFRESH_SECONDS` seconds, with a minimum interval of 30 seconds. The default is 300 seconds. This fallback refresh also picks up manual counts, target changes, and GUI adjustments that did not originate in Discord.
+Both messages are edited in place. The bridge refreshes them after a successfully forwarded storefront event and every `INVENTORY_REFRESH_SECONDS` seconds, with a minimum interval of 30 seconds. The default is 300 seconds. This fallback refresh also picks up manual counts, target changes, and GUI adjustments that did not originate in Discord. Adding a target brings the product into the overview on the next refresh; removing or zeroing a target removes it.
 
 Give the bot `View Channel`, `Send Messages`, `Embed Links`, and `Read Message History` in both destination channels. A dedicated channel is recommended. The first refresh creates the managed message and logs its ID. The bridge normally finds that message again from recent channel history after a restart. For busy channels, set the logged ID explicitly as `INVENTORY_MESSAGE_ID` or `STOCK_ALERT_MESSAGE_ID` so restarts can never create a replacement.
 

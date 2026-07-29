@@ -15,10 +15,21 @@ const rawProducts = Array.from({ length: 21 }, (_, index) => ({
   itemTag: `product_${index + 1}`,
   category: index < 12 ? 'Revolvers' : 'Ammunition',
   currentStock: index === 0 ? 0 : index,
-  target: index < 3 ? 5 : 0,
+  target: 5,
   salePrice: index + 1,
   active: true
 }));
+rawProducts.push({
+  itemName: 'No Target Product',
+  currentStock: 100,
+  target: 0,
+  active: true
+});
+rawProducts.push({
+  itemName: 'Missing Target Product',
+  currentStock: 100,
+  active: true
+});
 rawProducts.push({
   itemName: 'Inactive Product',
   currentStock: 100,
@@ -34,7 +45,21 @@ const snapshot = normalizeInventorySnapshot({
 });
 assert.equal(snapshot.products.length, 21);
 assert.equal(snapshot.products.find(product => product.name === 'Product 1').missing, 5);
+assert.equal(snapshot.products.some(product => product.name === 'No Target Product'), false);
+assert.equal(snapshot.products.some(product => product.name === 'Missing Target Product'), false);
 assert.equal(snapshot.products.some(product => product.name === 'Inactive Product'), false);
+
+const noTargets = normalizeInventorySnapshot({
+  ok: true,
+  inventory: {
+    products: [
+      { itemName: 'No Target', currentStock: 10, target: 0, active: true },
+      { itemName: 'Target Missing', currentStock: 10, active: true }
+    ]
+  }
+});
+assert.equal(noTargets.products.length, 0);
+assert.match(buildInventoryPages(noTargets)[0].fields[0].value, /No storefront targets/);
 
 const pages = buildInventoryPages(snapshot, 8);
 assert.equal(pages.length, 3);
@@ -161,7 +186,7 @@ async function runPublisherChecks() {
   assert.equal(inventoryChannel.sent.length, 1);
   assert.equal(alertChannel.sent.length, 1);
   assert.equal(publisher.health().product_count, 21);
-  assert.equal(publisher.health().shortage_count, 3);
+  assert.equal(publisher.health().shortage_count, snapshot.products.filter(product => product.missing > 0).length);
   assert.equal(publisher.health().last_error, '');
 
   let interactionPayload = null;

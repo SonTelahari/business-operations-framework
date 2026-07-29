@@ -170,7 +170,12 @@ function normalizeInventorySnapshot(payload) {
     throw new Error(payload?.error || 'Apps Script did not return storefront products');
   }
   const products = payload.inventory.products
-    .filter(product => product && product.itemName && product.active !== false)
+    .filter(product =>
+      product
+      && product.itemName
+      && product.active !== false
+      && numberOrZero(product.target) > 0
+    )
     .map(product => {
       const currentStock = Math.max(0, numberOrZero(product.currentStock));
       const target = Math.max(0, numberOrZero(product.target));
@@ -221,7 +226,7 @@ function buildInventoryPages(snapshot, pageSize = DEFAULT_PAGE_SIZE) {
     return {
       color: targetShortages.length ? 0x9b722e : 0x3f704f,
       title: 'Frontier Firearms - Storefront Stock',
-      description: 'Live stock from the shared storefront ledger.',
+      description: 'Live stock for configured storefront targets.',
       fields,
       footer: {
         text: `${INVENTORY_MARKER} | Page ${pageIndex + 1}/${chunks.length} | Updated ${formatDateTime(snapshot.generatedAt)}`
@@ -232,16 +237,12 @@ function buildInventoryPages(snapshot, pageSize = DEFAULT_PAGE_SIZE) {
 }
 
 function inventoryProductLine(product) {
-  const status = product.target <= 0
-    ? '\u26aa'
-    : product.currentStock <= 0
-      ? '\u274c'
-      : product.currentStock < product.target
-        ? '\u26a0\ufe0f'
-        : '\u2705';
-  const quantity = product.target > 0
-    ? `${formatNumber(product.currentStock)}/${formatNumber(product.target)}`
-    : formatNumber(product.currentStock);
+  const status = product.currentStock <= 0
+    ? '\u274c'
+    : product.currentStock < product.target
+      ? '\u26a0\ufe0f'
+      : '\u2705';
+  const quantity = `${formatNumber(product.currentStock)}/${formatNumber(product.target)}`;
   const price = product.salePrice > 0 ? ` | ${formatCurrency(product.salePrice)}` : '';
   return `${status} **${escapeDiscordText(product.label)}**: ${quantity}${price}`;
 }
@@ -307,7 +308,7 @@ function alertProductLine(product) {
 
 function groupedProductFields(products, lineBuilder) {
   if (!products.length) {
-    return [{ name: 'Items', value: 'No storefront products are available.', inline: false }];
+    return [{ name: 'Items', value: 'No storefront targets are configured.', inline: false }];
   }
   const groups = new Map();
   products.forEach(product => {

@@ -84,7 +84,7 @@ The base catalog uses Still Water's native item tag and label. Names, descriptio
 
 The Still Water bridge is capture-only by default for a safe first deployment. The current parser suite covers 28 event formats, including 20 captured Still Water storefront events. Production forwarding is enabled explicitly with `CAPTURE_ONLY=0`; capture mode remains available for collecting unfamiliar future formats without writing them to Google Sheets.
 
-The same Railway bridge can also publish a live, paged storefront inventory embed and a separate target-shortage embed to configured Discord channels. These are edited in place after storefront events and on a timed refresh, so they do not generate a new message on every update. See `discord-bridge/README.md` for channel permissions and variables.
+The same Railway bridge can also publish a live, paged storefront inventory embed and a separate target-shortage embed to configured Discord channels. The inventory list is driven by active storefront targets, so untargeted wares stay hidden and newly targeted wares appear automatically. These messages are edited in place after storefront events and on a timed refresh, so they do not generate a new message on every update. See `discord-bridge/README.md` for channel permissions and variables.
 
 ## Production Batches
 
