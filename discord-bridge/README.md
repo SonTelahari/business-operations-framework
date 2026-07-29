@@ -31,3 +31,16 @@ Run `npm run replay:captures` for a read-only journal summary. After verifying t
 8. After the dedicated parser is verified, add the Apps Script `/exec` URL and set `CAPTURE_ONLY=0`.
 
 The provisional parser uses Discord item labels as product names. As events are captured, `app/items.js` will supply exact game-tag and custom-label mappings.
+
+## Live Storefront Overview
+
+The bridge can maintain two bot-authored Discord messages from the shared Apps Script inventory:
+
+- `INVENTORY_CHANNEL_ID` enables a paged storefront overview with current units, targets, sale prices, total stock, and known stock value.
+- `STOCK_ALERT_CHANNEL_ID` enables a shortage message listing only products below their storefront targets.
+
+Both messages are edited in place. The bridge refreshes them after a successfully forwarded storefront event and every `INVENTORY_REFRESH_SECONDS` seconds, with a minimum interval of 30 seconds. The default is 300 seconds. This fallback refresh also picks up manual counts, target changes, and GUI adjustments that did not originate in Discord.
+
+Give the bot `View Channel`, `Send Messages`, `Embed Links`, and `Read Message History` in both destination channels. A dedicated channel is recommended. The first refresh creates the managed message and logs its ID. The bridge normally finds that message again from recent channel history after a restart. For busy channels, set the logged ID explicitly as `INVENTORY_MESSAGE_ID` or `STOCK_ALERT_MESSAGE_ID` so restarts can never create a replacement.
+
+The publisher is optional. Leave both channel IDs blank to disable it. `APPS_SCRIPT_URL` is required whenever either publisher channel is configured, even in capture-only parser mode.

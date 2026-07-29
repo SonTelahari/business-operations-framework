@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const http = require('http');
 const path = require('path');
 const { appendCaptureRecord, createCaptureRecord, serializeCaptureRecord } = require('./capture');
+const { createInventoryPublisher } = require('./inventory-publisher');
 const { parseStillWaterEmbed } = require('./parser');
 const { embedToText, loadEnvFile, normalizeSnowflake, prepareSheetPayload } = require('./runtime-utils');
 
@@ -12,11 +13,19 @@ const DISCORD_CHANNEL_ID = normalizeSnowflake(process.env.DISCORD_CHANNEL_ID);
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 const CAPTURE_ONLY = process.env.CAPTURE_ONLY !== '0';
 const DEBUG_DISCORD = process.env.DEBUG_DISCORD !== '0';
+const INVENTORY_CHANNEL_ID = normalizeSnowflake(process.env.INVENTORY_CHANNEL_ID);
+const STOCK_ALERT_CHANNEL_ID = normalizeSnowflake(process.env.STOCK_ALERT_CHANNEL_ID);
+const INVENTORY_MESSAGE_ID = normalizeSnowflake(process.env.INVENTORY_MESSAGE_ID);
+const STOCK_ALERT_MESSAGE_ID = normalizeSnowflake(process.env.STOCK_ALERT_MESSAGE_ID);
+const INVENTORY_REFRESH_SECONDS = numberValue(process.env.INVENTORY_REFRESH_SECONDS) || 300;
 const PORT = numberValue(process.env.PORT);
 const CAPTURE_FILE = path.join(__dirname, 'captures', 'events.jsonl');
+const INVENTORY_PUBLISHING_REQUESTED = Boolean(INVENTORY_CHANNEL_ID || STOCK_ALERT_CHANNEL_ID);
 
-if (!DISCORD_TOKEN || !DISCORD_CHANNEL_ID || (!CAPTURE_ONLY && !APPS_SCRIPT_URL)) {
-  console.error('Missing DISCORD_TOKEN or DISCORD_CHANNEL_ID. APPS_SCRIPT_URL is also required when CAPTURE_ONLY=0.');
+if (!DISCORD_TOKEN || !DISCORD_CHANNEL_ID || ((!CAPTURE_ONLY || INVENTORY_PUBLISHING_REQUESTED) && !APPS_SCRIPT_URL)) {
+  console.error(
+    'Missing DISCORD_TOKEN or DISCORD_CHANNEL_ID. APPS_SCRIPT_URL is also required when forwarding or inventory publishing is enabled.'
+  );
   process.exit(1);
 }
 
@@ -24,13 +33,27 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   partials: [Partials.Channel]
 });
+const inventoryPublisher = createInventoryPublisher({
+  client,
+  appsScriptUrl: APPS_SCRIPT_URL,
+  inventoryChannelId: INVENTORY_CHANNEL_ID,
+  alertChannelId: STOCK_ALERT_CHANNEL_ID,
+  inventoryMessageId: INVENTORY_MESSAGE_ID,
+  alertMessageId: STOCK_ALERT_MESSAGE_ID,
+  refreshMs: INVENTORY_REFRESH_SECONDS * 1000,
+  logger: { info: logInfo, warn: logWarn, error: logError }
+});
 
 client.once('clientReady', () => {
   logInfo(`Frontier Firearms - Still Water bridge logged in as ${client.user.tag}`);
   logInfo(`Watching Discord channel ID: ${DISCORD_CHANNEL_ID}`);
   logInfo(`Parser mode: ${CAPTURE_ONLY ? 'capture only' : 'forward to sheet'}`);
   logInfo(`Discord debug logging: ${DEBUG_DISCORD ? 'on' : 'off'}`);
+  logInfo(`Discord inventory publishing: ${inventoryPublisher.enabled ? 'on' : 'off'}`);
   startHealthServer();
+  inventoryPublisher.start().catch(error => {
+    logError(`Unable to start Discord inventory publishing: ${error.message}`);
+  });
 });
 
 client.on('messageCreate', async (message) => {
@@ -79,12 +102,21 @@ client.on('messageCreate', async (message) => {
         timestamp: message.createdAt.toISOString()
       });
       await forwardToSheet(outboundPayload);
+      inventoryPublisher.requestRefresh('storefront event');
       if (payload.review_required) {
         logWarn(`Sent Discord message ${message.id} to review: ${payload.review_reason || 'parser review required'}`);
       }
     } catch (error) {
       logError(`Failed to forward Discord message ${message.id}: ${error.message}`);
     }
+  }
+});
+
+client.on('interactionCreate', async (interaction) => {
+  try {
+    await inventoryPublisher.handleInteraction(interaction);
+  } catch (error) {
+    logError(`Discord inventory control failed: ${error.message}`);
   }
 });
 
@@ -144,6 +176,7 @@ function startHealthServer() {
         parser_profile: 'still-water',
         capture_journal: CAPTURE_ONLY,
         discord_ready: client.isReady(),
+        inventory_publisher: inventoryPublisher.health(),
         uptime_seconds: Math.round(process.uptime())
       }));
       return;

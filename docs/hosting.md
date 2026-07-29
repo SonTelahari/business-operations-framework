@@ -18,8 +18,13 @@ DISCORD_CHANNEL_ID=1510695972798201967
 APPS_SCRIPT_URL=https://script.google.com/macros/s/AKfycbxUltse2dYLlqIyfX2JgQdMJEFRcWNM2OAlQa5ZKP630HVigsBhUwhIaYrg7eJFq855yg/exec
 CAPTURE_ONLY=0
 DEBUG_DISCORD=0
+INVENTORY_CHANNEL_ID=<Discord channel for the live storefront overview>
+STOCK_ALERT_CHANNEL_ID=<Discord channel for storefront target alerts>
+INVENTORY_REFRESH_SECONDS=300
 NODE_ENV=production
 ```
+
+`INVENTORY_MESSAGE_ID` and `STOCK_ALERT_MESSAGE_ID` are optional. After the first publish, the bridge logs both managed message IDs. Add them to Railway when the destination channel is busy enough that the message may fall outside the bot's 50-message restart lookup.
 
 ## Service 2: GUI
 
