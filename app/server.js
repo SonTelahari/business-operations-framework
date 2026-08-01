@@ -5,24 +5,25 @@ const path = require("path");
 const vm = require("vm");
 const { AccountStore, SESSION_MAX_AGE_SECONDS } = require("./auth");
 const { BusinessStore } = require("./business-store");
+const { defaultSetupConfiguration, normalizeSetupPayload } = require("./setup-config");
 
 const root = __dirname;
 loadEnvFile(path.join(root, "..", "discord-bridge", ".env"));
 const port = Number(process.env.PORT || 4273);
 const authUser = process.env.APP_AUTH_USER || "frontier";
 const authPassword = process.env.APP_AUTH_PASSWORD || "";
-const sessionSecret = process.env.AUTH_SESSION_SECRET || "";
-const accountAuthEnabled = Boolean(sessionSecret);
 const accountDataDirectory = process.env.AUTH_DATA_DIR
   || process.env.RAILWAY_VOLUME_MOUNT_PATH
   || path.join(root, ".data");
-const accountStore = accountAuthEnabled
-  ? new AccountStore({ filePath: path.join(accountDataDirectory, "users.json"), sessionSecret })
-  : null;
+const sessionSecretState = resolveSessionSecret(accountDataDirectory, process.env.AUTH_SESSION_SECRET || "");
+const sessionSecret = sessionSecretState.value;
+const accountAuthEnabled = true;
+const accountStore = new AccountStore({ filePath: path.join(accountDataDirectory, "users.json"), sessionSecret });
 const businessStore = new BusinessStore({ filePath: path.join(accountDataDirectory, "business.json") });
 const loginAttempts = new Map();
 let supplyReceiptQueue = Promise.resolve();
 let productionProgressQueue = Promise.resolve();
+let setupQueue = Promise.resolve();
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -34,9 +35,11 @@ const mimeTypes = {
 const publicFiles = new Set([
   "/index.html",
   "/login.html",
+  "/setup.html",
   "/styles.css",
   "/app.js",
   "/login.js",
+  "/setup.js",
   "/pricing.js",
   "/items.js",
   "/recipes.js",
@@ -64,11 +67,13 @@ const server = http.createServer(async (request, response) => {
     if (url.pathname === "/health") {
       sendJson(response, {
         ok: true,
-        service: "frontier-firearms-still-water-app",
+        service: "business-operations-framework",
+        setupRequired: !businessStore.isConfigured(),
         sheetConfigured: Boolean(process.env.APPS_SCRIPT_URL),
         authConfigured: accountAuthEnabled || Boolean(authPassword),
         authMode: accountAuthEnabled ? "accounts" : authPassword ? "legacy-basic" : "none",
-        persistentAccountStore: accountAuthEnabled && Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
+        persistentAccountStore: Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
+        persistentSessionSecret: sessionSecretState.persistent,
         persistentBusinessStore: Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
         supplyReceipts: true,
         storefrontBuyOrders: true,
@@ -83,8 +88,51 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === "/api/public/config" && request.method === "GET") {
+      const configuration = businessStore.getConfiguration();
+      sendJson(response, {
+        ok: true,
+        configured: businessStore.isConfigured(),
+        business: configuration?.business || null,
+        terminology: configuration?.terminology || null
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/setup/status" && request.method === "GET") {
+      sendJson(response, {
+        ok: true,
+        setupRequired: !businessStore.isConfigured(),
+        ownerAccountExists: accountStore.hasUsers(),
+        defaults: businessStore.isConfigured() ? null : defaultSetupConfiguration()
+      });
+      return;
+    }
+    if (businessStore.isConfigured() && url.pathname === "/api/setup/complete") {
+      sendJson(response, {
+        ok: false,
+        error: "Business setup has already been completed",
+        code: "setup_already_completed"
+      }, 409);
+      return;
+    }
+
+    if (!businessStore.isConfigured()) {
+      if (await handleSetupRoute(request, response, url)) return;
+      if (url.pathname.startsWith("/api/")) {
+        sendJson(response, { ok: false, error: "First-launch setup is required", code: "setup_required" }, 428);
+      } else {
+        redirect(response, "/setup.html");
+      }
+      return;
+    }
+    if (url.pathname === "/setup.html") {
+      redirect(response, "/");
+      return;
+    }
+
     if (accountAuthEnabled) {
-      const user = accountStore.verifySession(readCookie(request, "ff_session"));
+      const user = accountStore.verifySession(readCookie(request, "business_session"));
       if (await handleAccountRoute(request, response, url, user)) return;
       if (!user) {
         if (url.pathname.startsWith("/api/")) {
@@ -133,7 +181,7 @@ const server = http.createServer(async (request, response) => {
         response.writeHead(401, {
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": "no-store",
-          "WWW-Authenticate": 'Basic realm="Frontier Firearms - Still Water", charset="UTF-8"'
+        "WWW-Authenticate": 'Basic realm="Business Operations", charset="UTF-8"'
         });
         response.end("Authentication required");
         return;
@@ -256,6 +304,59 @@ async function handleAccountRoute(request, response, url, user) {
     });
   }
   return false;
+}
+
+async function handleSetupRoute(request, response, url) {
+  if (url.pathname === "/setup.html" || url.pathname === "/setup.js" || url.pathname === "/styles.css") {
+    serveStatic(response, url.pathname);
+    return true;
+  }
+  if (url.pathname !== "/api/setup/complete" || request.method !== "POST") return false;
+  if (!allowAuthAttempt(request)) {
+    sendJson(response, { ok: false, error: "Too many attempts. Try again later.", code: "rate_limited" }, 429);
+    return true;
+  }
+
+  const operation = setupQueue.then(async () => {
+    if (businessStore.isConfigured()) {
+      const error = new Error("Business setup has already been completed");
+      error.status = 409;
+      error.code = "setup_already_completed";
+      throw error;
+    }
+    const body = await readJsonBody(request);
+    const configuration = normalizeSetupPayload(body.configuration || body);
+    const ownerInput = body.owner && typeof body.owner === "object" ? body.owner : {};
+    const owner = accountStore.hasUsers()
+      ? await accountStore.authenticate(ownerInput.fullName, ownerInput.password)
+      : await accountStore.provisionInitialAdmin(ownerInput.fullName, ownerInput.password);
+    if (owner.role !== "admin") {
+      const error = new Error("The initial setup must be completed by an admin account");
+      error.status = 403;
+      error.code = "admin_required";
+      throw error;
+    }
+    const saved = await businessStore.completeSetup(configuration, owner);
+    return { owner, configuration: saved };
+  });
+  setupQueue = operation.catch(() => {});
+
+  try {
+    const result = await operation;
+    setSessionCookie(response, request, accountStore.createSession(result.owner));
+    sendJson(response, {
+      ok: true,
+      user: result.owner,
+      business: result.configuration.business
+    }, 201);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Setup could not be completed",
+      code: error.code || "setup_failed"
+    }, error.status || 500);
+  }
+  return true;
 }
 
 async function handleAccountAction(response, callback) {
@@ -394,7 +495,7 @@ async function handleProductInsightRoute(request, response, url, user) {
   }
 
   const requested = decodeURIComponent(route[1]);
-  const catalog = mergeCatalogWithSheetProducts(readCatalogFiles(), await readSheetSnapshot());
+  const catalog = mergeCatalogWithSheetProducts(businessStore.getCatalogData(), await readSheetSnapshot());
   const requestedKey = inventoryKey(requested);
   const item = catalog.items.find(candidate => [
     candidate.name,
@@ -508,7 +609,7 @@ function buildFinanceCommitments(sheet) {
 }
 
 function buildRestockCommitment(sheet, committedPurchaseLines) {
-  const catalog = readCatalogFiles();
+  const catalog = businessStore.getCatalogData();
   const inventory = sheet?.inventory || {};
   const demand = new Map();
   const missingProducts = [];
@@ -960,7 +1061,7 @@ async function handleProductionBatchRoute(request, response, url, user) {
 }
 
 function prepareProductionBatch(input) {
-  const catalog = readCatalogFiles();
+  const catalog = businessStore.getCatalogData();
   const itemByKey = new Map();
   catalog.items.forEach(item => {
     [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])].forEach(value => {
@@ -1626,13 +1727,13 @@ function setSessionCookie(response, request, token) {
   const secure = isHttps(request) ? "; Secure" : "";
   response.setHeader(
     "Set-Cookie",
-    `ff_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}${secure}`
+    `business_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}${secure}`
   );
 }
 
 function clearSessionCookie(response, request) {
   const secure = isHttps(request) ? "; Secure" : "";
-  response.setHeader("Set-Cookie", `ff_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`);
+  response.setHeader("Set-Cookie", `business_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`);
 }
 
 function isHttps(request) {
@@ -1686,7 +1787,7 @@ function safeEqual(actual, expected) {
 }
 
 startServer().catch(error => {
-  console.error("Unable to start Still Water app:", error.message);
+  console.error("Unable to start business operations app:", error.message);
   process.exitCode = 1;
 });
 
@@ -1699,9 +1800,26 @@ async function startServer() {
     });
   }
   server.listen(port, () => {
-    const mode = accountAuthEnabled ? "personal accounts" : authPassword ? "legacy Basic Auth" : "no authentication";
-    console.log(`Frontier Firearms - Still Water app running at http://localhost:${port} with ${mode}`);
+    console.log(`Business operations app running at http://localhost:${port} with personal accounts`);
   });
+}
+
+function resolveSessionSecret(dataDirectory, configuredSecret) {
+  if (configuredSecret) return { value: configuredSecret, persistent: true };
+  const secretPath = path.join(dataDirectory, "session-secret");
+  try {
+    fs.mkdirSync(dataDirectory, { recursive: true });
+    if (fs.existsSync(secretPath)) {
+      const existing = fs.readFileSync(secretPath, "utf8").trim();
+      if (existing) return { value: existing, persistent: true };
+    }
+    const generated = crypto.randomBytes(48).toString("base64url");
+    fs.writeFileSync(secretPath, `${generated}\n`, { mode: 0o600, flag: "wx" });
+    return { value: generated, persistent: true };
+  } catch (error) {
+    console.warn(`Session secret is temporary because it could not be persisted: ${error.message}`);
+    return { value: crypto.randomBytes(48).toString("base64url"), persistent: false };
+  }
 }
 
 function sendJson(response, payload, status = payload.ok === false ? 503 : 200) {
@@ -1732,7 +1850,8 @@ function readJsonBody(request) {
 
 async function getBootstrapData(user) {
   const sheetSnapshot = await readSheetSnapshot();
-  const data = mergeCatalogWithSheetProducts(readCatalogFiles(), sheetSnapshot);
+  const configuration = businessStore.getConfiguration();
+  const data = mergeCatalogWithSheetProducts(businessStore.getCatalogData(), sheetSnapshot);
   const canManage = !user || isManagementRole(user);
   if (canManage) await reconcileStorefrontBuyOrdersFromSheet(sheetSnapshot);
   if (sheetSnapshot?.inventory) delete sheetSnapshot.inventory.buyOrderPurchases;
@@ -1747,9 +1866,13 @@ async function getBootstrapData(user) {
       .slice(0, 20)
       .map(employeeDailyCloseView);
   return {
-    source: sheetSnapshot ? "apps-script-and-local-app-files" : "local-app-files",
+    source: sheetSnapshot ? "apps-script-and-business-configuration" : "business-configuration",
     generatedAt: new Date().toISOString(),
     user,
+    business: configuration?.business || null,
+    terminology: configuration?.terminology || null,
+    locations: configuration?.locations || [],
+    modules: configuration?.modules || {},
     sheetConfigured: Boolean(process.env.APPS_SCRIPT_URL),
     sheet: sheetSnapshot,
     categories: data.categories,
@@ -1757,6 +1880,8 @@ async function getBootstrapData(user) {
     recipeCount: Object.keys(data.recipes).length,
     recipes: data.recipes,
     recipeYields: data.recipeYields,
+    materials: data.materials,
+    pricing: data.pricing,
     salesOrders: businessStore.listSalesOrders(),
     storefrontBuyOrders: canManage ? businessStore.listStorefrontBuyOrders() : [],
     productionBatches: businessStore.listProductionBatches(),

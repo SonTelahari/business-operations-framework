@@ -3,18 +3,18 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Frontier Firearms - Still Water</title>
-    <link rel="icon" type="image/png" href="assets/frontier-firearms-logo.png?v=20260713-van-horn">
+    <title>Business Ledger</title>
     <link rel="stylesheet" href="styles.css?v=20260722-product-cards">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-lockup">
-          <img class="brand-logo" src="assets/frontier-firearms-logo.png?v=20260713-van-horn" alt="Frontier Firearms Van Horn">
+          <img class="brand-logo hidden" id="businessLogo" alt="">
+          <div class="brand-monogram" id="businessMonogram" aria-hidden="true">BL</div>
           <div>
-            <p class="eyebrow">Frontier Firearms</p>
-            <h1>Still Water Ledger</h1>
+            <p class="eyebrow" id="businessName">Business</p>
+            <h1 id="businessLedgerName">Business Ledger</h1>
           </div>
         </div>
         <div class="topbar-actions">
@@ -316,17 +316,17 @@
           <div class="finance-pnl-stats">
             <div>
               <span>Earnings</span>
-              <strong id="financeRevenueValue">$0</strong>
+              <strong id="financeRevenueValue">0</strong>
               <small>Sales and operating income</small>
             </div>
             <div>
               <span>Expenses</span>
-              <strong id="financeExpenseValue">$0</strong>
+              <strong id="financeExpenseValue">0</strong>
               <small>Purchases, payroll, and operating costs</small>
             </div>
             <div class="finance-profit-cell">
               <span>Operating Profit</span>
-              <strong id="financeProfitValue">$0</strong>
+              <strong id="financeProfitValue">0</strong>
               <small>Owner funds and safekeeping excluded</small>
             </div>
           </div>
@@ -341,15 +341,15 @@
           </div>
           <div class="finance-cash-grid">
             <div><span>Ledger Cash</span><strong id="financeLedgerValue">Unavailable</strong></div>
-            <div><span>Safekeeping Held</span><strong id="financeSafekeepingValue">$0</strong></div>
+            <div><span>Safekeeping Held</span><strong id="financeSafekeepingValue">0</strong></div>
             <div><span>Business Cash</span><strong id="financeBusinessCashValue">Unavailable</strong></div>
-            <div><span>Committed</span><strong id="financeCommittedValue">$0</strong></div>
+            <div><span>Committed</span><strong id="financeCommittedValue">0</strong></div>
             <div class="finance-available-cell"><span>Free After Commitments</span><strong id="financeAvailableValue">Unavailable</strong></div>
           </div>
           <div class="finance-owner-strip">
-            <span>William's owner capital currently in the business</span>
-            <strong id="financeOwnerCapitalValue">$0</strong>
-            <small id="financeOwnerCapitalDetail">$0 deposited / $0 withdrawn</small>
+            <span id="financeOwnerCapitalLabel">Owner capital currently in the business</span>
+            <strong id="financeOwnerCapitalValue">0</strong>
+            <small id="financeOwnerCapitalDetail">0 deposited / 0 withdrawn</small>
           </div>
         </section>
 
@@ -363,17 +363,17 @@
           <div class="finance-commitment-stats">
             <div>
               <span>Supplier Orders</span>
-              <strong id="financeSupplyCommitmentValue">$0</strong>
+              <strong id="financeSupplyCommitmentValue">0</strong>
               <small id="financeSupplyCommitmentDetail">0 remaining lines</small>
             </div>
             <div>
               <span>Storefront Buy Orders</span>
-              <strong id="financeBuyCommitmentValue">$0</strong>
+              <strong id="financeBuyCommitmentValue">0</strong>
               <small id="financeBuyCommitmentDetail">0 open orders</small>
             </div>
             <div>
               <span>Missing Stock Reserve</span>
-              <strong id="financeRestockCommitmentValue">$0</strong>
+              <strong id="financeRestockCommitmentValue">0</strong>
               <small id="financeRestockCommitmentDetail">0 material shortages</small>
             </div>
           </div>
@@ -637,15 +637,15 @@
         <aside class="panel summary-panel" aria-label="Quote summary">
           <div class="total-block">
             <span>Subtotal</span>
-            <strong id="subtotalValue">$0</strong>
+              <strong id="subtotalValue">0</strong>
           </div>
           <div class="total-row">
             <span>Deposit</span>
-            <strong id="depositValue">$0</strong>
+              <strong id="depositValue">0</strong>
           </div>
           <div class="balance-row">
             <span>Balance</span>
-            <strong id="balanceValue">$0</strong>
+              <strong id="balanceValue">0</strong>
           </div>
 
           <div class="action-grid">
@@ -821,7 +821,7 @@
             </div>
             <div>
               <span>Committed</span>
-              <strong id="buyOrderCommittedValue">$0</strong>
+              <strong id="buyOrderCommittedValue">0</strong>
             </div>
           </div>
           <div class="buy-order-manual-fill">
@@ -937,7 +937,7 @@
         <aside class="panel summary-panel" aria-label="Supply order summary">
           <div class="total-block">
             <span>Order Total</span>
-            <strong id="supplySubtotalValue">$0</strong>
+              <strong id="supplySubtotalValue">0</strong>
           </div>
           <div class="total-row">
             <span>Lines</span>
@@ -1597,6 +1597,6 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260725-native-wares"></script>
+    <script src="app.js?v=20260801-first-launch"></script>
   </body>
 </html>

@@ -20,9 +20,9 @@
       const quantity = formatTelegramQuantity(line.quantity);
       return `${label.padEnd(itemWidth)} | ${quantity.padStart(QUANTITY_WIDTH)} |`;
     });
-    const signerName = cleanLine(signer.name || order?.requestedBy || "Frontier Firearms");
+    const signerName = cleanLine(signer.name || order?.requestedBy || "Business representative");
     const signerTitle = cleanLine(signer.title || "Representative");
-    const business = cleanLine(signer.business || "Frontier Firearms, Van Horn");
+    const business = cleanLine(signer.business || "Business");
 
     return [
       "Good day,",

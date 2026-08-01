@@ -239,6 +239,51 @@ async function run() {
     ["accounts", true, true, true, true, true, true, true]
   );
 
+  const firstLaunch = await post(`${baseUrl}/api/setup/complete`, {
+    owner: { fullName: "Frontier Owner", password: "OwnerPassword123!" },
+    configuration: {
+      business: {
+        name: "Frontier Firearms",
+        ledgerName: "Still Water Ledger",
+        location: "Van Horn",
+        currency: "USD",
+        locale: "en-US",
+        timezone: "America/New_York"
+      },
+      locations: [
+        { name: "Storefront", type: "sales" },
+        { name: "Storage", type: "storage" }
+      ],
+      catalog: {
+        materials: [
+          { name: "Iron", unitCost: 0.25 },
+          { name: "Softwood", unitCost: 0.2 },
+          { name: "Revolver Handle", unitCost: 1 },
+          { name: "Revolver Barrel", unitCost: 1 },
+          { name: "Revolver Cylinder", unitCost: 1 },
+          { name: "Bolts", unitCost: 0.05 }
+        ],
+        products: [
+          { name: "Navy Revolver", label: "Navy Revolver", tag: "WEAPON_REVOLVER_NAVY", category: "Revolvers", salePrice: 105, target: 5 },
+          { name: "Boltaction Rifle", label: "BoltAction Rifle", tag: "WEAPON_RIFLE_BOLTACTION", category: "Rifles", salePrice: 80, target: 5 }
+        ],
+        recipes: [{
+          productName: "Navy Revolver",
+          yield: 1,
+          ingredients: [
+            { name: "Iron", quantity: 2 },
+            { name: "Softwood", quantity: 2 },
+            { name: "Revolver Handle", quantity: 1 },
+            { name: "Revolver Barrel", quantity: 1 },
+            { name: "Revolver Cylinder", quantity: 1 },
+            { name: "Bolts", quantity: 2 }
+          ]
+        }]
+      }
+    }
+  });
+  assert.equal(firstLaunch.response.status, 201);
+
   const loginPage = await fetch(`${baseUrl}/login.html`);
   assert.equal(loginPage.status, 200);
   const loginPageHtml = await loginPage.text();
@@ -766,7 +811,7 @@ async function run() {
   assert.equal(completeReceipt.body.order.lines[0].receivedQuantity, 20);
   assert.equal(completeReceipt.body.order.lines[0].receipts.length, 2);
   assert.equal(storageCounts.get("iron"), 32);
-  const financeAfterSupplyReceipts = await getJson(`${baseUrl}/api/finance?from=2026-07-01&to=2026-07-31`, ownerCookie);
+  const financeAfterSupplyReceipts = await getJson(`${baseUrl}/api/finance?from=2026-07-01&to=2099-12-31`, ownerCookie);
   assert.deepEqual(financeAfterSupplyReceipts.body.totals, { revenue: 300, expenses: 157, profit: 143 });
   assert.equal(financeAfterSupplyReceipts.body.coverage.supplierReceipts, 2);
   assert.equal(financeAfterSupplyReceipts.body.coverage.supplierReceiptExpenses, 30);
@@ -1142,44 +1187,7 @@ async function run() {
   assert.equal(logout.response.status, 200);
   assert.match(logout.response.headers.get("set-cookie") || "", /Max-Age=0/);
 
-  await testLegacyFallback();
-
   console.log("Personal accounts, manager permissions, and audit checks passed.");
-}
-
-async function testLegacyFallback() {
-  const legacyPort = 4285;
-  const legacyDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "still-water-legacy-business-"));
-  const legacyServer = spawn(process.execPath, [path.join(__dirname, "server.js")], {
-    env: {
-      ...process.env,
-      PORT: String(legacyPort),
-      APPS_SCRIPT_URL: "",
-      AUTH_SESSION_SECRET: "",
-      AUTH_DATA_DIR: legacyDataDirectory,
-      ADMIN_FULL_NAME: "",
-      ADMIN_PASSWORD: "",
-      APP_AUTH_USER: "frontier-legacy",
-      APP_AUTH_PASSWORD: "LegacyPassword123!",
-      NODE_ENV: "test"
-    },
-    stdio: ["ignore", "ignore", "pipe"]
-  });
-  try {
-    const legacyUrl = `http://127.0.0.1:${legacyPort}`;
-    await waitForServer(`${legacyUrl}/health`);
-    const unauthenticated = await fetch(legacyUrl);
-    assert.equal(unauthenticated.status, 401);
-    const authorization = `Basic ${Buffer.from("frontier-legacy:LegacyPassword123!").toString("base64")}`;
-    const session = await fetch(`${legacyUrl}/api/auth/session`, { headers: { authorization } });
-    assert.equal(session.status, 200);
-    const result = await session.json();
-    assert.equal(result.user.role, "admin");
-    assert.equal(result.user.accountManagement, false);
-  } finally {
-    legacyServer.kill();
-    await fs.promises.rm(legacyDataDirectory, { recursive: true, force: true });
-  }
 }
 
 async function post(url, payload, cookie = "") {
@@ -1223,7 +1231,7 @@ async function remove(url, cookie = "") {
 
 function cookieFrom(response) {
   const value = response.headers.get("set-cookie") || "";
-  assert.match(value, /^ff_session=/);
+  assert.match(value, /^business_session=/);
   return value.split(";", 1)[0];
 }
 

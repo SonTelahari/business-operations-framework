@@ -3,6 +3,7 @@
 !**/.env.example
 **/node_modules/
 **/.data/
+**/.qa-data/
 **/users.json
 *.log
 discord-bridge/captures/
@@ -10,3 +11,4 @@ discord-bridge/captures/
 .codex/
 .agents/
 *.xlsx
+outputs/

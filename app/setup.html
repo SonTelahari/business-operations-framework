@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>First Launch - Business Ledger</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="setup-page">
+    <main class="setup-book">
+      <header class="setup-header">
+        <div>
+          <p class="eyebrow">First Launch</p>
+          <h1>Open a New Ledger</h1>
+        </div>
+        <p id="setupProgressText">Page 1 of 5</p>
+      </header>
+
+      <nav class="setup-progress" aria-label="Setup progress">
+        <button class="active" type="button" data-setup-nav="0">Business</button>
+        <button type="button" data-setup-nav="1">Owner</button>
+        <button type="button" data-setup-nav="2">Operations</button>
+        <button type="button" data-setup-nav="3">Catalog</button>
+        <button type="button" data-setup-nav="4">Recipes</button>
+      </nav>
+
+      <form id="setupForm" novalidate>
+        <section class="setup-sheet active" data-setup-step="0">
+          <div class="setup-sheet-heading">
+            <p class="eyebrow">Business Record</p>
+            <h2>Identity</h2>
+          </div>
+          <div class="setup-fields two-columns">
+            <label>
+              Business name
+              <input id="businessNameInput" required maxlength="100" autocomplete="organization">
+            </label>
+            <label>
+              Ledger title
+              <input id="ledgerNameInput" maxlength="100" placeholder="Business Ledger">
+            </label>
+            <label>
+              Primary location
+              <input id="businessLocationInput" maxlength="100" autocomplete="address-level2">
+            </label>
+            <label>
+              Logo URL
+              <input id="logoUrlInput" type="url" maxlength="500" placeholder="https://...">
+            </label>
+            <label>
+              Currency
+              <input id="currencyInput" required maxlength="3" value="USD" autocapitalize="characters">
+            </label>
+            <label>
+              Locale
+              <input id="localeInput" required maxlength="30" value="en-US">
+            </label>
+            <label class="full-row">
+              Timezone
+              <input id="timezoneInput" required maxlength="80" value="UTC">
+            </label>
+            <label class="full-row">
+              Business description
+              <textarea id="businessDescriptionInput" rows="3" maxlength="1000"></textarea>
+            </label>
+          </div>
+        </section>
+
+        <section class="setup-sheet" data-setup-step="1">
+          <div class="setup-sheet-heading">
+            <p class="eyebrow">Account Record</p>
+            <h2>Initial Owner</h2>
+            <p id="ownerSetupNote">This account receives administrator access.</p>
+          </div>
+          <div class="setup-fields">
+            <label>
+              Owner display name
+              <input id="ownerNameInput" required minlength="3" maxlength="80" autocomplete="username">
+              <span class="field-hint">Use an in-game or character name when this is a roleplay business.</span>
+            </label>
+            <label>
+              Password
+              <input id="ownerPasswordInput" type="password" required minlength="10" maxlength="128" autocomplete="new-password">
+            </label>
+            <label>
+              Confirm password
+              <input id="ownerConfirmInput" type="password" required minlength="10" maxlength="128" autocomplete="new-password">
+            </label>
+          </div>
+        </section>
+
+        <section class="setup-sheet" data-setup-step="2">
+          <div class="setup-sheet-heading split-heading">
+            <div>
+              <p class="eyebrow">Operations Record</p>
+              <h2>Locations and Modules</h2>
+            </div>
+            <button class="secondary-button" id="addLocationButton" type="button">Add Location</button>
+          </div>
+          <div class="setup-table" id="locationRows"></div>
+          <fieldset class="module-fieldset">
+            <legend>Enabled modules</legend>
+            <div class="module-grid">
+              <label><input type="checkbox" name="module" value="production" checked> Production</label>
+              <label><input type="checkbox" name="module" value="suppliers" checked> Suppliers</label>
+              <label><input type="checkbox" name="module" value="storefrontBuyOrders" checked> Buy orders</label>
+              <label><input type="checkbox" name="module" value="payroll" checked> Time and payroll</label>
+              <label><input type="checkbox" name="module" value="finance" checked> Finance</label>
+              <label><input type="checkbox" name="module" value="discord"> Discord publishing</label>
+            </div>
+          </fieldset>
+        </section>
+
+        <section class="setup-sheet" data-setup-step="3">
+          <div class="setup-sheet-heading split-heading">
+            <div>
+              <p class="eyebrow">Catalog Record</p>
+              <h2>Materials and Products</h2>
+            </div>
+            <div class="setup-heading-actions">
+              <button class="secondary-button" id="addMaterialButton" type="button">Add Material</button>
+              <button class="secondary-button" id="addProductButton" type="button">Add Product</button>
+            </div>
+          </div>
+
+          <div class="setup-subsection">
+            <div class="setup-subheading">
+              <h3>Materials</h3>
+              <span id="materialCount">0 entries</span>
+            </div>
+            <div class="setup-table" id="materialRows">
+              <p class="setup-empty">No materials entered</p>
+            </div>
+          </div>
+
+          <div class="setup-subsection">
+            <div class="setup-subheading">
+              <h3>Products</h3>
+              <span id="productCount">0 entries</span>
+            </div>
+            <div class="setup-table" id="productRows">
+              <p class="setup-empty">No products entered</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="setup-sheet" data-setup-step="4">
+          <div class="setup-sheet-heading split-heading">
+            <div>
+              <p class="eyebrow">Production Record</p>
+              <h2>Recipes</h2>
+            </div>
+            <button class="secondary-button" id="addRecipeButton" type="button">Add Recipe</button>
+          </div>
+          <datalist id="setupProductOptions"></datalist>
+          <div class="setup-recipe-list" id="recipeRows">
+            <p class="setup-empty">No recipes entered</p>
+          </div>
+          <div class="setup-review" id="setupReview"></div>
+        </section>
+
+        <div class="setup-message" id="setupMessage" role="status" aria-live="polite"></div>
+        <footer class="setup-actions">
+          <button class="secondary-button" id="setupBackButton" type="button" disabled>Back</button>
+          <button class="primary-button" id="setupNextButton" type="button">Next</button>
+          <button class="primary-button hidden" id="setupFinishButton" type="submit">Open Ledger</button>
+        </footer>
+      </form>
+    </main>
+    <script src="setup.js"></script>
+  </body>
+</html>

@@ -1,6 +1,10 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  configurationToCatalogData,
+  normalizeSetupPayload
+} = require("./setup-config");
 
 const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially Received", "Received", "Cancelled"]);
 const STOREFRONT_BUY_ORDER_STATUSES = new Set(["Active", "Paused", "Filled", "Cancelled"]);
@@ -12,7 +16,8 @@ class BusinessStore {
   constructor({ filePath }) {
     this.filePath = filePath;
     this.data = {
-      version: 7,
+      version: 8,
+      configuration: null,
       salesOrders: [],
       supplyOrders: [],
       suppliers: [],
@@ -26,6 +31,34 @@ class BusinessStore {
   async initialize() {
     await fs.promises.mkdir(path.dirname(this.filePath), { recursive: true });
     this.data = await this.readData();
+  }
+
+  isConfigured() {
+    return Boolean(this.data.configuration?.completedAt);
+  }
+
+  getConfiguration() {
+    return this.data.configuration ? structuredClone(this.data.configuration) : null;
+  }
+
+  getCatalogData() {
+    return this.data.configuration
+      ? configurationToCatalogData(this.data.configuration)
+      : { categories: [], items: [], materials: [], recipes: {}, recipeYields: {}, pricing: { products: {}, materials: {} } };
+  }
+
+  async completeSetup(input, actor) {
+    const normalized = normalizeSetupPayload(input);
+    return this.mutate(async () => {
+      if (this.isConfigured()) {
+        throw businessError("Business setup has already been completed", 409, "setup_already_completed");
+      }
+      normalized.completedAt = new Date().toISOString();
+      normalized.completedBy = cleanText(actor?.fullName, 100) || "Initial owner";
+      this.data.configuration = normalized;
+      this.data.version = 8;
+      return structuredClone(normalized);
+    });
   }
 
   listSupplyOrders() {
@@ -507,7 +540,8 @@ class BusinessStore {
       if (!Array.isArray(parsed.salesOrders)) parsed.salesOrders = [];
       if (!Array.isArray(parsed.dailyCloses)) parsed.dailyCloses = [];
       return {
-        version: 7,
+        version: 8,
+        configuration: parsed.configuration ? normalizeStoredConfiguration(parsed.configuration) : null,
         salesOrders: parsed.salesOrders
           .filter(order => order && typeof order === "object")
           .map(order => cleanStoredSalesOrder(order)),
@@ -534,7 +568,8 @@ class BusinessStore {
     } catch (error) {
       if (error.code === "ENOENT") {
         return {
-          version: 7,
+          version: 8,
+          configuration: null,
           salesOrders: [],
           supplyOrders: [],
           suppliers: [],
@@ -552,6 +587,13 @@ class BusinessStore {
     await fs.promises.writeFile(temporaryPath, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
     await fs.promises.rename(temporaryPath, this.filePath);
   }
+}
+
+function normalizeStoredConfiguration(configuration) {
+  const normalized = normalizeSetupPayload(configuration);
+  normalized.completedAt = cleanDateTime(configuration.completedAt);
+  normalized.completedBy = cleanText(configuration.completedBy, 100);
+  return normalized;
 }
 
 function cleanSalesOrder(input, actor, { id, now, existing }) {

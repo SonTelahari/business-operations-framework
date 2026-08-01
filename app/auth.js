@@ -15,39 +15,56 @@ class AccountStore {
     this.writeQueue = Promise.resolve();
   }
 
-  async initialize({ adminFullName, adminPassword }) {
+  async initialize({ adminFullName = "", adminPassword = "" } = {}) {
     await fs.promises.mkdir(path.dirname(this.filePath), { recursive: true });
     this.data = await this.readData();
 
     if (!this.data.users.length) {
-      if (!adminFullName || !adminPassword) {
-        throw new Error("ADMIN_FULL_NAME and ADMIN_PASSWORD are required for the first account");
+      if (adminFullName || adminPassword) {
+        if (!adminFullName || !adminPassword) {
+          throw new Error("ADMIN_FULL_NAME and ADMIN_PASSWORD must both be set when pre-provisioning an owner");
+        }
+        await this.provisionInitialAdmin(adminFullName, adminPassword, "Environment setup");
+      }
+    }
+  }
+
+  hasUsers() {
+    return this.data.users.length > 0;
+  }
+
+  async provisionInitialAdmin(fullName, plainPassword, source = "First launch") {
+    const cleanedName = validateFullName(fullName);
+    validatePassword(plainPassword);
+    return this.mutate(async () => {
+      if (this.data.users.length) {
+        throw accountError("The initial owner account has already been created", 409, "initial_admin_exists");
       }
       const now = new Date().toISOString();
-      const password = await hashPassword(adminPassword);
-      this.data.users.push({
+      const user = {
         id: crypto.randomUUID(),
-        fullName: cleanFullName(adminFullName),
-        loginKey: loginKey(adminFullName),
+        fullName: cleanedName,
+        loginKey: loginKey(cleanedName),
         role: "admin",
         status: "active",
-        password,
+        password: await hashPassword(plainPassword),
         sessionVersion: 1,
         createdAt: now,
         approvedAt: now,
         approvedBy: "system",
         lastLoginAt: ""
-      });
+      };
+      this.data.users.push(user);
       this.appendAudit({
         category: "account",
         action: "account.admin_created",
         actorName: "System",
-        subjectId: this.data.users[0].id,
-        subjectName: this.data.users[0].fullName,
-        details: { role: "admin" }
+        subjectId: user.id,
+        subjectName: user.fullName,
+        details: { role: "admin", source }
       });
-      await this.persist();
-    }
+      return publicUser(user);
+    });
   }
 
   async register(fullName, plainPassword) {

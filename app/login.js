@@ -9,7 +9,39 @@ registerTab.addEventListener("click", () => showMode("register"));
 loginForm.addEventListener("submit", login);
 registerForm.addEventListener("submit", register);
 
+loadPublicConfig();
 checkSession();
+
+async function loadPublicConfig() {
+  try {
+    const response = await fetch("/api/public/config", { headers: { accept: "application/json" } });
+    const result = await response.json();
+    if (!result.configured) {
+      window.location.replace("/setup.html");
+      return;
+    }
+    const business = result.business || {};
+    const name = business.name || "Business";
+    const ledgerName = business.ledgerName || `${name} Ledger`;
+    document.title = `Sign In - ${name}`;
+    document.querySelector("#loginLedgerName").textContent = ledgerName;
+    document.querySelector("#loginBrand").setAttribute("aria-label", name);
+    const logo = document.querySelector("#loginBusinessLogo");
+    const monogram = document.querySelector("#loginBusinessMonogram");
+    if (business.logoUrl) {
+      logo.src = business.logoUrl;
+      logo.alt = `${name} logo`;
+      logo.classList.remove("hidden");
+      monogram.classList.add("hidden");
+    } else {
+      monogram.textContent = initials(name);
+    }
+  } catch {}
+}
+
+function initials(value) {
+  return String(value || "Business Ledger").split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0]).join("").toUpperCase();
+}
 
 async function checkSession() {
   try {

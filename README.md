@@ -1,105 +1,60 @@
-# Frontier Firearms - Still Water
+# Business Operations Framework
 
-Still Water server edition of the Frontier Firearms business system.
+A reusable ledger-style operations system for roleplay businesses. The framework combines inventory, production recipes, storefront targets, customer orders, purchasing, staff timekeeping, payroll, finance, webhook review, and Discord publishing without baking one business's catalog into the application.
 
-This project preserves the order desk, production planning, storefront targets, manual counts, ledger adjustments, employee time clock, payroll, Discord parser, Google Sheets receiver, and hosting setup from the original project. Its catalog contains Still Water data only, preventing server economies from being mixed.
+The first browser visit opens a five-page setup ledger. A new owner enters:
 
-## Employee Accounts
+- Business identity, location, currency, locale, timezone, and optional logo
+- Their first administrator account using an in-game or character name
+- Sales, storage, production, and other operating locations
+- The modules the business needs
+- Materials, products, prices, stock targets, and game item tags
+- Product recipes, output quantities, and ingredient requirements
 
-Employees request access with their in-game character name and a password. No real-life name or personal information is requested. New accounts remain pending until an admin or manager approves them in the Staff tab. Passwords are stored only as salted `scrypt` hashes, and account sessions use signed, HTTP-only cookies.
+No real-life identity or email address is requested. Passwords are stored as salted `scrypt` hashes and sessions use signed, HTTP-only cookies.
 
-Roles are intentionally separated:
+## First Launch
 
-- Employees see Dashboard, Store, Workbench, and Production. They can clock in, work with shared customer orders, start assigned batches, and record completed craft cycles. Ledger cash and daily-close reconciliation amounts are removed from employee API responses.
-- Managers also see Restock, Supplies, Buy Orders, Operations, Daily Close, Review, and Staff. They can queue or cancel production, run counts and operational adjustments, maintain targets and suppliers, reconcile webhook exceptions, finalize daily closes, approve or disable employee accounts, and review the employee audit ledger.
-- Admins additionally see Finance and can run payroll, record owner capital and safekeeping movements, promote or demote managers, and reopen a signed daily close when a correction is required.
+1. Install Node.js 20 or newer.
+2. Run `npm install` in the repository root.
+3. Run `npm start`.
+4. Open `http://localhost:4273`.
+5. Complete the setup ledger and select **Open Ledger**.
 
-The server-side audit ledger records account requests, successful sign-ins and sign-outs, staff actions, sales-order changes, time-clock events, counts, adjustments, and storefront target changes. It does not record passwords, IP addresses, or real-life identity data.
+The setup is transactional: invalid products, duplicate names, unknown recipe ingredients, invalid locations, or mismatched owner credentials do not create a partial business. A browser-local draft preserves non-secret setup fields if the page is closed before completion.
 
-## Product Cards
+For a hosted deployment, attach persistent storage before completing setup. The application stores its account and business configuration under `AUTH_DATA_DIR`, the Railway volume mount, or `app/.data` locally. A stable session secret is generated into the same data directory when `AUTH_SESSION_SECRET` is not supplied.
 
-Finished-product rows in the Store tab open a compact product record beside the inventory table. Every employee can quickly check the current storefront and storage counts, stock target, store price, MSRP range, recipe yield, ingredient requirements, storage availability, and current material cost. Recipe lines with insufficient storage are marked directly in the card.
+## Accounts and Roles
 
-Managers and admins also see estimated gross profit and margin per unit plus all-time recorded sales revenue, transaction count, average ticket, and sales channels. Cost and margin estimates use the server MSRP midpoint catalog; they are not booked accounting costs. Those aggregates are exposed through a limited product-insight endpoint rather than granting managers access to the full admin Finance report. Catalog entries can later add an optional item image and roleplay-reference URL without changing the card layout.
+- **Employees** see the daily desk, store, workbench, and production tools needed for ordinary shifts.
+- **Managers** can run counts and adjustments, maintain targets and suppliers, reconcile webhook exceptions, manage production, approve staff, and inspect the audit ledger.
+- **Admins** additionally control finance, payroll, owner funds, manager promotion, and protected corrections.
 
-## Shared Sales Orders
+New employee requests use the employee's character name and chosen password. A manager or admin approves the request from the Staff page.
 
-Customer quotes and work orders are stored in the server-side business register so every signed-in employee sees the same queue. Saves use revisions to prevent an older browser tab from silently overwriting a colleague's changes. Production can only be queued after the current order revision has saved successfully, and orders linked to production are retained instead of being deleted.
+## Catalog Model
 
-On the first login after this update, each browser imports its older local work orders by ID. Existing shared records are skipped, and local browser copies are removed only after the import succeeds.
+Products are the goods a business sells or produces. Materials are recipe inputs. Recipes connect a product to one or more material or intermediate-product ingredients and record the quantity produced per craft cycle.
 
-## Daily Close and Handoff
+The runtime catalog comes from the persisted first-launch configuration. The checked-in `app/items.js`, `app/recipes.js`, and `app/pricing.js` files remain reference fixtures for the original implementation and parser tests; they are not injected into a newly configured business.
 
-Management can keep one shared reconciliation record per business date. A draft records storefront and storage confirmations, the physical ledger count, discrepancy notes, next-shift priorities, and handoff notes. The server refreshes the live inventory, ledger, orders, production, supply, storefront buy-order, and webhook-review snapshot when the record is saved and again when it is finalized.
+## External Integrations
 
-A close cannot be finalized until storefront and storage are confirmed and a ledger count is entered. Any difference from the shared ledger requires an explanation. Finalized records are locked, the latest signed handoff is shown to every employee on the dashboard, and only an admin can reopen a close. Saves, finalizations, and reopenings are written to the employee audit ledger.
+The GUI can run without a Google Apps Script receiver, but shared inventory, transactions, finance, and webhook-backed workflows require `APPS_SCRIPT_URL`. The included `webhook/Code.gs` is the current receiver implementation and must be deployed into a business-owned Google Sheet.
 
-The Railway GUI service needs one persistent volume so accounts survive deployments. See `docs/hosting.md` for the migration from the shared login.
+The `discord-bridge` directory contains the proven Still Water storefront parser as a reference adapter. Discord event wording is server-specific, so a new deployment must verify its message formats before forwarding production transactions. Keep `CAPTURE_ONLY=1` while collecting unfamiliar formats.
 
-## Finance Ledger
+Secrets such as Discord tokens, channel IDs, and Apps Script URLs are hosting variables. They are intentionally not collected by the browser setup wizard.
 
-The admin-only Finance page reports cash-basis earnings, expenses, and operating profit for selectable periods. Storefront sales and purchases, P2P cash movements, operating costs, and payroll feed the P&L. Ledger corrections remain part of cash reconciliation but are excluded from operating profit.
+## Commands
 
-`Reconcile All History` scans every Sheet transaction and manual cash record without creating duplicate rows. The coverage line shows the number of storefront sales, storefront purchases, buy orders, manual entries, supplier receipts, payroll payments, and owner-fund entries examined. Received supplier-order quantities are retained as dated, price-snapshotted expenses; older received quantities are migrated into one legacy receipt per line.
+```text
+npm start                 Start the GUI and API
+npm run start:bridge      Start the Discord bridge
+npm test                  Run the full regression suite
+```
 
-William's owner capital and safekeeping money are tracked separately from earnings. Capital remains available business equity; safekeeping is deducted from ledger cash to show the actual business cash position. Only an admin can record deposits or withdrawals for either balance.
+## Deployment
 
-Committed cash combines remaining ordered supplier lines, open storefront buy orders, and the estimated materials still needed for storefront targets. Finished stock in Storage and quantities already on order are deducted before the restock reserve is calculated, preventing the same requirement from being reserved twice.
-
-## Current Catalog Categories
-
-- Rifles
-- Bows
-- Misc
-- Shotguns
-- Repeaters
-- Revolvers
-- Pistols
-- Tools
-- Ammunition
-
-The checked-in manufacturing catalog requires one recipe per craftable product and prevents duplicate item names, labels, and tags. Native resale wares approved from webhook review are sheet-backed sellable products and do not require recipes.
-
-## Webhook-reviewed Wares
-
-Managers can resolve an unknown storefront event against an existing exact catalog match or explicitly choose `Add as a new sellable ware`. A new ware records its canonical name, storefront label, game item tag, category, and sale price in the shared `Products` sheet before the original movement is reconciled. The Discord label mapping is remembered for future events.
-
-New sheet-backed wares appear in product selectors, manual counts, the Store overview, sales orders, targets, and product cards after the next refresh. They remain outside production planning until a real recipe is added. Duplicate product names, labels, and item tags are rejected.
-
-## Data Intake
-
-For each product, record:
-
-- Product name
-- In-game item tag
-- Display or custom label
-- Category
-- Sale price
-- Recipe ingredients and quantities
-- Wiki link, when available
-
-The base catalog uses Still Water's native item tag and label. Names, descriptions, engravings, or other labels applied during later customization belong to the individual order or weapon record and do not replace the base product identity.
-
-## Discord Parser Status
-
-The Still Water bridge is capture-only by default for a safe first deployment. The current parser suite covers 28 event formats, including 20 captured Still Water storefront events. Production forwarding is enabled explicitly with `CAPTURE_ONLY=0`; capture mode remains available for collecting unfamiliar future formats without writing them to Google Sheets.
-
-The same Railway bridge can also publish a live, paged storefront inventory embed and a separate target-shortage embed to configured Discord channels. The inventory list is driven by active storefront targets, so untargeted wares stay hidden and newly targeted wares appear automatically. These messages are edited in place after storefront events and on a timed refresh, so they do not generate a new message on every update. See `discord-bridge/README.md` for channel permissions and variables.
-
-## Production Batches
-
-Managers can turn customer orders or uncovered storefront targets into shared production batches. The server snapshots each product recipe when the batch is created, reserves materials by expedite status and due date, and lets employees record total craft cycles as work is completed. Customer and manual production writes finished goods into shared Storage. Storefront-restock production records material use only; the Discord deposit webhook is the sole source of truth for the finished goods entering the Storefront.
-
-Interrupted Sheet writes remain attached to the batch and can be retried without consuming materials or adding finished stock twice.
-
-## Safety
-
-- No Discord token, channel ID, Apps Script URL, spreadsheet ID, transaction history, employee data, or local browser state was copied.
-- `webhook/Code.gs` contains a Still Water spreadsheet placeholder and cannot write to the original workbook.
-- Create a new `.env` from `discord-bridge/.env.example` only after the Still Water Discord channel and receiver exist.
-- The local GUI uses port `4273` and separate browser-storage keys to prevent cross-server data mixing.
-- Local account data under `app/.data` and Railway volume data are excluded from Git.
-
-See `docs/categories.md` for captured category sources and `docs/hosting.md` for deployment details.
-See `docs/pricing.md` for the MSRP midpoint policy, ingredient aliases, and unresolved prices.
-See `docs/roadmap.md` for the next product-card additions, including period filters, operational links, price history, and item icons.
+See `docs/hosting.md` for the Railway layout, persistent-volume requirements, and integration variables. The original Frontier Firearms project remains separate; this framework was created in an isolated repository so generic development cannot change its live deployment.

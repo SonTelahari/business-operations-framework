@@ -1,13 +1,13 @@
-const STORAGE_KEY = "frontier_still_water_work_orders_v1";
-const TIME_CLOCK_KEY = "frontier_still_water_time_clock_v1";
-const OPERATIONS_KEY = "frontier_still_water_manual_operations_v1";
-const TARGETS_KEY = "frontier_still_water_storefront_targets_v1";
+const STORAGE_KEY = "business_operations_work_orders_v1";
+const TIME_CLOCK_KEY = "business_operations_time_clock_v1";
+const OPERATIONS_KEY = "business_operations_manual_operations_v1";
+const TARGETS_KEY = "business_operations_sales_targets_v1";
 const SUPPLY_ACTIVE_STATUSES = new Set(["Active", "Ordered", "Partially Received"]);
 const SUPPLY_DELIVERY_STATUSES = new Set(["Ordered", "Partially Received"]);
 const BUY_ORDER_OPEN_STATUSES = new Set(["Active", "Paused"]);
 const PRODUCTION_ACTIVE_STATUSES = new Set(["Planned", "In Progress"]);
-const BACKEND_REFRESH_INTERVAL_MS = Number(window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
-const FOCUS_REFRESH_STALE_MS = Number(window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
+const BACKEND_REFRESH_INTERVAL_MS = Number(window.BUSINESS_REFRESH_INTERVAL_MS || window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
+const FOCUS_REFRESH_STALE_MS = Number(window.BUSINESS_FOCUS_REFRESH_STALE_MS || window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
 const ROLE_RANK = Object.freeze({ employee: 1, manager: 2, admin: 3 });
 const SECTION_MIN_ROLE = Object.freeze({
@@ -24,12 +24,12 @@ const SECTION_MIN_ROLE = Object.freeze({
   employees: "manager",
   finance: "admin"
 });
-const DELIVERY_DATE_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+let deliveryDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "2-digit",
   month: "2-digit",
   year: "numeric"
 });
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+let dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
@@ -37,7 +37,14 @@ const DATE_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
   minute: "2-digit",
   hour12: false
 });
-const NUMBER_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+let businessDateKeyFormatter = new Intl.DateTimeFormat("en-CA", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  timeZone: "UTC"
+});
+let numberFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+let currencyFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
 const AUDIT_ACTION_LABELS = Object.freeze({
   "account.admin_created": "Admin account created",
   "account.requested": "Access requested",
@@ -73,14 +80,16 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "webhook_exception.resolved": "Webhook exception resolved",
   "webhook_exception.ignored": "Webhook exception ignored"
 });
-const itemCatalog = window.FRONTIER_ITEMS || [];
-const recipeCatalog = window.FRONTIER_RECIPES || {};
-const recipeYieldCatalog = window.FRONTIER_RECIPE_YIELDS || {};
-const pricingCatalog = window.FRONTIER_PRICING || { materials: {} };
+const itemCatalog = [];
+const recipeCatalog = {};
+const recipeYieldCatalog = {};
+const pricingCatalog = { source: {}, products: {}, materials: {} };
 const { buildSupplyQuoteTelegram } = window.FRONTIER_SUPPLY_TELEGRAM;
 const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
 const productCatalogByKey = new Map();
+let businessProfile = { name: "Business", ledgerName: "Business Ledger", location: "", currency: "USD", locale: "en-US", timezone: "UTC" };
+let enabledModules = {};
 rebuildCatalogIndexes();
 
 let legacyOrdersPendingMigration = loadOrders();
@@ -607,7 +616,7 @@ function persistStockTargets() {
 
 function seedDatalist() {
   elements.itemOptions.innerHTML = itemCatalog
-    .map(item => `<option value="${escapeHtml(item.label)}">${escapeHtml(item.name)} - $${formatNumber(item.price)}</option>`)
+    .map(item => `<option value="${escapeHtml(item.label)}">${escapeHtml(item.name)} - ${formatCurrency(item.price)}</option>`)
     .join("");
   elements.stockOptions.innerHTML = stockOptionMarkup(stockCatalog);
   elements.buyOrderItemOptions.innerHTML = stockOptionMarkup([...ingredientCatalog, ...itemCatalog]);
@@ -626,11 +635,94 @@ function rebuildCatalogIndexes() {
   stockCatalog.splice(0, stockCatalog.length, ...itemCatalog, ...ingredientCatalog);
 }
 
-function hydrateSharedCatalog(items) {
-  if (!Array.isArray(items)) return;
+function hydrateSharedCatalog(snapshot) {
+  const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
   itemCatalog.splice(0, itemCatalog.length, ...items.map(item => ({ ...item })));
+  replaceObject(recipeCatalog, snapshot?.recipes);
+  replaceObject(recipeYieldCatalog, snapshot?.recipeYields);
+  replaceObject(pricingCatalog, snapshot?.pricing);
+  const configuredMaterials = Array.isArray(snapshot?.materials)
+    ? snapshot.materials.map(material => ({ ...material, label: material.label || material.name }))
+    : [];
+  const materialByName = new Map(configuredMaterials.map(material => [normalize(material.name), material]));
+  getRecipeIngredients().forEach(material => {
+    if (!materialByName.has(normalize(material.name))) materialByName.set(normalize(material.name), material);
+  });
+  ingredientCatalog.splice(0, ingredientCatalog.length, ...materialByName.values());
   rebuildCatalogIndexes();
   seedDatalist();
+}
+
+function replaceObject(target, source) {
+  Object.keys(target).forEach(key => delete target[key]);
+  if (!source || typeof source !== "object") return;
+  Object.entries(source).forEach(([key, value]) => { target[key] = structuredClone(value); });
+}
+
+function applyBusinessConfiguration(snapshot) {
+  businessProfile = { ...businessProfile, ...(snapshot?.business || {}) };
+  enabledModules = { ...(snapshot?.modules || {}) };
+  const name = businessProfile.name || "Business";
+  const ledgerName = businessProfile.ledgerName || `${name} Ledger`;
+  const locale = businessProfile.locale || "en-US";
+  const timezone = businessProfile.timezone || "UTC";
+  const currency = businessProfile.currency || "USD";
+  deliveryDateFormatter = new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: timezone
+  });
+  dateTimeFormatter = new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: timezone
+  });
+  businessDateKeyFormatter = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: timezone
+  });
+  numberFormatter = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
+  currencyFormatter = new Intl.NumberFormat(locale, { style: "currency", currency, maximumFractionDigits: 2 });
+  document.title = `${name} - ${ledgerName}`;
+  document.querySelector("#businessName").textContent = name;
+  document.querySelector("#businessLedgerName").textContent = ledgerName;
+  const ownerCapitalLabel = document.querySelector("#financeOwnerCapitalLabel");
+  if (ownerCapitalLabel) ownerCapitalLabel.textContent = `${currentUser?.fullName || "Owner"}'s capital currently in the business`;
+  const logo = document.querySelector("#businessLogo");
+  const monogram = document.querySelector("#businessMonogram");
+  if (businessProfile.logoUrl) {
+    logo.src = businessProfile.logoUrl;
+    logo.alt = `${name} logo`;
+    logo.classList.remove("hidden");
+    monogram.classList.add("hidden");
+  } else {
+    logo.classList.add("hidden");
+    monogram.classList.remove("hidden");
+    monogram.textContent = businessInitials(name);
+  }
+  const sectionModules = {
+    production: "production",
+    supplies: "suppliers",
+    "buy-orders": "storefrontBuyOrders",
+    employees: "payroll",
+    finance: "finance"
+  };
+  Object.entries(sectionModules).forEach(([section, moduleName]) => {
+    document.querySelectorAll(`[data-section="${section}"]`).forEach(control => {
+      control.classList.toggle("module-disabled", enabledModules[moduleName] === false);
+    });
+  });
+}
+
+function businessInitials(value) {
+  return String(value || "Business Ledger").split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0]).join("").toUpperCase();
 }
 
 function seedSupplyMaterialOptions() {
@@ -1328,7 +1420,7 @@ function renderStorefrontBuyOrderWorkspace() {
   const filledOrders = storefrontBuyOrders.filter(order => order.status === "Filled").length;
   elements.buyOrderActiveCount.textContent = formatNumber(openOrders.filter(order => order.status === "Active").length);
   elements.buyOrderOutstandingCount.textContent = formatNumber(outstanding);
-  elements.buyOrderCommittedValue.textContent = `$${formatNumber(committed)}`;
+  elements.buyOrderCommittedValue.textContent = formatCurrency(committed);
   elements.buyOrderSavedCount.textContent = `${storefrontBuyOrders.length} tracked / ${nearFilled} near filled / ${filledOrders} filled`;
   renderStorefrontBuyOrders();
 }
@@ -1360,7 +1452,7 @@ function renderStorefrontBuyOrders() {
           <span>${formatNumber(remaining)} remaining</span>
         </span>
         <span class="buy-order-card-footer">
-          <span>$${formatNumber(order.unitPrice)} each</span>
+        <span>${formatCurrency(order.unitPrice)} each</span>
           <span>${formatDateTime(order.postedAt)}</span>
         </span>
       </button>
@@ -1628,7 +1720,7 @@ function renderSupplierDirectory() {
   }
   elements.supplierCardList.innerHTML = visible.map(supplier => {
     const offers = supplier.products.slice(0, 3)
-      .map(product => `${product.label || product.name} $${formatNumber(product.unitPrice)}`)
+    .map(product => `${product.label || product.name} ${formatCurrency(product.unitPrice)}`)
       .join(" / ");
     return `
       <button class="supplier-card ${supplier.id === activeSupplier.id ? "selected" : ""}" type="button" data-supplier-id="${supplier.id}">
@@ -1769,7 +1861,7 @@ async function copySupplyTelegram() {
   const telegram = buildSupplyQuoteTelegram(activeSupplyOrder, {
     name: currentUser?.fullName || activeSupplyOrder.requestedBy,
     title: currentRole === "admin" ? "Owner/proprietor" : "Manager",
-    business: "Frontier Firearms, Van Horn"
+    business: [businessProfile.name, businessProfile.location].filter(Boolean).join(", ")
   });
   await navigator.clipboard.writeText(telegram);
   elements.supplySummary.textContent = `${telegram}\n\nCopied to clipboard.`;
@@ -1834,8 +1926,8 @@ function renderLines() {
           <span>${escapeHtml(line.category || "Manual")}${line.tag ? ` / ${escapeHtml(line.tag)}` : ""}</span>
         </td>
         <td>${formatNumber(line.quantity)}</td>
-        <td>$${formatNumber(line.unitPrice)}</td>
-        <td>$${formatNumber(total)}</td>
+        <td>${formatCurrency(line.unitPrice)}</td>
+        <td>${formatCurrency(total)}</td>
         <td><button class="icon-button" type="button" data-remove-line="${line.id}" title="Remove line">x</button></td>
       </tr>
     `;
@@ -1887,8 +1979,8 @@ function renderSupplyLines() {
         <td>${formatNumber(received)}</td>
         <td>${formatNumber(remaining)}</td>
         <td><input class="supply-receive-input" data-receive-supply-line="${line.id}" type="number" min="0" max="${remaining}" step="1" value="${receivable ? remaining : 0}" aria-label="Receive ${escapeHtml(line.label || line.name)} now" ${receivable ? "" : "disabled"}></td>
-        <td>$${formatNumber(line.unitPrice)}</td>
-        <td>$${formatNumber(total)}</td>
+        <td>${formatCurrency(line.unitPrice)}</td>
+        <td>${formatCurrency(total)}</td>
         <td><button class="icon-button" type="button" data-remove-supply-line="${line.id}" title="${received > 0 ? "Received lines cannot be removed" : "Remove line"}" ${received > 0 ? "disabled" : ""}>x</button></td>
       </tr>
     `;
@@ -1908,7 +2000,7 @@ function renderSupplySummary() {
   });
   const uncovered = getMaterialPurchasePlan(activeSupplyOrder.id)
     .reduce((sum, line) => sum + Math.max(0, line.missing - (activeQuantities.get(normalize(line.ingredient)) || 0)), 0);
-  elements.supplySubtotal.textContent = `$${formatNumber(subtotal)}`;
+  elements.supplySubtotal.textContent = formatCurrency(subtotal);
   elements.supplyLineCount.textContent = activeSupplyOrder.lines.length;
   elements.supplyUncovered.textContent = formatNumber(uncovered);
   elements.supplySummary.textContent = buildSupplyOrderSummary(activeSupplyOrder);
@@ -1944,7 +2036,7 @@ function renderSupplyOrdersList() {
           <button class="order-card ${order.id === activeSupplyOrder.id ? "selected" : ""}" type="button" data-supply-order-id="${order.id}">
             <span class="status-pill ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
             <strong>${order.expectedDate ? formatDelivery(order.expectedDate) : "No expected date"}</strong>
-            <span>${order.lines.length} lines / ${formatNumber(getSupplyReceivedUnits(order))} of ${formatNumber(getSupplyOrderedUnits(order))} received / $${formatNumber(getSupplyOrderTotal(order))}</span>
+          <span>${order.lines.length} lines / ${formatNumber(getSupplyReceivedUnits(order))} of ${formatNumber(getSupplyOrderedUnits(order))} received / ${formatCurrency(getSupplyOrderTotal(order))}</span>
             <small>Updated ${formatDateTime(order.updatedAt)} by ${escapeHtml(order.updatedBy || order.requestedBy)}</small>
           </button>
         `).join("")}
@@ -1973,11 +2065,11 @@ function buildSupplyOrderSummary(order) {
       const total = Number(line.quantity || 0) * Number(line.unitPrice || 0);
       const received = Number(line.receivedQuantity || 0);
       const remaining = Math.max(0, Number(line.quantity || 0) - received);
-      return `${formatNumber(line.quantity)}x ${line.label || line.name} / ${formatNumber(received)} received / ${formatNumber(remaining)} remaining - $${formatNumber(line.unitPrice)} each = $${formatNumber(total)} / ${formatNumber(metrics.missing)} currently missing`;
+      return `${formatNumber(line.quantity)}x ${line.label || line.name} / ${formatNumber(received)} received / ${formatNumber(remaining)} remaining - ${formatCurrency(line.unitPrice)} each = ${formatCurrency(total)} / ${formatNumber(metrics.missing)} currently missing`;
     }).join("\n")
     : "No parts or materials added";
   return [
-    "Frontier Firearms Supply Order",
+    `${businessProfile.name || "Business"} Supply Order`,
     `Producer: ${order.producer || ""}`,
     `Requested by: ${order.requestedBy || currentUser?.fullName || ""}`,
     order.expectedDate ? `Expected: ${formatDelivery(order.expectedDate)}` : "Expected: Not set",
@@ -1985,7 +2077,7 @@ function buildSupplyOrderSummary(order) {
     "",
     lines,
     "",
-    `Order total: $${formatNumber(getSupplyOrderTotal(order))}`,
+    `Order total: ${formatCurrency(getSupplyOrderTotal(order))}`,
     order.notes ? `\nNotes:\n${order.notes}` : ""
   ].filter(line => line !== "").join("\n");
 }
@@ -2005,9 +2097,9 @@ function getSupplyReceivedUnits(order) {
 function renderTotals() {
   const subtotal = getSubtotal(activeOrder);
   const deposit = Number(activeOrder.deposit || 0);
-  elements.subtotal.textContent = `$${formatNumber(subtotal)}`;
-  elements.depositValue.textContent = `$${formatNumber(deposit)}`;
-  elements.balance.textContent = `$${formatNumber(Math.max(0, subtotal - deposit))}`;
+  elements.subtotal.textContent = formatCurrency(subtotal);
+  elements.depositValue.textContent = formatCurrency(deposit);
+  elements.balance.textContent = formatCurrency(Math.max(0, subtotal - deposit));
 }
 
 function renderPreview() {
@@ -2140,9 +2232,9 @@ function renderStoreOverview() {
     return;
   }
 
-  elements.ledgerOverviewBalance.textContent = `$${formatNumber(ledger.balance)}`;
+  elements.ledgerOverviewBalance.textContent = formatCurrency(ledger.balance);
   const movement = Number(ledger.netMovementSinceCount || 0);
-  const movementText = `${movement >= 0 ? "+" : "-"}$${formatNumber(Math.abs(movement))}`;
+  const movementText = `${movement >= 0 ? "+" : "-"}${formatCurrency(Math.abs(movement))}`;
   elements.ledgerOverviewDetail.textContent = ledger.countedAt
     ? `Counted ${formatDateTime(ledger.countedAt)} / ${movementText} since count`
     : `Recorded cash movement ${movementText}`;
@@ -2222,7 +2314,7 @@ function renderProductCard() {
     : item.name;
   const insight = productInsightCache.get(activeProductCardKey);
   const managementPricing = isManagement() ? `
-    <div><dt>Est. gross / unit</dt><dd class="${unitProfit !== null && unitProfit < 0 ? "negative" : ""}">${unitProfit === null ? "Unavailable" : `$${formatNumber(unitProfit)}`}</dd></div>
+        <div><dt>Est. gross / unit</dt><dd class="${unitProfit !== null && unitProfit < 0 ? "negative" : ""}">${unitProfit === null ? "Unavailable" : formatCurrency(unitProfit)}</dd></div>
     <div><dt>Est. gross margin</dt><dd>${margin === null ? "Unavailable" : `${formatNumber(margin)}%`}</dd></div>
   ` : "";
   const salesSection = isManagement() ? renderProductSalesInsight(insight) : "";
@@ -2231,7 +2323,7 @@ function renderProductCard() {
       <div class="product-recipe-row ${ingredient.available < ingredient.quantity ? "short" : ""}">
         <div><strong>${escapeHtml(ingredient.ingredient)}</strong><span>${formatNumber(ingredient.available)} in storage</span></div>
         <span>${formatNumber(ingredient.quantity)} needed</span>
-        <span>${ingredient.costKnown ? `$${formatNumber(ingredient.quantity * ingredient.unitCost)}` : "Unpriced"}</span>
+        <span>${ingredient.costKnown ? formatCurrency(ingredient.quantity * ingredient.unitCost) : "Unpriced"}</span>
       </div>
     `).join("")
     : `<div class="empty-card">No recipe recorded</div>`;
@@ -2252,15 +2344,15 @@ function renderProductCard() {
     <section class="product-card-section">
       <h3>Price and Cost</h3>
       <dl class="product-card-facts">
-        <div><dt>Store price</dt><dd>${retailPrice > 0 ? `$${formatNumber(retailPrice)}` : "Not priced"}</dd></div>
-        <div><dt>MSRP range</dt><dd>${productPricing ? `$${formatNumber(productPricing.low)}-$${formatNumber(productPricing.high)}` : "Unavailable"}</dd></div>
-        <div><dt>MSRP material cost</dt><dd>${costKnown ? `$${formatNumber(unitCost)} / unit` : "Unavailable"}</dd></div>
+        <div><dt>Store price</dt><dd>${retailPrice > 0 ? formatCurrency(retailPrice) : "Not priced"}</dd></div>
+        <div><dt>MSRP range</dt><dd>${productPricing ? `${formatCurrency(productPricing.low)}-${formatCurrency(productPricing.high)}` : "Unavailable"}</dd></div>
+        <div><dt>MSRP material cost</dt><dd>${costKnown ? `${formatCurrency(unitCost)} / unit` : "Unavailable"}</dd></div>
         <div><dt>Recipe yield</dt><dd>${hasRecipe ? formatNumber(yieldQuantity) : "-"}</dd></div>
         ${managementPricing}
       </dl>
     </section>
     <section class="product-card-section">
-      <div class="product-card-section-heading"><h3>Recipe</h3><span>${costKnown ? `$${formatNumber(batchCost)} / batch` : "Cost incomplete"}</span></div>
+      <div class="product-card-section-heading"><h3>Recipe</h3><span>${costKnown ? `${formatCurrency(batchCost)} / batch` : "Cost incomplete"}</span></div>
       <div class="product-recipe-list">${recipeRows}</div>
     </section>
     ${salesSection}
@@ -2281,12 +2373,12 @@ function renderProductSalesInsight(insight) {
     <section class="product-card-section">
       <div class="product-card-section-heading"><h3>Recorded Sales</h3><span>All history</span></div>
       <dl class="product-card-facts product-sales-facts">
-        <div><dt>Revenue</dt><dd>$${formatNumber(sales.revenue || 0)}</dd></div>
+      <div><dt>Revenue</dt><dd>${formatCurrency(sales.revenue || 0)}</dd></div>
         <div><dt>Transactions</dt><dd>${formatNumber(sales.transactions || 0)}</dd></div>
-        <div><dt>Average ticket</dt><dd>$${formatNumber(sales.averageTransaction || 0)}</dd></div>
+      <div><dt>Average ticket</dt><dd>${formatCurrency(sales.averageTransaction || 0)}</dd></div>
       </dl>
       ${channels.length ? `<div class="product-sales-channels">${channels.map(channel => `
-        <div><span>${escapeHtml(channel.category)}</span><strong>$${formatNumber(channel.revenue)} / ${formatNumber(channel.transactions)}</strong></div>
+        <div><span>${escapeHtml(channel.category)}</span><strong>${formatCurrency(channel.revenue)} / ${formatNumber(channel.transactions)}</strong></div>
       `).join("")}</div>` : `<p class="product-card-status">No recorded sales yet</p>`}
     </section>
   `;
@@ -2526,7 +2618,11 @@ function formatFinanceMonth(value) {
   const date = new Date(`${value}-01T00:00:00`);
   return Number.isNaN(date.getTime())
     ? String(value || "")
-    : new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(date);
+    : new Intl.DateTimeFormat(businessProfile.locale || "en-US", {
+      month: "long",
+      year: "numeric",
+      timeZone: businessProfile.timezone || "UTC"
+    }).format(date);
 }
 
 function formatFinanceAvailableCurrency(value) {
@@ -2534,8 +2630,7 @@ function formatFinanceAvailableCurrency(value) {
 }
 
 function formatFinanceCurrency(value) {
-  const amount = Number(value || 0);
-  return amount < 0 ? `-$${formatNumber(Math.abs(amount))}` : `$${formatNumber(amount)}`;
+  return formatCurrency(value);
 }
 
 function updateDailyCloseFromInputs() {
@@ -2717,7 +2812,7 @@ function renderDailyCloseDifference(snapshot = activeDailyClose.revision > 0 ? a
     return;
   }
   const difference = counted - system;
-  elements.dailyCloseLedgerDifference.textContent = `${difference >= 0 ? "+" : "-"}$${formatNumber(Math.abs(difference))}`;
+  elements.dailyCloseLedgerDifference.textContent = `${difference >= 0 ? "+" : "-"}${formatCurrency(Math.abs(difference))}`;
   elements.dailyCloseLedgerDifference.classList.toggle("short", Math.abs(difference) >= 0.005);
 }
 
@@ -2820,7 +2915,7 @@ function formatAvailableNumber(value) {
 }
 
 function formatAvailableCurrency(value) {
-  return Number.isFinite(value) ? `$${formatNumber(value)}` : "Unavailable";
+  return Number.isFinite(value) ? formatCurrency(value) : "Unavailable";
 }
 
 function buildInventoryOverviewRows(catalog, counts, location) {
@@ -3314,7 +3409,7 @@ function renderDashboardCards(items, emptyText) {
     <button class="dashboard-order" type="button" data-dashboard-order="${order.id}">
       <span class="status-pill ${order.status.toLowerCase()}">${escapeHtml(order.status)}</span>
       <strong>${escapeHtml(order.customer || "Unnamed customer")}</strong>
-      <span>${formatDelivery(order.deliveryDate)} / ${order.lines.length} lines / $${formatNumber(getSubtotal(order))}</span>
+      <span>${formatDelivery(order.deliveryDate)} / ${order.lines.length} lines / ${formatCurrency(getSubtotal(order))}</span>
     </button>
   `).join("");
 }
@@ -3330,7 +3425,7 @@ function renderSupplyDeliveryCards(items) {
       <button class="dashboard-order" type="button" data-dashboard-supply-order="${order.id}">
         <span class="status-pill ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
         <strong>${escapeHtml(order.producer || "Unassigned producer")}</strong>
-        <span>${formatNumber(remaining)} units remaining / ${remainingLines} ${remainingLines === 1 ? "line" : "lines"} / $${formatNumber(getSupplyOrderTotal(order))}</span>
+      <span>${formatNumber(remaining)} units remaining / ${remainingLines} ${remainingLines === 1 ? "line" : "lines"} / ${formatCurrency(getSupplyOrderTotal(order))}</span>
       </button>
     `;
   }).join("");
@@ -3338,7 +3433,7 @@ function renderSupplyDeliveryCards(items) {
 
 function renderProduction() {
   const production = getProductionPlan(activeOrder);
-  elements.productionMeta.textContent = `${production.buildLines.length} craftable lines / ${production.materials.length} materials / est. $${formatNumber(production.materialCost)}`;
+  elements.productionMeta.textContent = `${production.buildLines.length} craftable lines / ${production.materials.length} materials / est. ${formatCurrency(production.materialCost)}`;
 
   if (!production.buildLines.length) {
     elements.productionBuildList.innerHTML = `<div class="empty-card">No craftable quote lines yet</div>`;
@@ -3346,7 +3441,7 @@ function renderProduction() {
     elements.productionBuildList.innerHTML = production.buildLines.map(line => `
       <div class="production-row">
         <strong>${escapeHtml(line.name)}</strong>
-        <span>${formatNumber(line.quantity)} needed${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""} / $${formatNumber(line.unitCost)} ea</span>
+      <span>${formatNumber(line.quantity)} needed${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""} / ${formatCurrency(line.unitCost)} ea</span>
       </div>
     `).join("");
   }
@@ -3357,7 +3452,7 @@ function renderProduction() {
     elements.productionMaterialsList.innerHTML = production.materials.map(material => `
       <div class="production-row">
         <strong>${escapeHtml(material.ingredient)}</strong>
-        <span>${formatNumber(material.qty)} / $${formatNumber(material.cost)}</span>
+      <span>${formatNumber(material.qty)} / ${formatCurrency(material.cost)}</span>
       </div>
     `).join("");
   }
@@ -3390,7 +3485,7 @@ function renderOrdersList() {
     <button class="order-card ${order.id === activeOrder.id ? "selected" : ""}" type="button" data-order-id="${order.id}">
       <span class="status-pill ${order.status.toLowerCase()}">${escapeHtml(order.status)}</span>
       <strong>${escapeHtml(order.customer || "Unnamed customer")}</strong>
-      <span>${order.lines.length} lines / $${formatNumber(getSubtotal(order))}</span>
+      <span>${order.lines.length} lines / ${formatCurrency(getSubtotal(order))}</span>
       <span>${formatDelivery(order.deliveryDate)}</span>
       <small>${formatDateTime(order.updatedAt)}</small>
     </button>
@@ -3425,7 +3520,7 @@ function buildSummary(order) {
   const lines = order.lines.length
     ? order.lines.map(line => {
       const total = line.quantity * line.unitPrice;
-      return `${formatNumber(line.quantity)}x ${line.label || line.name} - $${formatNumber(line.unitPrice)} each = $${formatNumber(total)}`;
+      return `${formatNumber(line.quantity)}x ${line.label || line.name} - ${formatCurrency(line.unitPrice)} each = ${formatCurrency(total)}`;
     }).join("\n")
     : "No items added";
 
@@ -3435,7 +3530,7 @@ function buildSummary(order) {
   const details = [order.label, order.notes].filter(Boolean).join("\n");
 
   return [
-    "Frontier Firearms Quote",
+    `${businessProfile.name || "Business"} Quote`,
     `Customer: ${order.customer || ""}`,
     order.handler ? `Handler: ${order.handler}` : "",
     order.deliveryDate ? `Delivery: ${formatDelivery(order.deliveryDate)}` : "Order Type: In-store",
@@ -3443,9 +3538,9 @@ function buildSummary(order) {
     "",
     lines,
     "",
-    `Subtotal: $${formatNumber(subtotal)}`,
-    `Deposit Paid: $${formatNumber(deposit)}`,
-    `Balance Due: $${formatNumber(balance)}`,
+    `Subtotal: ${formatCurrency(subtotal)}`,
+    `Deposit Paid: ${formatCurrency(deposit)}`,
+    `Balance Due: ${formatCurrency(balance)}`,
     details ? `\nNotes:\n${details}` : ""
   ].filter(line => line !== "").join("\n");
 }
@@ -3453,17 +3548,17 @@ function buildSummary(order) {
 function buildProductionSummary(order) {
   const production = getProductionPlan(order);
   const buildLines = production.buildLines.length
-    ? production.buildLines.map(line => `${formatNumber(line.quantity)}x ${line.name}${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""} / $${formatNumber(line.unitCost)} each`).join("\n")
+    ? production.buildLines.map(line => `${formatNumber(line.quantity)}x ${line.name}${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""} / ${formatCurrency(line.unitCost)} each`).join("\n")
     : "No craftable lines";
   const materials = production.materials.length
-    ? production.materials.map(material => `${formatNumber(material.qty)}x ${material.ingredient} - $${formatNumber(material.cost)}`).join("\n")
+    ? production.materials.map(material => `${formatNumber(material.qty)}x ${material.ingredient} - ${formatCurrency(material.cost)}`).join("\n")
     : "No materials needed";
   const missing = production.missing.length
     ? `\nNo recipe attached:\n${production.missing.join("\n")}`
     : "";
 
   return [
-    "Frontier Firearms Production",
+    `${businessProfile.name || "Business"} Production`,
     `Customer: ${order.customer || ""}`,
     "",
     "Build:",
@@ -3471,7 +3566,7 @@ function buildProductionSummary(order) {
     "",
     "Materials:",
     materials,
-    `Estimated material cost: $${formatNumber(production.materialCost)}`,
+    `Estimated material cost: ${formatCurrency(production.materialCost)}`,
     missing
   ].filter(line => line !== "").join("\n");
 }
@@ -4036,7 +4131,7 @@ function renderOperations() {
   elements.operationList.innerHTML = visibleOperations.slice(0, 30).map(entry => {
     const title = entry.itemLabel || entry.itemName || entry.location || "Ledger";
     const quantity = entry.quantity !== "" ? `Qty ${formatNumber(entry.quantity)}` : "";
-    const amount = entry.amount !== "" ? `$${formatNumber(entry.amount)}` : "";
+    const amount = entry.amount !== "" ? formatCurrency(entry.amount) : "";
     const detail = [entry.location, quantity, amount, entry.employee].filter(Boolean).join(" / ");
     return `
       <div class="operation-entry">
@@ -4367,14 +4462,14 @@ function formatAuditDetails(event) {
   if (event.action === "clock.in") return `Started ${formatDateTime(details.clockIn)}`;
   if (event.action === "clock.out") return `${formatDuration(details.durationMinutes)} / ${formatDateTime(details.clockIn)} to ${formatDateTime(details.clockOut)}`;
   if (event.action === "operation.recorded") {
-    return [details.kind, details.item, details.location, details.quantity !== "" ? `Qty ${details.quantity}` : "", details.amount !== "" ? `$${formatNumber(details.amount)}` : "", details.note]
+  return [details.kind, details.item, details.location, details.quantity !== "" ? `Qty ${details.quantity}` : "", details.amount !== "" ? formatCurrency(details.amount) : "", details.note]
       .filter(Boolean).join(" / ");
   }
   if (event.action === "target.updated" || event.action === "target.removed") {
     return [details.item, event.action === "target.updated" ? `Target ${details.target}` : "Removed"].filter(Boolean).join(" / ");
   }
   if (String(event.action || "").startsWith("storefront_buy_order.")) {
-    return [details.status, details.quantity !== undefined ? `Ordered ${details.quantity}` : "", details.filledQuantity !== undefined ? `Filled ${details.filledQuantity}` : "", details.unitPrice !== undefined ? `$${formatNumber(details.unitPrice)} each` : ""]
+  return [details.status, details.quantity !== undefined ? `Ordered ${details.quantity}` : "", details.filledQuantity !== undefined ? `Filled ${details.filledQuantity}` : "", details.unitPrice !== undefined ? `${formatCurrency(details.unitPrice)} each` : ""]
       .filter(Boolean).join(" / ");
   }
   if (event.action === "account.role_changed") return `${details.previousRole} to ${details.role}`;
@@ -4499,7 +4594,8 @@ async function performBackendRefresh({ silent = false } = {}) {
       return;
     }
     backendSnapshot = nextSnapshot;
-    hydrateSharedCatalog(nextSnapshot.items);
+    applyBusinessConfiguration(nextSnapshot);
+    hydrateSharedCatalog(nextSnapshot);
     if (isManagement()) {
       reviewExceptions = Array.isArray(nextSnapshot.sheet?.reviewExceptions)
         ? nextSnapshot.sheet.reviewExceptions
@@ -4826,20 +4922,21 @@ function todayKey() {
 }
 
 function localDateKey(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const parts = Object.fromEntries(businessDateKeyFormatter.formatToParts(date).map(part => [part.type, part.value]));
+  const year = parts.year;
+  const month = parts.month;
+  const day = parts.day;
   return `${year}-${month}-${day}`;
 }
 
 function formatDelivery(value) {
   if (!value) return "In-store order";
-  return DELIVERY_DATE_FORMATTER.format(new Date(`${value}T00:00:00`));
+  return deliveryDateFormatter.format(new Date(`${value}T12:00:00Z`));
 }
 
 function formatDateTime(value) {
   if (!value) return "";
-  return DATE_TIME_FORMATTER.format(new Date(value));
+  return dateTimeFormatter.format(new Date(value));
 }
 
 function toDateTimeLocalValue(value) {
@@ -4863,7 +4960,11 @@ function formatDuration(minutes) {
 }
 
 function formatNumber(value) {
-  return NUMBER_FORMATTER.format(Number(value || 0));
+  return numberFormatter.format(Number(value || 0));
+}
+
+function formatCurrency(value) {
+  return currencyFormatter.format(Number(value || 0));
 }
 
 function normalize(value) {
