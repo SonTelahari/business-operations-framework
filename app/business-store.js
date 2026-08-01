@@ -13,8 +13,9 @@ const SALES_ORDER_STATUSES = new Set(["Draft", "Paused", "Expedited", "Reserved"
 const DAILY_CLOSE_STATUSES = new Set(["Draft", "Finalized"]);
 
 class BusinessStore {
-  constructor({ filePath }) {
+  constructor({ filePath = "", repository = null }) {
     this.filePath = filePath;
+    this.repository = repository;
     this.data = {
       version: 8,
       configuration: null,
@@ -29,7 +30,9 @@ class BusinessStore {
   }
 
   async initialize() {
-    await fs.promises.mkdir(path.dirname(this.filePath), { recursive: true });
+    if (!this.repository) {
+      await fs.promises.mkdir(path.dirname(this.filePath), { recursive: true });
+    }
     this.data = await this.readData();
   }
 
@@ -532,7 +535,10 @@ class BusinessStore {
 
   async readData() {
     try {
-      const parsed = JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
+      const parsed = this.repository
+        ? await this.repository.load()
+        : JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
+      if (!parsed) return emptyBusinessData();
       if (!Array.isArray(parsed.supplyOrders)) parsed.supplyOrders = [];
       if (!Array.isArray(parsed.suppliers)) parsed.suppliers = [];
       if (!Array.isArray(parsed.storefrontBuyOrders)) parsed.storefrontBuyOrders = [];
@@ -567,26 +573,34 @@ class BusinessStore {
       };
     } catch (error) {
       if (error.code === "ENOENT") {
-        return {
-          version: 8,
-          configuration: null,
-          salesOrders: [],
-          supplyOrders: [],
-          suppliers: [],
-          storefrontBuyOrders: [],
-          productionBatches: [],
-          dailyCloses: []
-        };
+        return emptyBusinessData();
       }
       throw new Error(`Unable to read business store: ${error.message}`);
     }
   }
 
   async persist() {
+    if (this.repository) {
+      await this.repository.save(this.data);
+      return;
+    }
     const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
     await fs.promises.writeFile(temporaryPath, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
     await fs.promises.rename(temporaryPath, this.filePath);
   }
+}
+
+function emptyBusinessData() {
+  return {
+    version: 8,
+    configuration: null,
+    salesOrders: [],
+    supplyOrders: [],
+    suppliers: [],
+    storefrontBuyOrders: [],
+    productionBatches: [],
+    dailyCloses: []
+  };
 }
 
 function normalizeStoredConfiguration(configuration) {

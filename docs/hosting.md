@@ -1,59 +1,88 @@
 # Hosting
 
-Deploy the private repository to Railway as a persistent GUI service. Add a second service only when the business uses the Discord storefront bridge.
+The recommended Railway project has PostgreSQL, one GUI/API service, and an optional Discord bridge worker. Google Sheets, Apps Script, and a filesystem volume are not part of the running system.
 
-## GUI Service
+## PostgreSQL
+
+1. Add a Railway PostgreSQL service to the project.
+2. Enable Railway backups or schedule regular `pg_dump` exports.
+3. Reference its `DATABASE_URL` from the GUI service.
+
+Database migrations run automatically when the app starts. They are versioned in `app/db/migrations` and recorded in `schema_migrations`.
+
+## GUI And API Service
 
 - Start command: `npm start`
 - Health check: `/health`
-- Replicas: exactly one while the application uses its file-backed business store
+- Data health check: `/health/data`
 - Public domain: required for employee access
-- Volume mount: `/data`
+- Replicas: one; the operational events are database-native, while shared order documents are still cached by a single app process
+- Volume: none
 
-Optional variables:
+Required variables:
 
 ```text
-APPS_SCRIPT_URL=https://script.google.com/macros/s/your_deployment_id/exec
+DATABASE_URL=${{Postgres.DATABASE_URL}}
 AUTH_SESSION_SECRET=<stable random secret of at least 32 characters>
+BRIDGE_API_TOKEN=<different stable random secret>
 NODE_ENV=production
 ```
 
-`AUTH_SESSION_SECRET` is recommended but not mandatory. When omitted, the server generates a stable secret in the persistent data directory. Do not set `ADMIN_FULL_NAME` or `ADMIN_PASSWORD` for a normal new deployment; the first-launch ledger creates the initial administrator.
+Do not set `ADMIN_FULL_NAME` or `ADMIN_PASSWORD` for a normal new business. Open the public domain and let first launch create the initial administrator.
 
-After deployment, open the Railway domain and complete first launch. The volume must be attached before this step so the business configuration, accounts, sessions, orders, audit records, and operational state survive redeployments.
+`AUTH_SESSION_SECRET` signs employee sessions. Changing it logs everyone out. `BRIDGE_API_TOKEN` authenticates the bridge and should not be shared with employees or placed in browser code.
 
-## Discord Bridge Service
+## Discord Bridge Worker
 
 - Start command: `npm run start:bridge`
 - Health check: `/health`
-- Replicas: exactly one
+- Replicas: one
 - Public domain: not required
 
-Variables:
+Required variables:
 
 ```text
 DISCORD_TOKEN=<bot token>
 DISCORD_CHANNEL_ID=<channel receiving storefront webhook events>
-APPS_SCRIPT_URL=https://script.google.com/macros/s/your_deployment_id/exec
+BUSINESS_API_URL=https://<gui-public-domain>
+BRIDGE_API_TOKEN=<same value as the GUI service>
 CAPTURE_ONLY=1
 DEBUG_DISCORD=0
-INVENTORY_CHANNEL_ID=<optional live inventory channel>
-STOCK_ALERT_CHANNEL_ID=<optional shortage alert channel>
-INVENTORY_REFRESH_SECONDS=300
 NODE_ENV=production
 ```
 
-Keep `CAPTURE_ONLY=1` until parser tests cover the target server's actual Discord messages. Set it to `0` only after test forwards reach the correct Apps Script deployment.
+Optional publishing variables:
 
-The inventory and stock-alert publishers are optional. They need `View Channel`, `Send Messages`, `Embed Links`, and `Read Message History`. Managed messages are edited in place. Their IDs can be pinned with `INVENTORY_MESSAGE_ID` and `STOCK_ALERT_MESSAGE_ID` in busy channels.
+```text
+INVENTORY_CHANNEL_ID=
+STOCK_ALERT_CHANNEL_ID=
+INVENTORY_REFRESH_SECONDS=300
+INVENTORY_MESSAGE_ID=
+STOCK_ALERT_MESSAGE_ID=
+```
 
-## Google Sheet Receiver
+Keep `CAPTURE_ONLY=1` until parser tests cover the server's actual messages. Run `npm run test:forward`, confirm the event reaches Webhook Review or inventory correctly, and then set `CAPTURE_ONLY=0`.
 
-1. Create a new business-owned Google Sheet.
-2. Open **Extensions > Apps Script**.
-3. Replace the editor contents with `webhook/Code.gs`.
-4. Deploy it as a web app that runs as the owner and is accessible to anyone with the URL.
-5. Put the resulting `/exec` URL in the GUI and bridge `APPS_SCRIPT_URL` variables.
-6. Confirm `/health`, the GUI bootstrap, and a test bridge forward before enabling live forwarding.
+The inventory publisher needs `View Channel`, `Send Messages`, `Embed Links`, and `Read Message History`. Managed messages are edited in place.
 
-Never commit `.env`, tokens, Apps Script URLs, employee records, or generated data files.
+## Legacy Cutover
+
+1. Deploy PostgreSQL and the GUI with the three required variables.
+2. Complete first launch with the business catalog and recipes.
+3. Stop the old bridge so the source stops moving.
+4. Set `LEGACY_APPS_SCRIPT_URL` and run `npm run import:legacy` locally as a dry run.
+5. Verify product, material, storage, ledger, and finance totals.
+6. Run `npm run import:legacy -- --commit` against the new `DATABASE_URL`.
+7. Start the new bridge with `BUSINESS_API_URL` and `BRIDGE_API_TOKEN`.
+8. Submit one deposit, withdrawal, sale, and purchase before retiring the old receiver.
+
+The import creates opening baselines and summarized historical finance. It does not recreate individual old transaction rows or detailed payroll identities.
+
+## Backups And Restore
+
+- Use Railway PostgreSQL backups for routine recovery.
+- Take a manual backup before migrations, imports, or major catalog changes.
+- Test restoration in a separate project periodically.
+- Keep application secrets outside the database backup and store them in a password manager.
+
+Never commit `.env`, database URLs, Discord tokens, employee records, or generated capture journals.

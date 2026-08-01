@@ -298,6 +298,10 @@ async function run() {
   const unauthenticatedApi = await fetch(`${baseUrl}/api/bootstrap`);
   assert.equal(unauthenticatedApi.status, 401);
 
+  const legacyIntegrationRoute = await getJson(`${baseUrl}/api/integrations/discord/snapshot`);
+  assert.equal(legacyIntegrationRoute.response.status, 503);
+  assert.equal(legacyIntegrationRoute.body.code, "database_required");
+
   const ownerLogin = await post(`${baseUrl}/api/auth/login`, {
     fullName: "Frontier Owner",
     password: "OwnerPassword123!"

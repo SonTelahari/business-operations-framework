@@ -159,22 +159,29 @@ async function runPublisherChecks() {
     channels: { fetch: async id => channels.get(id) }
   };
   const logs = [];
+  let requestedUrl = '';
+  let requestedAuthorization = '';
   const publisher = createInventoryPublisher({
     client,
-    appsScriptUrl: 'https://example.test/exec',
+    snapshotUrl: 'https://example.test/api/integrations/discord/snapshot',
+    requestHeaders: { authorization: 'Bearer inventory-test-token' },
     inventoryChannelId: inventoryChannel.id,
     alertChannelId: alertChannel.id,
     refreshMs: 30000,
-    fetchImpl: async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
+    fetchImpl: async (url, options) => {
+      requestedUrl = String(url);
+      requestedAuthorization = options.headers.authorization;
+      return {
         ok: true,
-        schemaVersion: 8,
-        generatedAt: '2026-07-29T08:00:00.000Z',
-        inventory: { products: rawProducts }
-      })
-    }),
+        status: 200,
+        json: async () => ({
+          ok: true,
+          schemaVersion: 8,
+          generatedAt: '2026-07-29T08:00:00.000Z',
+          inventory: { products: rawProducts }
+        })
+      };
+    },
     logger: {
       info: message => logs.push(message),
       warn: message => logs.push(message),
@@ -188,6 +195,8 @@ async function runPublisherChecks() {
   assert.equal(publisher.health().product_count, 21);
   assert.equal(publisher.health().shortage_count, snapshot.products.filter(product => product.missing > 0).length);
   assert.equal(publisher.health().last_error, '');
+  assert.equal(requestedUrl, 'https://example.test/api/integrations/discord/snapshot');
+  assert.equal(requestedAuthorization, 'Bearer inventory-test-token');
 
   let interactionPayload = null;
   const handled = await publisher.handleInteraction({

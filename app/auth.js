@@ -8,15 +8,18 @@ const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 const AUDIT_LIMIT = 5000;
 
 class AccountStore {
-  constructor({ filePath, sessionSecret }) {
+  constructor({ filePath = "", sessionSecret, repository = null }) {
     this.filePath = filePath;
     this.sessionSecret = sessionSecret;
+    this.repository = repository;
     this.data = { version: 2, users: [], audit: [] };
     this.writeQueue = Promise.resolve();
   }
 
   async initialize({ adminFullName = "", adminPassword = "" } = {}) {
-    await fs.promises.mkdir(path.dirname(this.filePath), { recursive: true });
+    if (!this.repository) {
+      await fs.promises.mkdir(path.dirname(this.filePath), { recursive: true });
+    }
     this.data = await this.readData();
 
     if (!this.data.users.length) {
@@ -327,7 +330,10 @@ class AccountStore {
 
   async readData() {
     try {
-      const parsed = JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
+      const parsed = this.repository
+        ? await this.repository.load()
+        : JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
+      if (!parsed) return { version: 2, users: [], audit: [] };
       if (!Array.isArray(parsed.users)) throw new Error("users must be an array");
       if (!Array.isArray(parsed.audit)) parsed.audit = [];
       parsed.version = 2;
@@ -339,6 +345,10 @@ class AccountStore {
   }
 
   async persist() {
+    if (this.repository) {
+      await this.repository.save(this.data);
+      return;
+    }
     const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
     await fs.promises.writeFile(temporaryPath, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
     await fs.promises.rename(temporaryPath, this.filePath);

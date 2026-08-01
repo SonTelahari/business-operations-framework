@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: business_operations
+      POSTGRES_USER: business
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U business -d business_operations"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: node:20-alpine
+    working_dir: /workspace
+    command: sh -c "npm install && npm start"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "4273:4273"
+    environment:
+      DATABASE_URL: postgresql://business:${POSTGRES_PASSWORD:-change_me}@postgres:5432/business_operations
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET}
+      BRIDGE_API_TOKEN: ${BRIDGE_API_TOKEN}
+      PORT: 4273
+      NODE_ENV: production
+    volumes:
+      - .:/workspace
+
+  discord-bridge:
+    profiles: ["discord"]
+    image: node:20-alpine
+    working_dir: /workspace
+    command: sh -c "npm install && npm run start:bridge"
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      BUSINESS_API_URL: http://app:4273
+      BRIDGE_API_TOKEN: ${BRIDGE_API_TOKEN}
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID}
+      CAPTURE_ONLY: ${CAPTURE_ONLY:-1}
+      DEBUG_DISCORD: ${DEBUG_DISCORD:-0}
+      INVENTORY_CHANNEL_ID: ${INVENTORY_CHANNEL_ID:-}
+      STOCK_ALERT_CHANNEL_ID: ${STOCK_ALERT_CHANNEL_ID:-}
+      INVENTORY_REFRESH_SECONDS: ${INVENTORY_REFRESH_SECONDS:-300}
+      NODE_ENV: production
+
+volumes:
+  postgres_data:

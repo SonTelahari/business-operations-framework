@@ -7,7 +7,10 @@ const DEFAULT_PAGE_SIZE = 18;
 
 function createInventoryPublisher(options) {
   const client = options.client;
-  const appsScriptUrl = String(options.appsScriptUrl || '').trim();
+  const snapshotUrl = String(options.snapshotUrl || '').trim();
+  const requestHeaders = options.requestHeaders && typeof options.requestHeaders === 'object'
+    ? { ...options.requestHeaders }
+    : {};
   const inventoryChannelId = String(options.inventoryChannelId || '').trim();
   const alertChannelId = String(options.alertChannelId || '').trim();
   const configuredInventoryMessageId = String(options.inventoryMessageId || '').trim();
@@ -15,7 +18,7 @@ function createInventoryPublisher(options) {
   const fetchImpl = options.fetchImpl || fetch;
   const logger = options.logger || console;
   const refreshMs = Math.max(30000, numberOrZero(options.refreshMs) || DEFAULT_REFRESH_MS);
-  const enabled = Boolean(appsScriptUrl && (inventoryChannelId || alertChannelId));
+  const enabled = Boolean(snapshotUrl && (inventoryChannelId || alertChannelId));
   const state = {
     pages: [],
     pageIndex: 0,
@@ -81,7 +84,7 @@ function createInventoryPublisher(options) {
   async function runRefresh(reason) {
     state.lastAttemptAt = new Date().toISOString();
     try {
-      const snapshot = await fetchInventorySnapshot(appsScriptUrl, fetchImpl);
+      const snapshot = await fetchInventorySnapshot(snapshotUrl, fetchImpl, requestHeaders);
       state.pages = buildInventoryPages(snapshot);
       state.pageIndex = Math.min(state.pageIndex, Math.max(0, state.pages.length - 1));
       state.productCount = snapshot.products.length;
@@ -154,20 +157,19 @@ function createInventoryPublisher(options) {
   return { enabled, start, stop, refresh, requestRefresh, handleInteraction, health };
 }
 
-async function fetchInventorySnapshot(appsScriptUrl, fetchImpl = fetch) {
-  const url = new URL(appsScriptUrl);
-  url.searchParams.set('action', 'bootstrap');
+async function fetchInventorySnapshot(snapshotUrl, fetchImpl = fetch, requestHeaders = {}) {
+  const url = new URL(snapshotUrl);
   const response = await fetchImpl(url, {
-    headers: { accept: 'application/json' },
+    headers: { accept: 'application/json', ...requestHeaders },
     signal: AbortSignal.timeout(30000)
   });
-  if (!response.ok) throw new Error(`Apps Script inventory request failed (${response.status})`);
+  if (!response.ok) throw new Error(`Business inventory request failed (${response.status})`);
   return normalizeInventorySnapshot(await response.json());
 }
 
 function normalizeInventorySnapshot(payload) {
   if (!payload?.ok || !Array.isArray(payload.inventory?.products)) {
-    throw new Error(payload?.error || 'Apps Script did not return storefront products');
+    throw new Error(payload?.error || 'Business API did not return storefront products');
   }
   const products = payload.inventory.products
     .filter(product =>

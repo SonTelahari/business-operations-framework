@@ -2213,7 +2213,7 @@ function renderStoreOverview() {
   const sheetGeneratedAt = backendSnapshot?.sheet?.generatedAt;
   elements.storeOverviewMeta.textContent = sheetGeneratedAt
     ? `Shared counts as of ${formatDateTime(sheetGeneratedAt)}`
-    : "Shared sheet snapshot unavailable / local counts shown";
+    : "Shared database snapshot unavailable / local counts shown";
 
   const ledger = window.FRONTIER_INVENTORY_COUNTS.selectCurrentLedger({
     ledger: backendSnapshot?.sheet?.inventory?.ledger,
@@ -2225,9 +2225,9 @@ function renderStoreOverview() {
     const sheetError = backendSnapshot?.sheet?.error;
     const inventory = backendSnapshot?.sheet?.inventory;
     elements.ledgerOverviewDetail.textContent = sheetError
-      ? `Shared sheet sync failed: ${sheetError}`
+    ? `Shared data sync failed: ${sheetError}`
       : inventory && !Object.prototype.hasOwnProperty.call(inventory, "ledger")
-        ? "Apps Script deployment does not expose ledger data"
+      ? "The shared data backend does not expose ledger data"
         : "Awaiting a shared ledger count";
     return;
   }
@@ -2602,7 +2602,7 @@ async function recordFinanceFunds() {
     note: elements.financeFundsNote.value.trim()
   });
   if (!result?.ok) {
-    elements.financeFundsStatus.textContent = `Saved locally; sheet sync pending${result?.error ? `: ${result.error}` : ""}`;
+    elements.financeFundsStatus.textContent = `Saved locally; data sync pending${result?.error ? `: ${result.error}` : ""}`;
     elements.saveFinanceFunds.disabled = false;
     return;
   }
@@ -3075,8 +3075,8 @@ function renderReviewWorkspace() {
   const openCount = reviewExceptions.filter(entry => entry.status === "Open").length;
   const generatedAt = backendSnapshot?.sheet?.generatedAt;
   elements.reviewDataStatus.textContent = generatedAt
-    ? `${openCount} open / sheet synced ${formatDateTime(generatedAt)}`
-    : `${openCount} open / shared sheet unavailable`;
+    ? `${openCount} open / data synced ${formatDateTime(generatedAt)}`
+    : `${openCount} open / shared data unavailable`;
 
   const filter = elements.reviewStatusFilter.value || "Open";
   const query = normalize(elements.reviewSearch.value);
@@ -3248,8 +3248,8 @@ async function resolveReviewException() {
     elements.reviewItem.focus();
     return;
   }
-  if (creating && Number(backendSnapshot?.sheet?.schemaVersion || 0) < 8) {
-    elements.reviewDataStatus.textContent = "Deploy Apps Script schema 8 before adding new wares";
+  if (creating && backendSnapshot?.dataBackend !== "postgresql" && Number(backendSnapshot?.sheet?.schemaVersion || 0) < 8) {
+    elements.reviewDataStatus.textContent = "Update the legacy data service before adding new wares";
     return;
   }
   if (creating && item) {
@@ -3297,7 +3297,7 @@ async function resolveReviewException() {
     }
   });
   if (!result.ok) {
-    elements.reviewDataStatus.textContent = `Resolution failed: ${result.error || "sheet sync failed"}`;
+    elements.reviewDataStatus.textContent = `Resolution failed: ${result.error || "data sync failed"}`;
     setReviewEditorDisabled(false);
     return;
   }
@@ -3319,7 +3319,7 @@ async function ignoreReviewException() {
     }
   });
   if (!result.ok) {
-    elements.reviewDataStatus.textContent = `Ignore failed: ${result.error || "sheet sync failed"}`;
+    elements.reviewDataStatus.textContent = `Ignore failed: ${result.error || "data sync failed"}`;
     setReviewEditorDisabled(false);
     return;
   }
@@ -3388,7 +3388,7 @@ function renderTimeClock() {
   elements.clockEmployee.disabled = Boolean(currentUser);
   elements.clockToggle.textContent = current ? "Clock Out" : "Clock In";
   elements.clockStatus.textContent = current
-    ? `${current.employee} clocked in at ${formatDateTime(current.clockIn)} / ${current.syncStatus || "Pending sheet sync"}`
+    ? `${current.employee} clocked in at ${formatDateTime(current.clockIn)} / ${current.syncStatus || "Pending data sync"}`
     : "Clocked out";
 
   const recentEntries = timeClock.entries.slice(0, 5);
@@ -3397,7 +3397,7 @@ function renderTimeClock() {
       <div class="time-entry">
         <strong>${escapeHtml(entry.employee)}</strong>
         <span>${formatDateTime(entry.clockIn)} - ${formatDateTime(entry.clockOut)}</span>
-        <small>${formatDuration(entry.durationMinutes)} / ${escapeHtml(entry.syncStatus || "Pending sheet sync")}</small>
+        <small>${formatDuration(entry.durationMinutes)} / ${escapeHtml(entry.syncStatus || "Pending data sync")}</small>
       </div>
     `).join("")
     : `<div class="empty-card">No completed shifts yet</div>`;
@@ -3776,7 +3776,7 @@ function renderProductionDetail(batch) {
     `).join("")
     : `<div class="empty-card">No remaining materials needed</div>`;
   elements.productionActionStatus.textContent = batch.pendingProgress
-    ? "Sheet update paused. Record Progress will retry the saved movements safely."
+      ? "Data update paused. Record Progress will retry the saved movements safely."
     : materialPlan.shortageCount
       ? `${materialPlan.shortageCount} materials are short`
       : closed ? batch.status : "Materials available for the remaining plan";
@@ -3917,7 +3917,7 @@ function toggleTimeClock() {
       ...timeClock.current,
       clockOut,
       durationMinutes,
-      syncStatus: "Pending sheet sync"
+      syncStatus: "Pending data sync"
     };
     timeClock.entries.unshift(completedEntry);
     timeClock.current = null;
@@ -3930,7 +3930,7 @@ function toggleTimeClock() {
       clockIn: new Date().toISOString(),
       clockOut: "",
       durationMinutes: "",
-      syncStatus: "Pending sheet sync"
+      syncStatus: "Pending data sync"
     };
     persistTimeClock();
     syncTimeClockEntry(timeClock.current.id);
@@ -4073,7 +4073,7 @@ function saveStockTarget() {
     itemTag: item.tag,
     target,
     updatedAt: new Date().toISOString(),
-    syncStatus: "Pending sheet sync"
+    syncStatus: "Pending data sync"
   };
   const existingIndex = stockTargets.findIndex(saved => stockKey(saved) === stockKey(nextTarget));
   if (existingIndex >= 0 && target === 0) {
@@ -4103,7 +4103,7 @@ function addOperation(entry) {
   const savedEntry = {
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
-    syncStatus: "Pending sheet sync",
+    syncStatus: "Pending data sync",
     ...entry
   };
   operations.unshift(savedEntry);
@@ -4120,7 +4120,7 @@ function renderOperations() {
       ? operations.filter(entry => entry.location !== "Payroll")
       : [];
   const pendingCount = visibleOperations.filter(entry => entry.syncStatus !== "Synced").length;
-  elements.operationCount.textContent = `${pendingCount} entries waiting for sheet sync`;
+  elements.operationCount.textContent = `${pendingCount} entries waiting for data sync`;
   renderTargets();
 
   if (!visibleOperations.length) {
@@ -4164,7 +4164,7 @@ function renderTargets() {
             <button class="danger-button target-action" type="button" data-target-remove="${key}" ${target.deleting ? "disabled" : ""}>Remove</button>
           </div>
         </div>
-        <span>Target ${formatNumber(target.target)} / Counted ${formatNumber(current)} / ${escapeHtml(target.syncStatus || "Pending sheet sync")}</span>
+      <span>Target ${formatNumber(target.target)} / Counted ${formatNumber(current)} / ${escapeHtml(target.syncStatus || "Pending data sync")}</span>
       </div>
     `;
   }).join("");
@@ -4481,7 +4481,7 @@ async function syncOperation(entryId) {
   const entry = operations.find(item => item.id === entryId);
   if (!entry) return;
   const result = await syncToBackend("manual_operation", { entry });
-  entry.syncStatus = result.ok ? "Synced" : "Pending sheet sync";
+  entry.syncStatus = result.ok ? "Synced" : "Pending data sync";
   entry.syncedAt = result.ok ? new Date().toISOString() : "";
   persistOperations();
   renderOperations();
@@ -4496,7 +4496,7 @@ async function syncStockTarget(targetKey) {
   if (result.ok && target.deleting) {
     stockTargets = stockTargets.filter(item => stockKey(item) !== targetKey);
   } else {
-    target.syncStatus = result.ok ? "Synced" : (target.deleting ? "Removal pending" : "Pending sheet sync");
+  target.syncStatus = result.ok ? "Synced" : (target.deleting ? "Removal pending" : "Pending data sync");
   }
   persistStockTargets();
   renderOperations();
@@ -4511,7 +4511,7 @@ async function syncTimeClockEntry(entryId) {
   const result = await syncToBackend("time_clock", { entry });
   const latestEntry = timeClock.entries.find(item => item.id === entryId)
     || (timeClock.current?.id === entryId ? timeClock.current : null);
-  if (latestEntry) latestEntry.syncStatus = result.ok ? "Synced" : "Pending sheet sync";
+  if (latestEntry) latestEntry.syncStatus = result.ok ? "Synced" : "Pending data sync";
   persistTimeClock();
   renderTimeClock();
 }
@@ -4579,7 +4579,7 @@ async function performBackendRefresh({ silent = false } = {}) {
     }
     if (!response.ok) throw new Error(`API ${response.status}`);
     const nextSnapshot = await response.json();
-    const sheetReady = nextSnapshot.sheet?.ok && Array.isArray(nextSnapshot.sheet.sheets);
+    const dataReady = Boolean(nextSnapshot.sheet?.ok);
     hydrateSharedSalesOrders(nextSnapshot);
     hydrateDailyCloses(nextSnapshot);
     productionBatches = Array.isArray(nextSnapshot.productionBatches) ? nextSnapshot.productionBatches : productionBatches;
@@ -4589,8 +4589,8 @@ async function performBackendRefresh({ silent = false } = {}) {
         || "";
     }
     renderProductionQueue();
-    if (!sheetReady && previousSnapshot?.sheet?.ok) {
-      elements.dataStatus.textContent = `Sheet refresh delayed / last synced ${formatDateTime(lastBackendRefreshAt)}`;
+    if (!dataReady && previousSnapshot?.sheet?.ok) {
+      elements.dataStatus.textContent = `Data refresh delayed / last synced ${formatDateTime(lastBackendRefreshAt)}`;
       return;
     }
     backendSnapshot = nextSnapshot;
@@ -4608,13 +4608,13 @@ async function performBackendRefresh({ silent = false } = {}) {
       elements.buyOrderDataStatus.textContent = `${storefrontBuyOrders.length} shared buy ${storefrontBuyOrders.length === 1 ? "order" : "orders"} loaded`;
     }
     lastBackendRefreshAt = Date.now();
-    const sheetText = sheetReady
-      ? ` / ${backendSnapshot.sheet.sheets.length} sheet tabs`
-      : backendSnapshot.sheetConfigured
-        ? " / sheet snapshot unavailable"
-        : " / sheet not configured";
-    elements.dataStatus.textContent = `Sheet synced ${formatDateTime(lastBackendRefreshAt)} / ${backendSnapshot.items.length} items${sheetText}`;
-    if (sheetReady) {
+    const backendText = backendSnapshot.dataBackend === "postgresql"
+      ? " / PostgreSQL"
+      : dataReady && Array.isArray(backendSnapshot.sheet?.sheets)
+        ? ` / ${backendSnapshot.sheet.sheets.length} legacy tabs`
+        : " / shared data unavailable";
+    elements.dataStatus.textContent = `Data synced ${formatDateTime(lastBackendRefreshAt)} / ${backendSnapshot.items.length} items${backendText}`;
+    if (dataReady) {
       hydrateSheetInventory();
       renderDashboard();
       renderStoreOverview();
@@ -4630,7 +4630,7 @@ async function performBackendRefresh({ silent = false } = {}) {
   } catch {
     if (previousSnapshot) {
       backendSnapshot = previousSnapshot;
-      elements.dataStatus.textContent = `Sheet refresh delayed / last synced ${formatDateTime(lastBackendRefreshAt)}`;
+      elements.dataStatus.textContent = `Data refresh delayed / last synced ${formatDateTime(lastBackendRefreshAt)}`;
     } else {
       backendSnapshot = null;
       elements.dataStatus.textContent = "Shared data unavailable / unsynced entries remain in this browser until the connection returns";

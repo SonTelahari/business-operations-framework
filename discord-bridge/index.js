@@ -10,7 +10,10 @@ loadEnvFile(path.join(__dirname, '.env'));
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_CHANNEL_ID = normalizeSnowflake(process.env.DISCORD_CHANNEL_ID);
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
+const BUSINESS_API_URL = String(process.env.BUSINESS_API_URL || '').trim().replace(/\/+$/, '');
+const BRIDGE_API_TOKEN = String(process.env.BRIDGE_API_TOKEN || '').trim();
+const EVENT_API_URL = BUSINESS_API_URL ? `${BUSINESS_API_URL}/api/integrations/discord/events` : '';
+const SNAPSHOT_API_URL = BUSINESS_API_URL ? `${BUSINESS_API_URL}/api/integrations/discord/snapshot` : '';
 const CAPTURE_ONLY = process.env.CAPTURE_ONLY !== '0';
 const DEBUG_DISCORD = process.env.DEBUG_DISCORD !== '0';
 const INVENTORY_CHANNEL_ID = normalizeSnowflake(process.env.INVENTORY_CHANNEL_ID);
@@ -22,9 +25,9 @@ const PORT = numberValue(process.env.PORT);
 const CAPTURE_FILE = path.join(__dirname, 'captures', 'events.jsonl');
 const INVENTORY_PUBLISHING_REQUESTED = Boolean(INVENTORY_CHANNEL_ID || STOCK_ALERT_CHANNEL_ID);
 
-if (!DISCORD_TOKEN || !DISCORD_CHANNEL_ID || ((!CAPTURE_ONLY || INVENTORY_PUBLISHING_REQUESTED) && !APPS_SCRIPT_URL)) {
+if (!DISCORD_TOKEN || !DISCORD_CHANNEL_ID || ((!CAPTURE_ONLY || INVENTORY_PUBLISHING_REQUESTED) && (!BUSINESS_API_URL || !BRIDGE_API_TOKEN))) {
   console.error(
-    'Missing DISCORD_TOKEN or DISCORD_CHANNEL_ID. APPS_SCRIPT_URL is also required when forwarding or inventory publishing is enabled.'
+    'Missing DISCORD_TOKEN or DISCORD_CHANNEL_ID. BUSINESS_API_URL and BRIDGE_API_TOKEN are also required when forwarding or inventory publishing is enabled.'
   );
   process.exit(1);
 }
@@ -35,7 +38,8 @@ const client = new Client({
 });
 const inventoryPublisher = createInventoryPublisher({
   client,
-  appsScriptUrl: APPS_SCRIPT_URL,
+  snapshotUrl: SNAPSHOT_API_URL,
+  requestHeaders: { authorization: `Bearer ${BRIDGE_API_TOKEN}` },
   inventoryChannelId: INVENTORY_CHANNEL_ID,
   alertChannelId: STOCK_ALERT_CHANNEL_ID,
   inventoryMessageId: INVENTORY_MESSAGE_ID,
@@ -47,7 +51,7 @@ const inventoryPublisher = createInventoryPublisher({
 client.once('clientReady', () => {
   logInfo(`Frontier Firearms - Still Water bridge logged in as ${client.user.tag}`);
   logInfo(`Watching Discord channel ID: ${DISCORD_CHANNEL_ID}`);
-  logInfo(`Parser mode: ${CAPTURE_ONLY ? 'capture only' : 'forward to sheet'}`);
+  logInfo(`Parser mode: ${CAPTURE_ONLY ? 'capture only' : 'forward to business API'}`);
   logInfo(`Discord debug logging: ${DEBUG_DISCORD ? 'on' : 'off'}`);
   logInfo(`Discord inventory publishing: ${inventoryPublisher.enabled ? 'on' : 'off'}`);
   startHealthServer();
@@ -101,7 +105,7 @@ client.on('messageCreate', async (message) => {
         discord_channel_id: message.channelId,
         timestamp: message.createdAt.toISOString()
       });
-      await forwardToSheet(outboundPayload);
+      await forwardToBusinessApi(outboundPayload);
       inventoryPublisher.requestRefresh('storefront event');
       if (payload.review_required) {
         logWarn(`Sent Discord message ${message.id} to review: ${payload.review_reason || 'parser review required'}`);
@@ -132,22 +136,26 @@ client.on('shardReconnecting', () => {
   logInfo('Discord reconnecting...');
 });
 
-async function forwardToSheet(payload) {
-  const response = await fetch(APPS_SCRIPT_URL, {
+async function forwardToBusinessApi(payload) {
+  const response = await fetch(EVENT_API_URL, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      authorization: `Bearer ${BRIDGE_API_TOKEN}`
+    },
     body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Apps Script rejected payload (${response.status}): ${body}`);
+    throw new Error(`Business API rejected payload (${response.status}): ${body}`);
   }
 
   const resultText = await response.text().catch(() => '');
   const result = parseJson(resultText);
   if (result && result.ok === false) {
-    throw new Error(`Apps Script rejected payload: ${result.error || resultText}`);
+    throw new Error(`Business API rejected payload: ${result.error || resultText}`);
   }
 
   const controls = [

@@ -1,13 +1,12 @@
-# Still Water Go-Live Checklist
+# Go-Live Checklist
 
-1. Finish the Still Water product, category, tag, price, and recipe catalog.
-2. Create a separate Still Water operating workbook.
-3. Confirm `SPREADSHEET_ID` is `1TzMlaDaZuRmK8N_A0ZRACoHyU36DR2U-k_YgLqIuU1Y` in `webhook/Code.gs`.
-4. Deploy the Apps Script receiver as a new web app.
-5. Create `discord-bridge/.env` from `.env.example` using only Still Water credentials.
-6. Configure the Still Water storefront Discord webhook and reader bot.
-7. Test deposit, withdrawal, customer purchase, and customer sale events.
-8. Test GUI counts, targets, time clock, payroll, and manual movements.
-9. Keep the GUI private until real authentication and shared work-order storage are added.
-
-The local Still Water GUI uses `http://localhost:4273` so it can run beside the original project without sharing browser storage.
+1. PostgreSQL backups are enabled.
+2. `DATABASE_URL`, `AUTH_SESSION_SECRET`, and `BRIDGE_API_TOKEN` are set on the GUI service.
+3. `/health` reports `dataBackend: postgresql` and `databaseReady: true`.
+4. The first owner can sign in and a test employee can register and be approved.
+5. Products, materials, recipes, stock targets, and locations are verified.
+6. The Discord worker uses the same `BRIDGE_API_TOKEN` and the correct `BUSINESS_API_URL`.
+7. Capture mode has been tested against real messages before live forwarding is enabled.
+8. One stock count, ledger count, deposit, withdrawal, sale, purchase, and webhook review have been verified.
+9. Inventory and alert channels show only products with configured targets.
+10. A database backup has been taken after verification.

@@ -5,12 +5,13 @@ const { loadEnvFile } = require('./runtime-utils');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
+const BUSINESS_API_URL = String(process.env.BUSINESS_API_URL || '').trim().replace(/\/+$/, '');
+const BRIDGE_API_TOKEN = String(process.env.BRIDGE_API_TOKEN || '').trim();
 const CAPTURE_FILE = path.join(__dirname, 'captures', 'events.jsonl');
 const commit = process.argv.includes('--commit');
 
-if (!APPS_SCRIPT_URL) {
-  console.error('Missing APPS_SCRIPT_URL in discord-bridge/.env.');
+if (!BUSINESS_API_URL || !BRIDGE_API_TOKEN) {
+  console.error('Missing BUSINESS_API_URL or BRIDGE_API_TOKEN in discord-bridge/.env.');
   process.exit(1);
 }
 
@@ -42,7 +43,7 @@ async function run() {
   let written = 0;
   let duplicates = 0;
   for (const payload of payloads) {
-    const result = await forwardToSheet(payload);
+    const result = await forwardToBusinessApi(payload);
     if (result.duplicate) duplicates += 1;
     else if (result.transactionWritten) written += 1;
   }
@@ -85,21 +86,25 @@ function summarize(payloads) {
   }, { quantity: 0, events: {}, items: {} });
 }
 
-async function forwardToSheet(payload) {
-  const response = await fetch(APPS_SCRIPT_URL, {
+async function forwardToBusinessApi(payload) {
+  const response = await fetch(`${BUSINESS_API_URL}/api/integrations/discord/events`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      authorization: `Bearer ${BRIDGE_API_TOKEN}`
+    },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(30000)
   });
   const text = await response.text();
-  if (!response.ok) throw new Error(`Apps Script ${response.status}: ${text}`);
+  if (!response.ok) throw new Error(`Business API ${response.status}: ${text}`);
 
   let result;
   try {
     result = JSON.parse(text);
   } catch {
-    throw new Error(`Apps Script returned non-JSON content: ${text.slice(0, 200)}`);
+    throw new Error(`Business API returned non-JSON content: ${text.slice(0, 200)}`);
   }
   if (result.ok === false) throw new Error(result.error || text);
   return result;

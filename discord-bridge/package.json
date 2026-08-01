@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node index.js",
     "check:channel": "node check-channel.js",
-    "test": "npm run test:utils && npm run test:parser && npm run test:inventory",
+    "test": "node test-runtime-utils.js && node test-parser.js && node test-inventory-publisher.js",
     "test:utils": "node test-runtime-utils.js",
     "test:parser": "node test-parser.js",
     "test:inventory": "node test-inventory-publisher.js",

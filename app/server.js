@@ -5,9 +5,12 @@ const path = require("path");
 const vm = require("vm");
 const { AccountStore, SESSION_MAX_AGE_SECONDS } = require("./auth");
 const { BusinessStore } = require("./business-store");
+const { Database, PostgresDocumentRepository } = require("./database");
+const { StandaloneStore } = require("./standalone-store");
 const { defaultSetupConfiguration, normalizeSetupPayload } = require("./setup-config");
 
 const root = __dirname;
+loadEnvFile(path.join(root, "..", ".env"));
 loadEnvFile(path.join(root, "..", "discord-bridge", ".env"));
 const port = Number(process.env.PORT || 4273);
 const authUser = process.env.APP_AUTH_USER || "frontier";
@@ -15,11 +18,22 @@ const authPassword = process.env.APP_AUTH_PASSWORD || "";
 const accountDataDirectory = process.env.AUTH_DATA_DIR
   || process.env.RAILWAY_VOLUME_MOUNT_PATH
   || path.join(root, ".data");
-const sessionSecretState = resolveSessionSecret(accountDataDirectory, process.env.AUTH_SESSION_SECRET || "");
+const database = new Database({ connectionString: process.env.DATABASE_URL || "" });
+const standaloneStore = database.enabled ? new StandaloneStore(database) : null;
+const sessionSecretState = database.enabled
+  ? { value: process.env.AUTH_SESSION_SECRET || "", persistent: Boolean(process.env.AUTH_SESSION_SECRET) }
+  : resolveSessionSecret(accountDataDirectory, process.env.AUTH_SESSION_SECRET || "");
 const sessionSecret = sessionSecretState.value;
 const accountAuthEnabled = true;
-const accountStore = new AccountStore({ filePath: path.join(accountDataDirectory, "users.json"), sessionSecret });
-const businessStore = new BusinessStore({ filePath: path.join(accountDataDirectory, "business.json") });
+const accountStore = new AccountStore({
+  filePath: path.join(accountDataDirectory, "users.json"),
+  sessionSecret,
+  repository: database.enabled ? new PostgresDocumentRepository(database, "accounts") : null
+});
+const businessStore = new BusinessStore({
+  filePath: path.join(accountDataDirectory, "business.json"),
+  repository: database.enabled ? new PostgresDocumentRepository(database, "business") : null
+});
 const loginAttempts = new Map();
 let supplyReceiptQueue = Promise.resolve();
 let productionProgressQueue = Promise.resolve();
@@ -51,13 +65,14 @@ const publicFiles = new Set([
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
-    if (url.pathname === "/health/sheet") {
+    if (url.pathname === "/health/data" || url.pathname === "/health/sheet") {
       const snapshot = await readSheetSnapshot();
       const inventory = snapshot?.inventory;
       sendJson(response, {
         ok: Boolean(snapshot?.ok),
         error: snapshot?.error || "",
         schemaVersion: snapshot?.schemaVersion || null,
+        dataBackend: standaloneStore ? "postgresql" : "apps-script",
         generatedAt: snapshot?.generatedAt || "",
         inventoryFields: inventory && typeof inventory === "object" ? Object.keys(inventory) : [],
         ledgerAvailable: Number.isFinite(Number(inventory?.ledger?.balance))
@@ -69,12 +84,16 @@ const server = http.createServer(async (request, response) => {
         ok: true,
         service: "business-operations-framework",
         setupRequired: !businessStore.isConfigured(),
-        sheetConfigured: Boolean(process.env.APPS_SCRIPT_URL),
+        dataBackend: standaloneStore ? "postgresql" : "apps-script",
+        databaseConfigured: database.enabled,
+        databaseReady: database.enabled,
+        sheetConfigured: !standaloneStore && Boolean(process.env.APPS_SCRIPT_URL),
+        bridgeApiConfigured: Boolean(process.env.BRIDGE_API_TOKEN),
         authConfigured: accountAuthEnabled || Boolean(authPassword),
         authMode: accountAuthEnabled ? "accounts" : authPassword ? "legacy-basic" : "none",
-        persistentAccountStore: Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
+        persistentAccountStore: database.enabled || Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
         persistentSessionSecret: sessionSecretState.persistent,
-        persistentBusinessStore: Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
+        persistentBusinessStore: database.enabled || Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
         supplyReceipts: true,
         storefrontBuyOrders: true,
         webhookReview: true,
@@ -130,6 +149,8 @@ const server = http.createServer(async (request, response) => {
       redirect(response, "/");
       return;
     }
+
+    if (await handleDiscordIntegrationRoute(request, response, url)) return;
 
     if (accountAuthEnabled) {
       const user = accountStore.verifySession(readCookie(request, "business_session"));
@@ -337,6 +358,7 @@ async function handleSetupRoute(request, response, url) {
       throw error;
     }
     const saved = await businessStore.completeSetup(configuration, owner);
+    if (standaloneStore) await standaloneStore.syncCatalog(saved);
     return { owner, configuration: saved };
   });
   setupQueue = operation.catch(() => {});
@@ -433,6 +455,59 @@ async function handleSupplierRoute(request, response, url, user) {
   return true;
 }
 
+async function handleDiscordIntegrationRoute(request, response, url) {
+  const eventRoute = url.pathname === "/api/integrations/discord/events";
+  const snapshotRoute = url.pathname === "/api/integrations/discord/snapshot";
+  if (!eventRoute && !snapshotRoute) return false;
+  if (!standaloneStore) {
+    sendJson(response, {
+      ok: false,
+      error: "The direct Discord API requires DATABASE_URL",
+      code: "database_required"
+    }, 503);
+    return true;
+  }
+  const expectedToken = String(process.env.BRIDGE_API_TOKEN || "");
+  if (!expectedToken) {
+    sendJson(response, {
+      ok: false,
+      error: "BRIDGE_API_TOKEN is not configured",
+      code: "bridge_token_required"
+    }, 503);
+    return true;
+  }
+  const authorization = String(request.headers.authorization || "");
+  const suppliedToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (!suppliedToken || !safeEqual(suppliedToken, expectedToken)) {
+    sendJson(response, { ok: false, error: "Invalid integration token", code: "invalid_integration_token" }, 401);
+    return true;
+  }
+  try {
+    if (eventRoute && request.method === "POST") {
+      sendJson(response, await standaloneStore.ingestWebhook(await readJsonBody(request)));
+      return true;
+    }
+    if (snapshotRoute && request.method === "GET") {
+      const snapshot = await standaloneStore.snapshot();
+      sendJson(response, {
+        ok: true,
+        schemaVersion: snapshot.schemaVersion,
+        generatedAt: snapshot.generatedAt,
+        inventory: { products: snapshot.inventory?.products || [] }
+      });
+      return true;
+    }
+    sendJson(response, { ok: false, error: "Integration route not found", code: "not_found" }, 404);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Integration request failed",
+      code: error.code || "integration_error"
+    }, error.status || 500);
+  }
+  return true;
+}
+
 async function handleFinanceRoute(request, response, url, user) {
   if (url.pathname !== "/api/finance") return false;
   if (!requireAdmin(response, user)) return true;
@@ -452,7 +527,7 @@ async function handleFinanceRoute(request, response, url, user) {
   if (!finance?.ok || !finance.totals || !finance.balances) {
     sendJson(response, {
       ok: false,
-      error: finance?.error || "The live Apps Script is outdated and does not expose finance data. Deploy the current webhook/Code.gs version.",
+      error: finance?.error || "Finance data is unavailable from the configured data backend.",
       code: "finance_snapshot_unavailable"
     }, 502);
     return true;
@@ -1121,7 +1196,7 @@ async function recordProductionProgress(batchId, payload, user) {
     const result = await syncGuiPayload({ action: "manual_operation", entry });
     if (!result.ok) {
       throw productionError(
-        `Sheet update paused: ${result.error || "unknown error"}. The same progress is saved and can be retried safely.`,
+        `Data update paused: ${result.error || "unknown error"}. The same progress is saved and can be retried safely.`,
         502,
         "production_sync_pending"
       );
@@ -1298,7 +1373,7 @@ async function receiveSupplyOrder(orderId, payload, user) {
   const sheetSnapshot = await readSheetSnapshot();
   if (!sheetSnapshot?.ok || !Array.isArray(sheetSnapshot.inventory?.materials)) {
     throw supplyOrderError(
-      `Storage could not be read from the Sheet${sheetSnapshot?.error ? `: ${sheetSnapshot.error}` : ""}`,
+      `Storage could not be read from the shared data service${sheetSnapshot?.error ? `: ${sheetSnapshot.error}` : ""}`,
       502,
       "storage_snapshot_unavailable"
     );
@@ -1336,7 +1411,7 @@ async function receiveSupplyOrder(orderId, payload, user) {
     });
     if (!syncResult?.ok) {
       throw supplyOrderError(
-        `Storage update failed for ${line.label || line.name}: ${syncResult?.error || "Sheet rejected the receipt"}`,
+        `Storage update failed for ${line.label || line.name}: ${syncResult?.error || "The data service rejected the receipt"}`,
         502,
         "supply_receipt_sync_failed"
       );
@@ -1792,6 +1867,10 @@ startServer().catch(error => {
 });
 
 async function startServer() {
+  if (database.enabled && !process.env.AUTH_SESSION_SECRET) {
+    throw new Error("AUTH_SESSION_SECRET is required when DATABASE_URL is configured");
+  }
+  await database.initialize();
   await businessStore.initialize();
   if (accountAuthEnabled) {
     await accountStore.initialize({
@@ -1799,8 +1878,12 @@ async function startServer() {
       adminPassword: process.env.ADMIN_PASSWORD || ""
     });
   }
+  if (standaloneStore && businessStore.isConfigured()) {
+    await standaloneStore.syncCatalog(businessStore.getConfiguration());
+  }
   server.listen(port, () => {
-    console.log(`Business operations app running at http://localhost:${port} with personal accounts`);
+    const backend = standaloneStore ? "PostgreSQL" : "legacy Apps Script/file storage";
+    console.log(`Business operations app running at http://localhost:${port} with personal accounts and ${backend}`);
   });
 }
 
@@ -1866,14 +1949,17 @@ async function getBootstrapData(user) {
       .slice(0, 20)
       .map(employeeDailyCloseView);
   return {
-    source: sheetSnapshot ? "apps-script-and-business-configuration" : "business-configuration",
+    source: standaloneStore
+      ? "postgresql-and-business-configuration"
+      : sheetSnapshot ? "apps-script-and-business-configuration" : "business-configuration",
     generatedAt: new Date().toISOString(),
     user,
     business: configuration?.business || null,
     terminology: configuration?.terminology || null,
     locations: configuration?.locations || [],
     modules: configuration?.modules || {},
-    sheetConfigured: Boolean(process.env.APPS_SCRIPT_URL),
+    dataBackend: standaloneStore ? "postgresql" : "apps-script",
+    sheetConfigured: !standaloneStore && Boolean(process.env.APPS_SCRIPT_URL),
     sheet: sheetSnapshot,
     categories: data.categories,
     items: data.items,
@@ -2023,10 +2109,16 @@ function businessDateKey(value = new Date()) {
 }
 
 async function readSheetSnapshot() {
+  if (standaloneStore) return standaloneStore.snapshot();
   return readAppsScriptAction("bootstrap");
 }
 
 async function readAppsScriptAction(action, parameters = {}) {
+  if (standaloneStore) {
+    if (action === "bootstrap") return standaloneStore.snapshot();
+    if (action === "finance") return standaloneStore.finance(parameters);
+    return { ok: false, error: `Unsupported database read action: ${action}` };
+  }
   if (!process.env.APPS_SCRIPT_URL) return null;
 
   try {
@@ -2048,6 +2140,13 @@ async function readAppsScriptAction(action, parameters = {}) {
 }
 
 async function syncGuiPayload(payload) {
+  if (standaloneStore) {
+    try {
+      return await standaloneStore.handleGuiPayload(payload);
+    } catch (error) {
+      return { ok: false, error: error.message, code: error.code || "database_sync_failed" };
+    }
+  }
   if (!process.env.APPS_SCRIPT_URL) {
     return {
       ok: false,
