@@ -72,6 +72,7 @@ const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".png": "image/png"
 };
 const publicFiles = new Set([
@@ -84,12 +85,19 @@ const publicFiles = new Set([
   "/login.js",
   "/profile.js",
   "/setup.js",
+  "/pwa.js",
+  "/service-worker.js",
+  "/manifest.webmanifest",
   "/pricing.js",
   "/items.js",
   "/recipes.js",
   "/supply-telegram.js",
   "/inventory-counts.js",
-  "/assets/frontier-firearms-logo.png"
+  "/assets/frontier-firearms-logo.png",
+  "/assets/operations-ledger-32.png",
+  "/assets/operations-ledger-192.png",
+  "/assets/operations-ledger-512.png",
+  "/assets/operations-ledger-maskable-512.png"
 ]);
 
 const server = http.createServer((request, response) => {
@@ -108,6 +116,10 @@ async function dispatchRequest(request, response) {
 
 async function handleApplicationRequest(request, response, url) {
   try {
+    if (isPublicPwaAsset(url.pathname)) {
+      serveStatic(response, url.pathname);
+      return;
+    }
     if (url.pathname === "/health/data" || url.pathname === "/health/sheet") {
       const snapshot = await readSheetSnapshot();
       const inventory = snapshot?.inventory;
@@ -297,6 +309,10 @@ async function handleApplicationRequest(request, response, url) {
 }
 
 async function dispatchHostedRequest(request, response, url) {
+  if (isPublicPwaAsset(url.pathname)) {
+    serveStatic(response, url.pathname);
+    return;
+  }
   if (url.pathname === "/health") {
     sendJson(response, {
       ok: true,
@@ -2323,12 +2339,23 @@ function serveStatic(response, pathname) {
       response.end("Not found");
       return;
     }
-    response.writeHead(200, {
+    const headers = {
       "Content-Type": mimeTypes[path.extname(filePath)] || "application/octet-stream",
-      "Cache-Control": pathname.endsWith(".html") ? "no-store" : "public, max-age=300"
-    });
+      "Cache-Control": pathname.endsWith(".html") || pathname === "/service-worker.js"
+        ? "no-store"
+        : "public, max-age=300"
+    };
+    if (pathname === "/service-worker.js") headers["Service-Worker-Allowed"] = "/";
+    response.writeHead(200, headers);
     response.end(data);
   });
+}
+
+function isPublicPwaAsset(pathname) {
+  return pathname === "/manifest.webmanifest"
+    || pathname === "/service-worker.js"
+    || pathname === "/pwa.js"
+    || pathname.startsWith("/assets/operations-ledger-");
 }
 
 function isPublicAsset(pathname) {

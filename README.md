@@ -26,6 +26,14 @@ The same deployment can also host multiple isolated businesses. Set `HOSTED_MODE
 
 Authoritative counts create new baselines. Later movements are applied after the latest baseline, preserving the audit trail without rewriting history. Discord message IDs and GUI operation IDs provide idempotency.
 
+## Desktop Installation
+
+The hosted ledger is an installable progressive web app. In Chrome or Edge, open the deployment over HTTPS and use **Install App** when it appears. The ledger then opens in its own window and can be pinned to the taskbar or Start menu without a separate installer, application store, or per-user database setup.
+
+Every installed copy uses the same hosted PostgreSQL data and existing workspace or Discord login. Updates are downloaded by the browser; when a new version is ready, **Update App** reloads into it. Authenticated pages, API responses, finance data, and business records are always network-only and are never written to the service-worker cache. The cache contains only the public manifest and generic app icons.
+
+Local development is installable from `http://localhost`; production installation requires HTTPS. Run `npm run test:pwa` to verify the manifest, icons, routing, and private-data cache exclusions.
+
 ## Local Start
 
 1. Install Node.js 20 or newer and PostgreSQL 16 or newer.
@@ -107,6 +115,7 @@ See `docs/business-archive-migration.md` for the complete export, verification, 
 npm start                 Start the GUI and API
 npm run start:bridge      Start the Discord bridge
 npm test                  Run the full regression suite
+npm run test:pwa          Check desktop-install assets and cache boundaries
 npm run export:business   Export the current hosted business
 npm run import:business   Validate a business archive (dry run)
 npm run import:legacy     Preview a legacy snapshot import
