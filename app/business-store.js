@@ -50,6 +50,35 @@ class BusinessStore {
       : { categories: [], items: [], materials: [], recipes: {}, recipeYields: {}, pricing: { products: {}, materials: {} } };
   }
 
+  getArchiveData() {
+    return structuredClone(this.data);
+  }
+
+  async importArchiveData(input, actor) {
+    return this.mutate(async () => {
+      if (!this.isConfigured()) {
+        throw businessError("Complete business setup before importing an archive", 409, "setup_required");
+      }
+      if (hasOperationalData(this.data)) {
+        throw businessError("Business archive can only be imported into a fresh workspace", 409, "archive_target_not_empty");
+      }
+      const imported = normalizeBusinessData({
+        ...input,
+        configuration: this.data.configuration
+      });
+      this.data = imported;
+      return {
+        salesOrders: imported.salesOrders.length,
+        supplyOrders: imported.supplyOrders.length,
+        suppliers: imported.suppliers.length,
+        storefrontBuyOrders: imported.storefrontBuyOrders.length,
+        productionBatches: imported.productionBatches.length,
+        dailyCloses: imported.dailyCloses.length,
+        importedBy: cleanText(actor?.fullName, 100)
+      };
+    });
+  }
+
   async completeSetup(input, actor) {
     const normalized = normalizeSetupPayload(input);
     return this.mutate(async () => {
@@ -538,39 +567,7 @@ class BusinessStore {
       const parsed = this.repository
         ? await this.repository.load()
         : JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
-      if (!parsed) return emptyBusinessData();
-      if (!Array.isArray(parsed.supplyOrders)) parsed.supplyOrders = [];
-      if (!Array.isArray(parsed.suppliers)) parsed.suppliers = [];
-      if (!Array.isArray(parsed.storefrontBuyOrders)) parsed.storefrontBuyOrders = [];
-      if (!Array.isArray(parsed.productionBatches)) parsed.productionBatches = [];
-      if (!Array.isArray(parsed.salesOrders)) parsed.salesOrders = [];
-      if (!Array.isArray(parsed.dailyCloses)) parsed.dailyCloses = [];
-      return {
-        version: 8,
-        configuration: parsed.configuration ? normalizeStoredConfiguration(parsed.configuration) : null,
-        salesOrders: parsed.salesOrders
-          .filter(order => order && typeof order === "object")
-          .map(order => cleanStoredSalesOrder(order)),
-        supplyOrders: parsed.supplyOrders
-          .filter(order => order && typeof order === "object")
-          .map(order => cleanStoredSupplyOrder(order)),
-        suppliers: parsed.suppliers
-          .filter(supplier => supplier && typeof supplier === "object")
-          .map(supplier => ({
-            ...supplier,
-            employees: Array.isArray(supplier.employees) ? supplier.employees.slice(0, 5) : [],
-            products: Array.isArray(supplier.products) ? supplier.products.slice(0, 100) : []
-          })),
-        storefrontBuyOrders: parsed.storefrontBuyOrders
-          .filter(order => order && typeof order === "object")
-          .map(order => cleanStoredStorefrontBuyOrder(order)),
-        productionBatches: parsed.productionBatches
-          .filter(batch => batch && typeof batch === "object")
-          .map(batch => cleanStoredProductionBatch(batch)),
-        dailyCloses: parsed.dailyCloses
-          .filter(close => close && typeof close === "object")
-          .map(close => cleanStoredDailyClose(close))
-      };
+      return parsed ? normalizeBusinessData(parsed) : emptyBusinessData();
     } catch (error) {
       if (error.code === "ENOENT") {
         return emptyBusinessData();
@@ -601,6 +598,35 @@ function emptyBusinessData() {
     productionBatches: [],
     dailyCloses: []
   };
+}
+
+function normalizeBusinessData(input) {
+  const parsed = input && typeof input === "object" ? input : {};
+  return {
+    version: 8,
+    configuration: parsed.configuration ? normalizeStoredConfiguration(parsed.configuration) : null,
+    salesOrders: cleanObjectArray(parsed.salesOrders).map(cleanStoredSalesOrder),
+    supplyOrders: cleanObjectArray(parsed.supplyOrders).map(cleanStoredSupplyOrder),
+    suppliers: cleanObjectArray(parsed.suppliers).map(cleanStoredSupplier),
+    storefrontBuyOrders: cleanObjectArray(parsed.storefrontBuyOrders).map(cleanStoredStorefrontBuyOrder),
+    productionBatches: cleanObjectArray(parsed.productionBatches).map(cleanStoredProductionBatch),
+    dailyCloses: cleanObjectArray(parsed.dailyCloses).map(cleanStoredDailyClose)
+  };
+}
+
+function cleanObjectArray(value) {
+  return (Array.isArray(value) ? value : []).filter(entry => entry && typeof entry === "object");
+}
+
+function hasOperationalData(data) {
+  return [
+    data.salesOrders,
+    data.supplyOrders,
+    data.suppliers,
+    data.storefrontBuyOrders,
+    data.productionBatches,
+    data.dailyCloses
+  ].some(entries => Array.isArray(entries) && entries.length > 0);
 }
 
 function normalizeStoredConfiguration(configuration) {
@@ -1002,6 +1028,19 @@ function cleanSupplier(input, actor, { id, now, existing }) {
     updatedAt: now,
     updatedBy: cleanText(actor?.fullName, 100)
   };
+}
+
+function cleanStoredSupplier(supplier) {
+  const updatedAt = cleanDateTime(supplier.updatedAt) || cleanDateTime(supplier.createdAt) || new Date().toISOString();
+  const cleaned = cleanSupplier(supplier, { fullName: supplier.updatedBy }, {
+    id: cleanText(supplier.id, 100) || crypto.randomUUID(),
+    now: updatedAt,
+    existing: { createdAt: cleanDateTime(supplier.createdAt) || updatedAt }
+  });
+  cleaned.createdAt = cleanDateTime(supplier.createdAt) || cleaned.createdAt;
+  cleaned.updatedAt = updatedAt;
+  cleaned.updatedBy = cleanText(supplier.updatedBy, 100);
+  return cleaned;
 }
 
 function cleanSupplyOrder(input, actor, { id, now, existing }) {

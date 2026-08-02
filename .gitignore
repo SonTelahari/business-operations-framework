@@ -12,3 +12,5 @@ discord-bridge/captures/
 .agents/
 *.xlsx
 outputs/
+exports/
+*.business-archive.json

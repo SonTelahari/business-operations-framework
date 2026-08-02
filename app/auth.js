@@ -254,6 +254,57 @@ class AccountStore {
     return this.mutate(async () => this.appendAudit(event));
   }
 
+  async importAuditHistory({ users = [], audit = [], fingerprint = "" } = {}, actor) {
+    return this.mutate(async () => {
+      const sourceFingerprint = String(fingerprint || "").slice(0, 200);
+      const marker = sourceFingerprint ? `archive-audit:${sourceFingerprint}` : "";
+      if (marker && this.data.audit.some(event => event.fingerprint === marker)) {
+        return { duplicate: true, staffReferences: 0, auditEvents: 0 };
+      }
+      const importedAudit = (Array.isArray(audit) ? audit : [])
+        .slice(0, AUDIT_LIMIT)
+        .map((event, index) => cleanImportedAuditEvent(event, sourceFingerprint, index));
+      const staffReferences = (Array.isArray(users) ? users : [])
+        .filter(user => String(user?.fullName || "").trim())
+        .slice(0, 1000)
+        .map((user, index) => cleanImportedAuditEvent({
+          id: `staff-${user.id || index}`,
+          createdAt: user.createdAt,
+          category: "migration",
+          action: "migration.legacy_staff_reference",
+          actorName: "Legacy system",
+          subjectId: user.id,
+          subjectName: user.fullName,
+          details: {
+            legacyRole: user.role,
+            legacyStatus: user.status,
+            approvedAt: user.approvedAt,
+            lastLoginAt: user.lastLoginAt
+          }
+        }, sourceFingerprint, importedAudit.length + index));
+      this.data.audit = [...importedAudit, ...staffReferences, ...this.data.audit]
+        .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
+        .slice(0, AUDIT_LIMIT);
+      this.appendAudit({
+        category: "migration",
+        action: "migration.archive_imported",
+        actorId: actor?.id,
+        actorName: actor?.fullName || "Archive import",
+        details: {
+          staffReferences: staffReferences.length,
+          auditEvents: importedAudit.length,
+          credentialsImported: false
+        },
+        fingerprint: marker
+      });
+      return {
+        duplicate: false,
+        staffReferences: staffReferences.length,
+        auditEvents: importedAudit.length
+      };
+    });
+  }
+
   createSession(user) {
     const stored = this.data.users.find(candidate => candidate.id === user.id);
     if (!stored || stored.status !== "active") throw accountError("Account is not active", 401, "inactive");
@@ -443,6 +494,23 @@ function safeEqual(actual, expected) {
   const actualBuffer = Buffer.from(String(actual));
   const expectedBuffer = Buffer.from(String(expected));
   return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function cleanImportedAuditEvent(event, sourceFingerprint, index) {
+  const createdAt = new Date(event?.createdAt || "");
+  const sourceId = String(event?.id || index).slice(0, 80);
+  return {
+    id: `legacy-${sourceId}`.slice(0, 100),
+    createdAt: Number.isFinite(createdAt.getTime()) ? createdAt.toISOString() : new Date(0).toISOString(),
+    category: String(event?.category || "migration").slice(0, 40),
+    action: String(event?.action || "migration.legacy_activity").slice(0, 80),
+    actorId: String(event?.actorId || "").slice(0, 100),
+    actorName: String(event?.actorName || "Legacy system").slice(0, 100),
+    subjectId: String(event?.subjectId || "").slice(0, 100),
+    subjectName: String(event?.subjectName || event?.actorName || "").slice(0, 100),
+    details: cleanAuditDetails(event?.details),
+    fingerprint: `archive:${sourceFingerprint}:${sourceId}:${index}`.slice(0, 200)
+  };
 }
 
 function readSessionIdentity(token, secret) {

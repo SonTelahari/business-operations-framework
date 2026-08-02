@@ -4,6 +4,7 @@ const { BusinessStore } = require("./business-store");
 const { TenantDocumentRepository } = require("./database");
 const { StandaloneStore } = require("./standalone-store");
 const { normalizeSetupPayload } = require("./setup-config");
+const { validateBusinessArchive } = require("./business-archive");
 
 const WORKSPACE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const WORKSPACE_CODE_LENGTH = 10;
@@ -18,6 +19,58 @@ class TenantManager {
   }
 
   async createWorkspace({ configuration, owner, discordIntegration = null }) {
+    return this.provisionWorkspace({ configuration, owner, discordIntegration });
+  }
+
+  async createWorkspaceFromArchive({ archive, owner, actor = "Business archive import", allowDuplicate = false }) {
+    const normalizedArchive = validateBusinessArchive(archive);
+    if (!allowDuplicate) {
+      const existing = await this.database.query(`
+        SELECT b.workspace_code, b.name
+        FROM import_batches i
+        JOIN businesses b ON b.id = i.business_id
+        WHERE i.source_fingerprint = $1 AND b.status = 'active'
+        LIMIT 1
+      `, [normalizedArchive.fingerprint]);
+      if (existing.rowCount) {
+        throw tenantError(
+          `This archive was already imported into ${existing.rows[0].name} (${existing.rows[0].workspace_code})`,
+          409,
+          "archive_already_imported"
+        );
+      }
+    }
+    return this.provisionWorkspace({
+      configuration: normalizedArchive.business.configuration,
+      owner,
+      afterSetup: async ({ context, administrator }) => {
+        const actorUser = { ...administrator, fullName: cleanReferenceId(actor) || administrator.fullName };
+        const businessDocuments = await context.businessStore.importArchiveData(
+          normalizedArchive.business,
+          actorUser
+        );
+        const operations = await context.standaloneStore.importLegacySnapshot({
+          snapshot: normalizedArchive.operations.snapshot,
+          finance: normalizedArchive.operations.finance,
+          actor: actorUser.fullName,
+          fingerprint: normalizedArchive.fingerprint
+        });
+        const accounts = await context.accountStore.importAuditHistory({
+          ...normalizedArchive.accounts,
+          fingerprint: normalizedArchive.fingerprint
+        }, administrator);
+        return {
+          fingerprint: normalizedArchive.fingerprint,
+          businessDocuments,
+          operations: operations.summary,
+          accounts,
+          coverage: normalizedArchive.coverage
+        };
+      }
+    });
+  }
+
+  async provisionWorkspace({ configuration, owner, discordIntegration = null, afterSetup = null }) {
     const normalized = normalizeSetupPayload(configuration);
     const businessId = crypto.randomUUID();
     const workspaceCode = await this.allocateWorkspaceCode();
@@ -39,6 +92,9 @@ class TenantManager {
       const administrator = await context.accountStore.provisionInitialAdmin(owner?.fullName, owner?.password);
       const savedConfiguration = await context.businessStore.completeSetup(normalized, administrator);
       await context.standaloneStore.syncCatalog(savedConfiguration);
+      const migration = typeof afterSetup === "function"
+        ? await afterSetup({ context, administrator, configuration: savedConfiguration })
+        : null;
       await this.database.query(`
         UPDATE businesses
         SET name = $2, reference_id = $3, status = 'active', updated_at = now()
@@ -54,7 +110,7 @@ class TenantManager {
       if (String(discordIntegration?.eventChannelId || "").trim()) {
         await this.saveDiscordIntegration(businessId, discordIntegration);
       }
-      return { business: structuredClone(context.business), owner: administrator, context };
+      return { business: structuredClone(context.business), owner: administrator, context, migration };
     } catch (error) {
       this.contexts.delete(businessId);
       await this.removeProvisioningWorkspace(businessId).catch(() => {});

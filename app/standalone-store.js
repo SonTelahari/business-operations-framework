@@ -153,6 +153,57 @@ class StandaloneStore {
         });
       }
 
+      const reviewExceptions = Array.isArray(snapshot.reviewExceptions) ? snapshot.reviewExceptions : [];
+      for (let index = 0; index < reviewExceptions.length; index += 1) {
+        const exception = reviewExceptions[index];
+        const webhookId = cleanText(exception.webhookId, 150) || `${batchId}:review:${index}`;
+        const exceptionStatus = new Set(["Open", "Resolved", "Ignored"]).has(exception.status)
+          ? exception.status
+          : "Open";
+        const eventStatus = exceptionStatus === "Ignored"
+          ? "ignored"
+          : exceptionStatus === "Resolved" && exception.transactionWritten ? "applied" : "review";
+        const payload = {
+          importedFromArchive: true,
+          batchId,
+          raw_payload: cleanText(exception.rawText, 4000)
+        };
+        const event = {
+          webhookId,
+          occurredAt: validDate(exception.receivedAt || snapshot.generatedAt),
+          type: cleanText(exception.eventType, 80) || "Unknown",
+          direction: cleanText(exception.direction, 80),
+          item: cleanText(exception.resolvedItem || exception.discordItemLabel || exception.discordItemName, 150),
+          quantity: Math.max(0, number(exception.quantity)),
+          unitPrice: Math.max(0, number(exception.unitPrice)),
+          actor: cleanText(exception.resolvedBy, 100),
+          orderId: "",
+          reviewReason: cleanText(exception.reason, 200),
+          discordTitle: cleanText(exception.discordTitle, 200),
+          discordItemName: cleanText(exception.discordItemName, 200),
+          discordItemLabel: cleanText(exception.discordItemLabel, 200),
+          ledgerBalance: nullableNumber(exception.ledgerBalance),
+          currentItemTotal: nullableNumber(exception.currentItemTotal)
+        };
+        await insertWebhook(client, this.businessId, event, payload, eventStatus);
+        await insertException(client, this.businessId, event, payload);
+        await client.query(`
+          UPDATE webhook_exceptions
+          SET status = $3, resolved_item_name = $4, resolved_at = $5,
+              resolved_by = $6, resolution_note = $7, transaction_written = $8
+          WHERE business_id = $1 AND webhook_id = $2
+        `, [
+          this.businessId,
+          webhookId,
+          exceptionStatus,
+          cleanText(exception.resolvedItem, 150),
+          exceptionStatus === "Resolved" ? validDate(exception.resolvedAt || exception.receivedAt) : null,
+          cleanText(exception.resolvedBy, 100),
+          cleanText(exception.note, 1000),
+          Boolean(exception.transactionWritten)
+        ]);
+      }
+
       const financeRows = Array.isArray(finance?.breakdown) ? finance.breakdown : [];
       for (let index = 0; index < financeRows.length; index += 1) {
         const row = financeRows[index];
@@ -189,7 +240,8 @@ class StandaloneStore {
         materials: materials.length,
         storageCounts: storage.length,
         ledgerImported: ledgerBalance !== null,
-        financeRows: financeRows.length
+        financeRows: financeRows.length,
+        webhookExceptions: reviewExceptions.length
       };
       await client.query(`
         INSERT INTO import_batches (

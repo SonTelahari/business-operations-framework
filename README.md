@@ -89,16 +89,15 @@ DISCORD_REDIRECT_URI=https://<gui-public-domain>/auth/discord/callback
 
 The first-launch ledger also accepts optional Discord server, storefront event, inventory, and alert channel IDs. This registers routing immediately; during the private beta, the service operator still adds the shared bot to the Discord server.
 
-## Legacy Import
+## Business Archive Migration
 
-`scripts/import-legacy.js` can seed a new PostgreSQL deployment from the old Apps Script bootstrap and finance snapshots. It imports opening catalog entries, current storefront and storage counts, ledger balance, and summarized historical P&L. The import is fingerprinted and safe to rerun.
+The preferred migration path is a portable, versioned business archive. `npm run export:business` signs into the current hosted app with an admin account and exports the catalog, recipes, current inventory and ledger, orders, suppliers, production, finance summary, and sanitized staff audit history. Password hashes, sessions, API tokens, and database credentials are never included.
 
-```text
-npm run import:legacy
-npm run import:legacy -- --commit
-```
+`npm run import:business` validates the archive and prints a dry-run summary. Re-run it with `-- --commit` to create a fresh workspace with a new UUID and owner password. A failed import removes the incomplete workspace, and the archive fingerprint prevents accidental duplicate imports.
 
-Set `LEGACY_APPS_SCRIPT_URL` for both commands and `DATABASE_URL` for `--commit`. Run the dry-run first, stop the old bridge during cutover, commit the snapshot, then start the new bridge. The `webhook/` directory remains only as a legacy migration reference.
+Raw historic timesheet rows were never exposed by the legacy app. Payroll finance totals migrate when available, while staff reconnect with fresh credentials or Discord profiles. The lower-level `import:legacy` command remains available for Apps Script-only recovery imports.
+
+See `docs/business-archive-migration.md` for the complete export, verification, and bridge cutover procedure.
 
 ## Commands
 
@@ -106,6 +105,8 @@ Set `LEGACY_APPS_SCRIPT_URL` for both commands and `DATABASE_URL` for `--commit`
 npm start                 Start the GUI and API
 npm run start:bridge      Start the Discord bridge
 npm test                  Run the full regression suite
+npm run export:business   Export the current hosted business
+npm run import:business   Validate a business archive (dry run)
 npm run import:legacy     Preview a legacy snapshot import
 ```
 
