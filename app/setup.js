@@ -36,6 +36,10 @@ async function initialize() {
     document.querySelector("#ownerSetupNote").textContent = status.ownerAccountExists
       ? "Enter the credentials of the pre-provisioned administrator account."
       : "This account receives administrator access.";
+    const inviteRequired = Boolean(status.workspaceSignup?.inviteRequired);
+    document.querySelector("#workspaceInviteField").classList.toggle("hidden", !inviteRequired);
+    document.querySelector("#workspaceInviteInput").required = inviteRequired;
+    document.querySelector("#discordSetupFields").classList.toggle("hidden", !status.hostedMode);
     restoreDraft(status.defaults || {});
     showStep(0);
   } catch {
@@ -133,6 +137,7 @@ async function completeSetup(event) {
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || "Setup could not be completed");
     localStorage.removeItem(DRAFT_KEY);
+    if (result.workspace?.code) localStorage.setItem("business_ledger_workspace_code", result.workspace.code);
     window.location.replace("/");
   } catch (error) {
     setBusy(false);
@@ -157,6 +162,13 @@ function collectPayload() {
     active: true
   }));
   return {
+    inviteCode: document.querySelector("#workspaceInviteInput").value,
+    discordIntegration: {
+      guildId: document.querySelector("#discordGuildIdInput").value.trim(),
+      eventChannelId: document.querySelector("#discordEventChannelIdInput").value.trim(),
+      inventoryChannelId: document.querySelector("#discordInventoryChannelIdInput").value.trim(),
+      alertChannelId: document.querySelector("#discordAlertChannelIdInput").value.trim()
+    },
     owner: {
       fullName: document.querySelector("#ownerNameInput").value.trim(),
       password: document.querySelector("#ownerPasswordInput").value
@@ -166,6 +178,7 @@ function collectPayload() {
         name: document.querySelector("#businessNameInput").value.trim(),
         ledgerName: document.querySelector("#ledgerNameInput").value.trim(),
         location: document.querySelector("#businessLocationInput").value.trim(),
+        referenceId: document.querySelector("#businessReferenceIdInput").value.trim(),
         logoUrl: document.querySelector("#logoUrlInput").value.trim(),
         currency: document.querySelector("#currencyInput").value.trim(),
         locale: document.querySelector("#localeInput").value.trim(),
@@ -317,6 +330,7 @@ function restoreDraft(defaults) {
     businessNameInput: business.name || "",
     ledgerNameInput: business.ledgerName || "Business Ledger",
     businessLocationInput: business.location || "",
+    businessReferenceIdInput: business.referenceId || "",
     logoUrlInput: business.logoUrl || "",
     currencyInput: business.currency || "USD",
     localeInput: navigator.language || business.locale || "en-US",

@@ -1506,6 +1506,28 @@ tr:last-child td {
   padding: 40px;
 }
 
+.auth-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.auth-workspace label {
+  min-width: 0;
+}
+
+.text-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  color: var(--accent);
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .auth-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1813,6 +1835,10 @@ tr:last-child td {
 
   .auth-panel {
     padding: 24px;
+  }
+
+  .auth-workspace {
+    grid-template-columns: 1fr;
   }
 
   .employee-row {

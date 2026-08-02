@@ -10,3 +10,5 @@
 8. One stock count, ledger count, deposit, withdrawal, sale, purchase, and webhook review have been verified.
 9. Inventory and alert channels show only products with configured targets.
 10. A database backup has been taken after verification.
+11. Hosted deployments use an intentional signup mode; beta deployments should use `invite`.
+12. Two test workspaces with duplicate display names have passed session, stock, staff, and Discord isolation checks.

@@ -3,22 +3,37 @@ const registerForm = document.querySelector("#registerForm");
 const loginTab = document.querySelector("#showLoginButton");
 const registerTab = document.querySelector("#showRegisterButton");
 const message = document.querySelector("#authMessage");
+const workspaceInput = document.querySelector("#workspaceCodeInput");
+const WORKSPACE_KEY = "business_ledger_workspace_code";
+let configTimer = null;
 
 loginTab.addEventListener("click", () => showMode("login"));
 registerTab.addEventListener("click", () => showMode("register"));
 loginForm.addEventListener("submit", login);
 registerForm.addEventListener("submit", register);
+workspaceInput.addEventListener("input", () => {
+  workspaceInput.value = formatWorkspaceCode(workspaceInput.value);
+  clearTimeout(configTimer);
+  configTimer = setTimeout(loadPublicConfig, 250);
+});
 
+workspaceInput.value = formatWorkspaceCode(new URLSearchParams(window.location.search).get("workspace") || localStorage.getItem(WORKSPACE_KEY) || "");
 loadPublicConfig();
 checkSession();
 
 async function loadPublicConfig() {
   try {
-    const response = await fetch("/api/public/config", { headers: { accept: "application/json" } });
+    const code = formatWorkspaceCode(workspaceInput.value);
+    const response = await fetch(`/api/public/config${code ? `?workspace=${encodeURIComponent(code)}` : ""}`, { headers: { accept: "application/json" } });
     const result = await response.json();
     if (!result.configured) {
-      window.location.replace("/setup.html");
+      if (!result.hostedMode) window.location.replace("/setup.html");
+      else resetBusinessIdentity(code ? "Workspace not found" : "Business Ledger");
       return;
+    }
+    if (result.workspace?.code) {
+      workspaceInput.value = result.workspace.code;
+      localStorage.setItem(WORKSPACE_KEY, result.workspace.code);
     }
     const business = result.business || {};
     const name = business.name || "Business";
@@ -37,6 +52,19 @@ async function loadPublicConfig() {
       monogram.textContent = initials(name);
     }
   } catch {}
+}
+
+function resetBusinessIdentity(title) {
+  document.title = "Sign In - Business Ledger";
+  document.querySelector("#loginLedgerName").textContent = title;
+  document.querySelector("#loginBusinessLogo").classList.add("hidden");
+  document.querySelector("#loginBusinessMonogram").classList.remove("hidden");
+  document.querySelector("#loginBusinessMonogram").textContent = "BL";
+}
+
+function formatWorkspaceCode(value) {
+  const compact = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
+  return compact.length > 5 ? `${compact.slice(0, 5)}-${compact.slice(5)}` : compact;
 }
 
 function initials(value) {
@@ -68,11 +96,13 @@ async function login(event) {
   setBusy(loginForm, true);
   setMessage("");
   const result = await request("/api/auth/login", {
+    workspaceCode: workspaceInput.value,
     fullName: document.querySelector("#loginNameInput").value,
     password: document.querySelector("#loginPasswordInput").value
   });
   setBusy(loginForm, false);
   if (result.ok) {
+    localStorage.setItem(WORKSPACE_KEY, formatWorkspaceCode(workspaceInput.value));
     window.location.replace("/");
     return;
   }
@@ -89,6 +119,7 @@ async function register(event) {
   setBusy(registerForm, true);
   setMessage("");
   const result = await request("/api/auth/register", {
+    workspaceCode: workspaceInput.value,
     fullName: document.querySelector("#registerNameInput").value,
     password
   });
@@ -116,6 +147,7 @@ async function request(url, payload) {
 
 function setBusy(form, busy) {
   form.querySelectorAll("input, button").forEach(control => { control.disabled = busy; });
+  workspaceInput.disabled = busy;
 }
 
 function setMessage(text, tone = "") {

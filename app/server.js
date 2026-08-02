@@ -3,11 +3,13 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
-const { AccountStore, SESSION_MAX_AGE_SECONDS } = require("./auth");
+const { AsyncLocalStorage } = require("node:async_hooks");
+const { AccountStore, SESSION_MAX_AGE_SECONDS, readSessionIdentity } = require("./auth");
 const { BusinessStore } = require("./business-store");
 const { Database, PostgresDocumentRepository } = require("./database");
 const { StandaloneStore } = require("./standalone-store");
 const { defaultSetupConfiguration, normalizeSetupPayload } = require("./setup-config");
+const { TenantManager, normalizeWorkspaceCode } = require("./tenant-manager");
 
 const root = __dirname;
 loadEnvFile(path.join(root, "..", ".env"));
@@ -19,21 +21,33 @@ const accountDataDirectory = process.env.AUTH_DATA_DIR
   || process.env.RAILWAY_VOLUME_MOUNT_PATH
   || path.join(root, ".data");
 const database = new Database({ connectionString: process.env.DATABASE_URL || "" });
-const standaloneStore = database.enabled ? new StandaloneStore(database) : null;
+const hostedMode = database.enabled && process.env.HOSTED_MODE === "1";
+const hostedSignupMode = resolveHostedSignupMode(process.env.HOSTED_SIGNUP_MODE);
 const sessionSecretState = database.enabled
   ? { value: process.env.AUTH_SESSION_SECRET || "", persistent: Boolean(process.env.AUTH_SESSION_SECRET) }
   : resolveSessionSecret(accountDataDirectory, process.env.AUTH_SESSION_SECRET || "");
 const sessionSecret = sessionSecretState.value;
 const accountAuthEnabled = true;
-const accountStore = new AccountStore({
-  filePath: path.join(accountDataDirectory, "users.json"),
-  sessionSecret,
-  repository: database.enabled ? new PostgresDocumentRepository(database, "accounts") : null
-});
-const businessStore = new BusinessStore({
-  filePath: path.join(accountDataDirectory, "business.json"),
-  repository: database.enabled ? new PostgresDocumentRepository(database, "business") : null
-});
+const tenantRequestContext = new AsyncLocalStorage();
+const defaultContext = {
+  businessId: "primary",
+  business: null,
+  accountStore: new AccountStore({
+    filePath: path.join(accountDataDirectory, "users.json"),
+    sessionSecret,
+    businessId: "primary",
+    repository: database.enabled ? new PostgresDocumentRepository(database, "accounts") : null
+  }),
+  businessStore: new BusinessStore({
+    filePath: path.join(accountDataDirectory, "business.json"),
+    repository: database.enabled ? new PostgresDocumentRepository(database, "business") : null
+  }),
+  standaloneStore: database.enabled ? new StandaloneStore(database) : null
+};
+const tenantManager = hostedMode ? new TenantManager({ database, sessionSecret }) : null;
+const accountStore = contextualStore("accountStore");
+const businessStore = contextualStore("businessStore");
+const standaloneStore = database.enabled ? contextualStore("standaloneStore") : null;
 const loginAttempts = new Map();
 let supplyReceiptQueue = Promise.resolve();
 let productionProgressQueue = Promise.resolve();
@@ -62,9 +76,22 @@ const publicFiles = new Set([
   "/assets/frontier-firearms-logo.png"
 ]);
 
-const server = http.createServer(async (request, response) => {
+const server = http.createServer((request, response) => {
+  dispatchRequest(request, response).catch(error => {
+    console.error("App request failed:", error);
+    if (!response.headersSent) sendJson(response, { ok: false, error: "The request could not be completed" }, 500);
+    else response.end();
+  });
+});
+
+async function dispatchRequest(request, response) {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  if (hostedMode) return dispatchHostedRequest(request, response, url);
+  return tenantRequestContext.run(defaultContext, () => handleApplicationRequest(request, response, url));
+}
+
+async function handleApplicationRequest(request, response, url) {
   try {
-    const url = new URL(request.url, `http://${request.headers.host}`);
     if (url.pathname === "/health/data" || url.pathname === "/health/sheet") {
       const snapshot = await readSheetSnapshot();
       const inventory = snapshot?.inventory;
@@ -167,6 +194,7 @@ const server = http.createServer(async (request, response) => {
         redirect(response, "/");
         return;
       }
+      if (await handleBusinessIntegrationRoute(request, response, url, user)) return;
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
@@ -225,6 +253,7 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, { ok: true });
         return;
       }
+      if (await handleBusinessIntegrationRoute(request, response, url, user)) return;
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
@@ -248,7 +277,253 @@ const server = http.createServer(async (request, response) => {
     console.error("App request failed:", error);
     sendJson(response, { ok: false, error: "The request could not be completed" }, 500);
   }
-});
+}
+
+async function dispatchHostedRequest(request, response, url) {
+  if (url.pathname === "/health") {
+    sendJson(response, {
+      ok: true,
+      service: "business-operations-framework",
+      hostedMode: true,
+      tenantScoped: true,
+      dataBackend: "postgresql",
+      databaseConfigured: true,
+      databaseReady: true,
+      bridgeApiConfigured: Boolean(process.env.BRIDGE_API_TOKEN),
+      authMode: "workspace-accounts",
+      uptimeSeconds: Math.round(process.uptime())
+    });
+    return;
+  }
+  if (url.pathname === "/health/data" || url.pathname === "/health/sheet") {
+    sendJson(response, {
+      ok: true,
+      dataBackend: "postgresql",
+      tenantScoped: true,
+      databaseReady: true
+    });
+    return;
+  }
+  if (url.pathname === "/api/setup/status" && request.method === "GET") {
+    sendJson(response, {
+      ok: true,
+      hostedMode: true,
+      setupRequired: hostedSignupMode !== "closed",
+      ownerAccountExists: false,
+      workspaceSignup: {
+        mode: hostedSignupMode,
+        inviteRequired: hostedSignupMode === "invite"
+      },
+      defaults: defaultSetupConfiguration()
+    });
+    return;
+  }
+  if (url.pathname === "/api/setup/complete" && request.method === "POST") {
+    await handleHostedSetup(request, response);
+    return;
+  }
+  if (url.pathname === "/api/public/config" && request.method === "GET") {
+    const context = await tenantManager.getContextByWorkspaceCode(url.searchParams.get("workspace"));
+    sendJson(response, context ? {
+      ok: true,
+      configured: true,
+      hostedMode: true,
+      workspace: publicWorkspace(context),
+      business: context.businessStore.getConfiguration()?.business || { name: context.business.name },
+      terminology: context.businessStore.getConfiguration()?.terminology || null
+    } : {
+      ok: true,
+      configured: false,
+      hostedMode: true,
+      workspaceRequired: true,
+      business: null,
+      terminology: null
+    });
+    return;
+  }
+  if (url.pathname.startsWith("/api/integrations/discord/")) {
+    const integrationHandled = await dispatchHostedDiscordRequest(request, response, url);
+    if (integrationHandled) return;
+  }
+  if (url.pathname === "/setup.html" || url.pathname === "/setup.js"
+    || url.pathname === "/login.html" || url.pathname === "/login.js"
+    || url.pathname === "/styles.css" || url.pathname.startsWith("/assets/")) {
+    serveStatic(response, url.pathname);
+    return;
+  }
+
+  const sessionToken = readCookie(request, "business_session");
+  const identity = readSessionIdentity(sessionToken, sessionSecret);
+  let context = identity ? await tenantManager.getContextById(identity.businessId) : null;
+  if (!context && (url.pathname === "/api/auth/login" || url.pathname === "/api/auth/register") && request.method === "POST") {
+    const body = await readJsonBody(request);
+    context = await tenantManager.getContextByWorkspaceCode(body.workspaceCode);
+    if (!context) {
+      sendJson(response, {
+        ok: false,
+        error: "Workspace code was not found",
+        code: "workspace_not_found"
+      }, 404);
+      return;
+    }
+  }
+  if (!context) {
+    if (url.pathname === "/api/auth/session" && request.method === "GET") {
+      sendJson(response, { ok: true, user: null, workspace: null });
+      return;
+    }
+    if (url.pathname.startsWith("/api/")) {
+      sendJson(response, {
+        ok: false,
+        error: identity ? "Business workspace is unavailable" : "Authentication and a workspace code are required",
+        code: identity ? "workspace_unavailable" : "workspace_required"
+      }, identity ? 403 : 401);
+      return;
+    }
+    redirect(response, "/login.html");
+    return;
+  }
+  return tenantRequestContext.run(context, () => handleApplicationRequest(request, response, url));
+}
+
+async function handleHostedSetup(request, response) {
+  if (!allowAuthAttempt(request)) {
+    sendJson(response, { ok: false, error: "Too many attempts. Try again later.", code: "rate_limited" }, 429);
+    return;
+  }
+  try {
+    const body = await readJsonBody(request);
+    requireHostedSignupAccess(body.inviteCode);
+    const created = await tenantManager.createWorkspace({
+      configuration: body.configuration || body,
+      owner: body.owner && typeof body.owner === "object" ? body.owner : {},
+      discordIntegration: body.discordIntegration && typeof body.discordIntegration === "object"
+        ? body.discordIntegration
+        : null
+    });
+    setSessionCookie(response, request, created.context.accountStore.createSession(created.owner));
+    sendJson(response, {
+      ok: true,
+      user: created.owner,
+      business: created.context.businessStore.getConfiguration().business,
+      workspace: publicWorkspace(created.context)
+    }, 201);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Business workspace could not be created",
+      code: error.code || "workspace_setup_failed"
+    }, error.status || 500);
+  }
+}
+
+function resolveHostedSignupMode(value) {
+  const mode = String(value || "open").trim().toLowerCase();
+  return ["open", "invite", "closed"].includes(mode) ? mode : "closed";
+}
+
+function requireHostedSignupAccess(inviteCode) {
+  if (hostedSignupMode === "closed") {
+    const error = new Error("New business registration is currently closed");
+    error.status = 403;
+    error.code = "workspace_signup_closed";
+    throw error;
+  }
+  if (hostedSignupMode !== "invite") return;
+  const expected = String(process.env.HOSTED_SIGNUP_SECRET || "");
+  if (!expected) {
+    const error = new Error("Hosted signup is not configured");
+    error.status = 503;
+    error.code = "workspace_signup_unavailable";
+    throw error;
+  }
+  if (!safeEqual(inviteCode || "", expected)) {
+    const error = new Error("The business invitation code is incorrect");
+    error.status = 403;
+    error.code = "workspace_invite_invalid";
+    throw error;
+  }
+}
+
+async function dispatchHostedDiscordRequest(request, response, url) {
+  const eventRoute = url.pathname === "/api/integrations/discord/events";
+  const snapshotRoute = url.pathname === "/api/integrations/discord/snapshot";
+  const directoryRoute = url.pathname === "/api/integrations/discord/channels";
+  if (!eventRoute && !snapshotRoute && !directoryRoute) return false;
+  if (!requireBridgeToken(request, response)) return true;
+  if (directoryRoute && request.method === "GET") {
+    sendJson(response, { ok: true, integrations: await tenantManager.listDiscordIntegrations() });
+    return true;
+  }
+  let context = null;
+  if (eventRoute && request.method === "POST") {
+    const body = await readJsonBody(request);
+    context = await tenantManager.resolveDiscordChannel(body.discord_channel_id);
+  } else if (snapshotRoute && request.method === "GET") {
+    context = await tenantManager.resolveDiscordChannel(
+      url.searchParams.get("discord_channel_id") || request.headers["x-discord-channel-id"]
+    );
+    if (!context && url.searchParams.get("workspace")) {
+      context = await tenantManager.getContextByWorkspaceCode(url.searchParams.get("workspace"));
+    }
+  }
+  if (!context) {
+    sendJson(response, {
+      ok: false,
+      error: "Discord channel is not connected to an active business",
+      code: "discord_channel_unregistered"
+    }, 404);
+    return true;
+  }
+  await tenantRequestContext.run(context, () => handleDiscordIntegrationRoute(request, response, url, true));
+  return true;
+}
+
+function requireBridgeToken(request, response) {
+  const expectedToken = String(process.env.BRIDGE_API_TOKEN || "");
+  const authorization = String(request.headers.authorization || "");
+  const suppliedToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (!expectedToken) {
+    sendJson(response, { ok: false, error: "BRIDGE_API_TOKEN is not configured", code: "bridge_token_required" }, 503);
+    return false;
+  }
+  if (!suppliedToken || !safeEqual(suppliedToken, expectedToken)) {
+    sendJson(response, { ok: false, error: "Invalid integration token", code: "invalid_integration_token" }, 401);
+    return false;
+  }
+  return true;
+}
+
+function publicWorkspace(context = currentTenantContext()) {
+  if (!context?.business) return null;
+  return {
+    id: context.business.id,
+    code: context.business.workspaceCode,
+    name: context.business.name,
+    referenceId: context.business.referenceId || ""
+  };
+}
+
+function currentTenantContext() {
+  return tenantRequestContext.getStore() || defaultContext;
+}
+
+function contextualStore(property) {
+  return new Proxy({}, {
+    get(_target, key) {
+      const store = currentTenantContext()?.[property];
+      if (!store) throw new Error(`${property} is unavailable outside a business workspace`);
+      const value = store[key];
+      return typeof value === "function" ? value.bind(store) : value;
+    },
+    set(_target, key, value) {
+      const store = currentTenantContext()?.[property];
+      if (!store) throw new Error(`${property} is unavailable outside a business workspace`);
+      store[key] = value;
+      return true;
+    }
+  });
+}
 
 async function handleAccountRoute(request, response, url, user) {
   if (isPublicAsset(url.pathname)) {
@@ -256,7 +531,11 @@ async function handleAccountRoute(request, response, url, user) {
     return true;
   }
   if (url.pathname === "/api/auth/session" && request.method === "GET") {
-    sendJson(response, { ok: true, user: user ? { ...user, accountManagement: true } : null });
+    sendJson(response, {
+      ok: true,
+      user: user ? { ...user, accountManagement: true } : null,
+      workspace: hostedMode && user ? publicWorkspace() : null
+    });
     return true;
   }
   if (url.pathname === "/api/auth/register" && request.method === "POST") {
@@ -505,6 +784,47 @@ async function handleDiscordIntegrationRoute(request, response, url) {
       code: error.code || "integration_error"
     }, error.status || 500);
   }
+  return true;
+}
+
+async function handleBusinessIntegrationRoute(request, response, url, user) {
+  if (!tenantManager || url.pathname !== "/api/integrations/discord/configuration") return false;
+  if (request.method === "GET") {
+    if (!requireManagement(response, user)) return true;
+    sendJson(response, {
+      ok: true,
+      workspace: publicWorkspace(),
+      integration: await tenantManager.getDiscordIntegration(currentTenantContext().businessId)
+    });
+    return true;
+  }
+  if (request.method === "POST") {
+    if (!requireAdmin(response, user)) return true;
+    try {
+      const integration = await tenantManager.saveDiscordIntegration(
+        currentTenantContext().businessId,
+        await readJsonBody(request)
+      );
+      await accountStore.recordAudit({
+        category: "integration",
+        action: "discord.configuration_updated",
+        actorId: user.id,
+        actorName: user.fullName,
+        subjectId: currentTenantContext().businessId,
+        subjectName: currentTenantContext().business.name,
+        details: { guildId: integration.guildId, eventChannelId: integration.eventChannelId }
+      });
+      sendJson(response, { ok: true, workspace: publicWorkspace(), integration });
+    } catch (error) {
+      sendJson(response, {
+        ok: false,
+        error: error.message || "Discord configuration could not be saved",
+        code: error.code || "discord_configuration_failed"
+      }, error.status || 500);
+    }
+    return true;
+  }
+  sendJson(response, { ok: false, error: "Integration route not found", code: "not_found" }, 404);
   return true;
 }
 
@@ -1861,28 +2181,34 @@ function safeEqual(actual, expected) {
     && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
-startServer().catch(error => {
-  console.error("Unable to start business operations app:", error.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  startServer().catch(error => {
+    console.error("Unable to start business operations app:", error.message);
+    process.exitCode = 1;
+  });
+}
 
 async function startServer() {
   if (database.enabled && !process.env.AUTH_SESSION_SECRET) {
     throw new Error("AUTH_SESSION_SECRET is required when DATABASE_URL is configured");
   }
   await database.initialize();
-  await businessStore.initialize();
-  if (accountAuthEnabled) {
-    await accountStore.initialize({
-      adminFullName: process.env.ADMIN_FULL_NAME || "",
-      adminPassword: process.env.ADMIN_PASSWORD || ""
-    });
-  }
-  if (standaloneStore && businessStore.isConfigured()) {
-    await standaloneStore.syncCatalog(businessStore.getConfiguration());
+  if (!hostedMode) {
+    await defaultContext.businessStore.initialize();
+    if (accountAuthEnabled) {
+      await defaultContext.accountStore.initialize({
+        adminFullName: process.env.ADMIN_FULL_NAME || "",
+        adminPassword: process.env.ADMIN_PASSWORD || ""
+      });
+    }
+    if (defaultContext.standaloneStore && defaultContext.businessStore.isConfigured()) {
+      await defaultContext.standaloneStore.syncCatalog(defaultContext.businessStore.getConfiguration());
+    }
   }
   server.listen(port, () => {
-    const backend = standaloneStore ? "PostgreSQL" : "legacy Apps Script/file storage";
+    const backend = hostedMode
+      ? "hosted multi-business PostgreSQL"
+      : standaloneStore ? "PostgreSQL" : "legacy Apps Script/file storage";
     console.log(`Business operations app running at http://localhost:${port} with personal accounts and ${backend}`);
   });
 }
@@ -1914,7 +2240,8 @@ function sendJson(response, payload, status = payload.ok === false ? 503 : 200) 
 }
 
 function readJsonBody(request) {
-  return new Promise(resolve => {
+  if (request.__businessJsonBody) return request.__businessJsonBody;
+  request.__businessJsonBody = new Promise(resolve => {
     let body = "";
     request.on("data", chunk => {
       body += chunk;
@@ -1929,6 +2256,7 @@ function readJsonBody(request) {
     });
     request.on("error", () => resolve({}));
   });
+  return request.__businessJsonBody;
 }
 
 async function getBootstrapData(user) {
@@ -1954,6 +2282,7 @@ async function getBootstrapData(user) {
       : sheetSnapshot ? "apps-script-and-business-configuration" : "business-configuration",
     generatedAt: new Date().toISOString(),
     user,
+    workspace: hostedMode ? publicWorkspace() : null,
     business: configuration?.business || null,
     terminology: configuration?.terminology || null,
     locations: configuration?.locations || [],
@@ -2273,3 +2602,5 @@ function parseJsonText(value) {
     return null;
   }
 }
+
+module.exports = { server, startServer, database, tenantManager };

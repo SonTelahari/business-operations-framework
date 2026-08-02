@@ -10,10 +10,13 @@ loadEnvFile(path.join(__dirname, '.env'));
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_CHANNEL_ID = normalizeSnowflake(process.env.DISCORD_CHANNEL_ID);
+const SHARED_BUSINESS_MODE = process.env.SHARED_BUSINESS_MODE === '1';
 const BUSINESS_API_URL = String(process.env.BUSINESS_API_URL || '').trim().replace(/\/+$/, '');
 const BRIDGE_API_TOKEN = String(process.env.BRIDGE_API_TOKEN || '').trim();
 const EVENT_API_URL = BUSINESS_API_URL ? `${BUSINESS_API_URL}/api/integrations/discord/events` : '';
-const SNAPSHOT_API_URL = BUSINESS_API_URL ? `${BUSINESS_API_URL}/api/integrations/discord/snapshot` : '';
+const SNAPSHOT_API_URL = BUSINESS_API_URL
+  ? `${BUSINESS_API_URL}/api/integrations/discord/snapshot${DISCORD_CHANNEL_ID ? `?discord_channel_id=${encodeURIComponent(DISCORD_CHANNEL_ID)}` : ''}`
+  : '';
 const CAPTURE_ONLY = process.env.CAPTURE_ONLY !== '0';
 const DEBUG_DISCORD = process.env.DEBUG_DISCORD !== '0';
 const INVENTORY_CHANNEL_ID = normalizeSnowflake(process.env.INVENTORY_CHANNEL_ID);
@@ -25,9 +28,10 @@ const PORT = numberValue(process.env.PORT);
 const CAPTURE_FILE = path.join(__dirname, 'captures', 'events.jsonl');
 const INVENTORY_PUBLISHING_REQUESTED = Boolean(INVENTORY_CHANNEL_ID || STOCK_ALERT_CHANNEL_ID);
 
-if (!DISCORD_TOKEN || !DISCORD_CHANNEL_ID || ((!CAPTURE_ONLY || INVENTORY_PUBLISHING_REQUESTED) && (!BUSINESS_API_URL || !BRIDGE_API_TOKEN))) {
+if (!DISCORD_TOKEN || (!SHARED_BUSINESS_MODE && !DISCORD_CHANNEL_ID)
+  || ((!CAPTURE_ONLY || INVENTORY_PUBLISHING_REQUESTED || SHARED_BUSINESS_MODE) && (!BUSINESS_API_URL || !BRIDGE_API_TOKEN))) {
   console.error(
-    'Missing DISCORD_TOKEN or DISCORD_CHANNEL_ID. BUSINESS_API_URL and BRIDGE_API_TOKEN are also required when forwarding or inventory publishing is enabled.'
+    'Missing DISCORD_TOKEN or channel configuration. Shared mode needs BUSINESS_API_URL and BRIDGE_API_TOKEN; single-business mode also needs DISCORD_CHANNEL_ID.'
   );
   process.exit(1);
 }
@@ -50,7 +54,7 @@ const inventoryPublisher = createInventoryPublisher({
 
 client.once('clientReady', () => {
   logInfo(`Frontier Firearms - Still Water bridge logged in as ${client.user.tag}`);
-  logInfo(`Watching Discord channel ID: ${DISCORD_CHANNEL_ID}`);
+  logInfo(SHARED_BUSINESS_MODE ? 'Watching registered business channels' : `Watching Discord channel ID: ${DISCORD_CHANNEL_ID}`);
   logInfo(`Parser mode: ${CAPTURE_ONLY ? 'capture only' : 'forward to business API'}`);
   logInfo(`Discord debug logging: ${DEBUG_DISCORD ? 'on' : 'off'}`);
   logInfo(`Discord inventory publishing: ${inventoryPublisher.enabled ? 'on' : 'off'}`);
@@ -67,7 +71,7 @@ client.on('messageCreate', async (message) => {
     );
   }
 
-  if (message.channelId !== DISCORD_CHANNEL_ID) {
+  if (!SHARED_BUSINESS_MODE && message.channelId !== DISCORD_CHANNEL_ID) {
     if (DEBUG_DISCORD) {
       logInfo(`Ignored channel ${message.channelId}; expected ${DISCORD_CHANNEL_ID}`);
     }

@@ -13,6 +13,8 @@ The first browser visit opens a five-page setup ledger where a new owner enters:
 
 No real-life identity or email address is requested. Passwords use salted `scrypt` hashes and sessions use signed, HTTP-only cookies.
 
+The same deployment can also host multiple isolated businesses. Set `HOSTED_MODE=1`; each first-launch registration receives an internal UUID and a short workspace code. Business names and in-game reference IDs do not need to be unique. Employees use the workspace code at login, while all inventory, finance, accounts, recipes, and integrations are scoped to the internal UUID.
+
 ## Architecture
 
 - `app/` serves the GUI and authenticated API.
@@ -67,6 +69,22 @@ CAPTURE_ONLY=1
 ```
 
 Keep `CAPTURE_ONLY=1` until the target server's real Discord messages pass parser tests. Set it to `0` only after a test forward appears in the app. Storefront stock and shortage channels are optional.
+
+For one shared hosted bridge, set `SHARED_BUSINESS_MODE=1` and leave `DISCORD_CHANNEL_ID` blank. An admin connects each business's event channel in its workspace. The app routes incoming events by that registered channel and rejects channels assigned to another business.
+
+## Hosted Workspaces
+
+Use these additional GUI/API variables when offering the app as a shared service:
+
+```text
+HOSTED_MODE=1
+HOSTED_SIGNUP_MODE=invite
+HOSTED_SIGNUP_SECRET=<code supplied to invited business owners>
+```
+
+`HOSTED_SIGNUP_MODE` accepts `open`, `invite`, or `closed`. Invite mode is recommended for beta distribution. The invitation code protects workspace creation only; every business owner and employee still has a personal character-name login and password.
+
+The first-launch ledger also accepts optional Discord server, storefront event, inventory, and alert channel IDs. This registers routing immediately; during the private beta, the service operator still adds the shared bot to the Discord server.
 
 ## Legacy Import
 

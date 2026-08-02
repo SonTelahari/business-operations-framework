@@ -28,6 +28,16 @@ BRIDGE_API_TOKEN=<different stable random secret>
 NODE_ENV=production
 ```
 
+For a shared hosted deployment, add:
+
+```text
+HOSTED_MODE=1
+HOSTED_SIGNUP_MODE=invite
+HOSTED_SIGNUP_SECRET=<business invitation code>
+```
+
+Every business receives a random internal UUID and a public workspace code. Duplicate business names and duplicate in-game IDs are supported because neither is used as a database key. Use `HOSTED_SIGNUP_MODE=closed` to pause new workspaces or `open` only when unrestricted registration is intentional.
+
 Do not set `ADMIN_FULL_NAME` or `ADMIN_PASSWORD` for a normal new business. Open the public domain and let first launch create the initial administrator.
 
 `AUTH_SESSION_SECRET` signs employee sessions. Changing it logs everyone out. `BRIDGE_API_TOKEN` authenticates the bridge and should not be shared with employees or placed in browser code.
@@ -43,13 +53,15 @@ Required variables:
 
 ```text
 DISCORD_TOKEN=<bot token>
-DISCORD_CHANNEL_ID=<channel receiving storefront webhook events>
+SHARED_BUSINESS_MODE=1
 BUSINESS_API_URL=https://<gui-public-domain>
 BRIDGE_API_TOKEN=<same value as the GUI service>
 CAPTURE_ONLY=1
 DEBUG_DISCORD=0
 NODE_ENV=production
 ```
+
+In shared mode, leave `DISCORD_CHANNEL_ID` blank. Each workspace admin registers that business's storefront event channel in the app. A channel can belong to only one active workspace.
 
 Optional publishing variables:
 

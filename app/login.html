@@ -16,6 +16,14 @@
       </section>
 
       <section class="auth-panel">
+        <div class="auth-workspace">
+          <label>
+            Business workspace code
+            <input id="workspaceCodeInput" name="workspaceCode" type="text" maxlength="11" autocomplete="organization" placeholder="ABCDE-FGHIJ" required>
+            <span class="field-hint">Your business owner or manager can provide this code.</span>
+          </label>
+          <a class="text-link" href="/setup.html">Create a new business</a>
+        </div>
         <div class="auth-tabs" role="tablist" aria-label="Account access">
           <button class="auth-tab active" id="showLoginButton" type="button" role="tab" aria-selected="true">Sign In</button>
           <button class="auth-tab" id="showRegisterButton" type="button" role="tab" aria-selected="false">Request Access</button>

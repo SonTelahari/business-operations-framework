@@ -8,10 +8,11 @@ const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 const AUDIT_LIMIT = 5000;
 
 class AccountStore {
-  constructor({ filePath = "", sessionSecret, repository = null }) {
+  constructor({ filePath = "", sessionSecret, repository = null, businessId = "primary" }) {
     this.filePath = filePath;
     this.sessionSecret = sessionSecret;
     this.repository = repository;
+    this.businessId = String(businessId || "primary");
     this.data = { version: 2, users: [], audit: [] };
     this.writeQueue = Promise.resolve();
   }
@@ -257,6 +258,7 @@ class AccountStore {
     const stored = this.data.users.find(candidate => candidate.id === user.id);
     if (!stored || stored.status !== "active") throw accountError("Account is not active", 401, "inactive");
     const payload = Buffer.from(JSON.stringify({
+      businessId: this.businessId,
       userId: stored.id,
       version: stored.sessionVersion,
       expiresAt: Date.now() + SESSION_MAX_AGE_SECONDS * 1000
@@ -272,6 +274,7 @@ class AccountStore {
     try {
       const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
       if (decoded.expiresAt <= Date.now()) return null;
+      if (String(decoded.businessId || "primary") !== this.businessId) return null;
       const user = this.data.users.find(candidate => candidate.id === decoded.userId);
       if (!user || user.status !== "active" || user.sessionVersion !== decoded.version) return null;
       return publicUser(user);
@@ -442,6 +445,23 @@ function safeEqual(actual, expected) {
   return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
+function readSessionIdentity(token, secret) {
+  if (!token || !token.includes(".") || !secret) return null;
+  const [payload, signature] = String(token).split(".", 2);
+  if (!safeEqual(signature, sign(payload, secret))) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (decoded.expiresAt <= Date.now() || !decoded.userId) return null;
+    return {
+      businessId: String(decoded.businessId || "primary"),
+      userId: String(decoded.userId),
+      expiresAt: Number(decoded.expiresAt)
+    };
+  } catch {
+    return null;
+  }
+}
+
 function accountError(message, status, code) {
   const error = new Error(message);
   error.status = status;
@@ -453,5 +473,6 @@ module.exports = {
   AccountStore,
   SESSION_MAX_AGE_SECONDS,
   accountError,
-  publicUser
+  publicUser,
+  readSessionIdentity
 };

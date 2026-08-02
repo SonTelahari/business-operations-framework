@@ -104,6 +104,7 @@ let reviewExceptions = [];
 let productionBatches = [];
 let dailyCloses = [];
 let currentUser = null;
+let currentWorkspace = null;
 let currentRole = "employee";
 let employeeUsers = [];
 let auditEvents = [];
@@ -135,6 +136,7 @@ const productInsightCache = new Map();
 const elements = {
   currentUserName: document.querySelector("#currentUserName"),
   currentUserRole: document.querySelector("#currentUserRole"),
+  currentWorkspaceCode: document.querySelector("#currentWorkspaceCode"),
   logout: document.querySelector("#logoutButton"),
   customer: document.querySelector("#customerInput"),
   handler: document.querySelector("#handlerInput"),
@@ -3030,6 +3032,11 @@ function renderRole() {
   document.body.classList.toggle("accounts-disabled", !currentUser?.accountManagement);
   elements.currentUserName.textContent = currentUser?.fullName || "Loading account";
   elements.currentUserRole.textContent = ({ admin: "Admin", manager: "Manager", employee: "Employee" })[currentRole] || "Employee";
+  if (elements.currentWorkspaceCode) {
+    elements.currentWorkspaceCode.textContent = currentWorkspace?.code ? `Workspace ${currentWorkspace.code}` : "";
+    elements.currentWorkspaceCode.classList.toggle("hidden", !currentWorkspace?.code);
+    elements.currentWorkspaceCode.title = currentWorkspace?.id ? `Internal workspace ID: ${currentWorkspace.id}` : "";
+  }
   document.querySelectorAll("[data-admin-only-option]").forEach(option => {
     option.hidden = !isAdmin();
     option.disabled = !isAdmin();
@@ -4223,6 +4230,7 @@ async function loadSessionAndData() {
     const result = await response.json();
     if (!response.ok || !result.user) throw new Error("Authentication required");
     currentUser = result.user;
+    currentWorkspace = result.workspace || null;
     currentRole = currentUser.role;
     timeClock = loadTimeClock(timeClockStorageKey());
     migrateLegacyTimeClock();

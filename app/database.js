@@ -85,6 +85,35 @@ class PostgresDocumentRepository {
   }
 }
 
+class TenantDocumentRepository {
+  constructor(database, businessId, documentKey) {
+    this.database = database;
+    this.businessId = String(businessId || "").trim();
+    this.documentKey = String(documentKey || "").trim();
+    if (!this.businessId || !this.documentKey) {
+      throw new Error("Tenant documents require a business ID and document key");
+    }
+  }
+
+  async load() {
+    const result = await this.database.query(`
+      SELECT data
+      FROM tenant_documents
+      WHERE business_id = $1 AND document_key = $2
+    `, [this.businessId, this.documentKey]);
+    return result.rows[0]?.data || null;
+  }
+
+  async save(data) {
+    await this.database.query(`
+      INSERT INTO tenant_documents (business_id, document_key, data, updated_at)
+      VALUES ($1, $2, $3::jsonb, now())
+      ON CONFLICT (business_id, document_key) DO UPDATE
+      SET data = EXCLUDED.data, updated_at = now()
+    `, [this.businessId, this.documentKey, JSON.stringify(data)]);
+  }
+}
+
 function poolOptions(connectionString) {
   const sslSetting = String(process.env.DATABASE_SSL || "").toLowerCase();
   const ssl = sslSetting === "require" || sslSetting === "true"
@@ -99,4 +128,4 @@ function poolOptions(connectionString) {
   };
 }
 
-module.exports = { Database, PostgresDocumentRepository, poolOptions };
+module.exports = { Database, PostgresDocumentRepository, TenantDocumentRepository, poolOptions };

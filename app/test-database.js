@@ -21,7 +21,7 @@ async function run() {
     const migrations = await database.query(
       "SELECT id FROM schema_migrations ORDER BY id"
     );
-    assert.deepEqual(migrations.rows.map(row => row.id), ["001_initial.sql"]);
+    assert.deepEqual(migrations.rows.map(row => row.id), ["001_initial.sql", "002_multitenancy.sql"]);
 
     const tables = await database.query(`
       SELECT table_name
@@ -31,6 +31,9 @@ async function run() {
     const tableNames = new Set(tables.rows.map(row => row.table_name));
     for (const expected of [
       "app_documents",
+      "businesses",
+      "tenant_documents",
+      "business_integrations",
       "catalog_items",
       "inventory_events",
       "ledger_events",

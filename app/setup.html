@@ -44,6 +44,10 @@
               <input id="businessLocationInput" maxlength="100" autocomplete="address-level2">
             </label>
             <label>
+              In-game business ID <span class="field-hint">optional</span>
+              <input id="businessReferenceIdInput" maxlength="100" placeholder="May be shared by other businesses">
+            </label>
+            <label>
               Logo URL
               <input id="logoUrlInput" type="url" maxlength="500" placeholder="https://...">
             </label>
@@ -55,7 +59,7 @@
               Locale
               <input id="localeInput" required maxlength="30" value="en-US">
             </label>
-            <label class="full-row">
+            <label>
               Timezone
               <input id="timezoneInput" required maxlength="80" value="UTC">
             </label>
@@ -73,6 +77,11 @@
             <p id="ownerSetupNote">This account receives administrator access.</p>
           </div>
           <div class="setup-fields">
+            <label class="hidden" id="workspaceInviteField">
+              Business invitation code
+              <input id="workspaceInviteInput" type="password" maxlength="128" autocomplete="one-time-code">
+              <span class="field-hint">Use the invitation code supplied by the service owner.</span>
+            </label>
             <label>
               Owner display name
               <input id="ownerNameInput" required minlength="3" maxlength="80" autocomplete="username">
@@ -106,7 +115,29 @@
               <label><input type="checkbox" name="module" value="storefrontBuyOrders" checked> Buy orders</label>
               <label><input type="checkbox" name="module" value="payroll" checked> Time and payroll</label>
               <label><input type="checkbox" name="module" value="finance" checked> Finance</label>
-              <label><input type="checkbox" name="module" value="discord"> Discord publishing</label>
+              <label><input id="discordModuleInput" type="checkbox" name="module" value="discord"> Discord publishing</label>
+            </div>
+          </fieldset>
+          <fieldset class="module-fieldset hidden" id="discordSetupFields">
+            <legend>Discord storefront connection</legend>
+            <p class="field-hint">Optional. Paste channel IDs from Discord developer mode. The service owner must also add the shared reader bot to your server.</p>
+            <div class="setup-fields">
+              <label>
+                Server ID
+                <input id="discordGuildIdInput" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22">
+              </label>
+              <label>
+                Storefront event channel ID
+                <input id="discordEventChannelIdInput" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22">
+              </label>
+              <label>
+                Inventory overview channel ID
+                <input id="discordInventoryChannelIdInput" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22">
+              </label>
+              <label>
+                Stock alert channel ID
+                <input id="discordAlertChannelIdInput" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22">
+              </label>
             </div>
           </fieldset>
         </section>
