@@ -34,6 +34,9 @@ For a shared hosted deployment, add:
 HOSTED_MODE=1
 HOSTED_SIGNUP_MODE=invite
 HOSTED_SIGNUP_SECRET=<business invitation code>
+DISCORD_CLIENT_ID=<OAuth application client ID>
+DISCORD_CLIENT_SECRET=<OAuth application client secret>
+DISCORD_REDIRECT_URI=https://<gui-public-domain>/auth/discord/callback
 ```
 
 Every business receives a random internal UUID and a public workspace code. Duplicate business names and duplicate in-game IDs are supported because neither is used as a database key. Use `HOSTED_SIGNUP_MODE=closed` to pause new workspaces or `open` only when unrestricted registration is intentional.
@@ -41,6 +44,20 @@ Every business receives a random internal UUID and a public workspace code. Dupl
 Do not set `ADMIN_FULL_NAME` or `ADMIN_PASSWORD` for a normal new business. Open the public domain and let first launch create the initial administrator.
 
 `AUTH_SESSION_SECRET` signs employee sessions. Changing it logs everyone out. `BRIDGE_API_TOKEN` authenticates the bridge and should not be shared with employees or placed in browser code.
+
+## Discord Login
+
+Discord login is separate from the storefront bridge bot. Configure it once for the shared GUI service:
+
+1. Create or select an application in the Discord Developer Portal.
+2. In OAuth2, add `https://<gui-public-domain>/auth/discord/callback` as a redirect URL. It must exactly match `DISCORD_REDIRECT_URI`.
+3. Copy the application's client ID and client secret into the GUI service variables above, then redeploy.
+4. Confirm `/health` reports `discordLoginConfigured: true` and the sign-in page shows **Continue with Discord**.
+5. A user signs in, creates an explicitly labelled in-game character, and requests a business using its workspace code. A manager approves the request from Staff.
+
+The login requests only Discord's `identify` scope. OAuth access tokens are used only for the immediate profile lookup and are not stored. The client secret remains on the GUI service and must never be added to the bridge, browser code, or repository.
+
+Existing password users can choose **Link Password Account** on their Discord profile. They enter the workspace code and existing credentials once; the Discord membership inherits the existing role while the password account remains available for recovery.
 
 ## Discord Bridge Worker
 

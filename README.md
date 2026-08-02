@@ -11,9 +11,9 @@ The first browser visit opens a five-page setup ledger where a new owner enters:
 - Materials, products, prices, stock targets, and game item tags
 - Recipes, craft yields, and ingredient requirements
 
-No real-life identity or email address is requested. Passwords use salted `scrypt` hashes and sessions use signed, HTTP-only cookies.
+No real-life identity or email address is requested. Character names are explicitly labelled as in-game names. Passwords use salted `scrypt` hashes and sessions use signed, HTTP-only cookies.
 
-The same deployment can also host multiple isolated businesses. Set `HOSTED_MODE=1`; each first-launch registration receives an internal UUID and a short workspace code. Business names and in-game reference IDs do not need to be unique. Employees use the workspace code at login, while all inventory, finance, accounts, recipes, and integrations are scoped to the internal UUID.
+The same deployment can also host multiple isolated businesses. Set `HOSTED_MODE=1`; each first-launch registration receives an internal UUID and a short workspace code. Business names and in-game reference IDs do not need to be unique. Employees can use a workspace password account or one global Discord identity with separate character profiles and business memberships. All inventory, finance, accounts, recipes, and integrations are scoped to the internal UUID.
 
 ## Architecture
 
@@ -48,7 +48,7 @@ Set `AUTH_SESSION_SECRET` and `BRIDGE_API_TOKEN` before starting Compose. Add `-
 - **Managers** can count and adjust stock, maintain targets and suppliers, reconcile webhook exceptions, manage production, approve staff, and inspect the audit ledger.
 - **Admins** additionally control finance, payroll, owner funds, manager promotion, and protected corrections.
 
-New registrations use the employee's character name and chosen password. A manager or admin approves the request from Staff.
+New registrations use either the employee's character name and chosen password or Discord login. Discord users create one or more explicitly labelled character profiles, request access using a workspace code, and select an approved business from their profile. A manager or admin approves either kind of request from Staff. Existing password accounts can be linked once from the Discord profile and remain available as a recovery path.
 
 ## Catalog Model
 
@@ -80,9 +80,12 @@ Use these additional GUI/API variables when offering the app as a shared service
 HOSTED_MODE=1
 HOSTED_SIGNUP_MODE=invite
 HOSTED_SIGNUP_SECRET=<code supplied to invited business owners>
+DISCORD_CLIENT_ID=<Discord OAuth application client ID>
+DISCORD_CLIENT_SECRET=<Discord OAuth application client secret>
+DISCORD_REDIRECT_URI=https://<gui-public-domain>/auth/discord/callback
 ```
 
-`HOSTED_SIGNUP_MODE` accepts `open`, `invite`, or `closed`. Invite mode is recommended for beta distribution. The invitation code protects workspace creation only; every business owner and employee still has a personal character-name login and password.
+`HOSTED_SIGNUP_MODE` accepts `open`, `invite`, or `closed`. Invite mode is recommended for beta distribution. The invitation code protects workspace creation only. Discord login requests only the `identify` scope; it stores the stable Discord user ID and current public profile fields, then discards the OAuth access token.
 
 The first-launch ledger also accepts optional Discord server, storefront event, inventory, and alert channel IDs. This registers routing immediately; during the private beta, the service operator still adds the shared bot to the Discord server.
 

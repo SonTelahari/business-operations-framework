@@ -21,7 +21,11 @@ async function run() {
     const migrations = await database.query(
       "SELECT id FROM schema_migrations ORDER BY id"
     );
-    assert.deepEqual(migrations.rows.map(row => row.id), ["001_initial.sql", "002_multitenancy.sql"]);
+    assert.deepEqual(migrations.rows.map(row => row.id), [
+      "001_initial.sql",
+      "002_multitenancy.sql",
+      "003_discord_identity.sql"
+    ]);
 
     const tables = await database.query(`
       SELECT table_name
@@ -34,6 +38,10 @@ async function run() {
       "businesses",
       "tenant_documents",
       "business_integrations",
+      "discord_identities",
+      "identity_characters",
+      "business_memberships",
+      "oauth_states",
       "catalog_items",
       "inventory_events",
       "ledger_events",

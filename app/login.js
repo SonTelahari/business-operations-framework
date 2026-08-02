@@ -4,6 +4,8 @@ const loginTab = document.querySelector("#showLoginButton");
 const registerTab = document.querySelector("#showRegisterButton");
 const message = document.querySelector("#authMessage");
 const workspaceInput = document.querySelector("#workspaceCodeInput");
+const discordLoginButton = document.querySelector("#discordLoginButton");
+const passwordLoginDivider = document.querySelector("#passwordLoginDivider");
 const WORKSPACE_KEY = "business_ledger_workspace_code";
 let configTimer = null;
 
@@ -19,7 +21,20 @@ workspaceInput.addEventListener("input", () => {
 
 workspaceInput.value = formatWorkspaceCode(new URLSearchParams(window.location.search).get("workspace") || localStorage.getItem(WORKSPACE_KEY) || "");
 loadPublicConfig();
+loadDiscordLogin();
 checkSession();
+
+const discordError = new URLSearchParams(window.location.search).get("discord_error");
+if (discordError) setMessage(discordError, "error");
+
+async function loadDiscordLogin() {
+  try {
+    const response = await fetch("/api/discord-auth/status", { headers: { accept: "application/json" } });
+    const result = await response.json();
+    discordLoginButton.classList.toggle("hidden", !result.enabled);
+    passwordLoginDivider.classList.toggle("hidden", !result.enabled);
+  } catch {}
+}
 
 async function loadPublicConfig() {
   try {
@@ -76,6 +91,7 @@ async function checkSession() {
     const response = await fetch("/api/auth/session", { headers: { accept: "application/json" } });
     const result = await response.json();
     if (result.user) window.location.replace("/");
+    else if (result.profileRequired || result.identity) window.location.replace("/profile.html");
   } catch {}
 }
 

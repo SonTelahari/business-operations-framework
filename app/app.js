@@ -53,7 +53,15 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "account.disabled": "Account disabled",
   "account.rejected": "Access request rejected",
   "account.role_changed": "Staff role changed",
+  "account.discord_linked": "Discord account linked",
+  "membership.requested": "Discord access requested",
+  "membership.approve": "Discord membership approved",
+  "membership.disable": "Discord membership disabled",
+  "membership.reject": "Discord membership rejected",
+  "membership.promote": "Discord membership promoted",
+  "membership.demote": "Discord membership demoted",
   "auth.login": "Signed in",
+  "auth.discord_login": "Signed in with Discord",
   "auth.logout": "Signed out",
   "clock.in": "Clocked in",
   "clock.out": "Clocked out",
@@ -137,6 +145,7 @@ const elements = {
   currentUserName: document.querySelector("#currentUserName"),
   currentUserRole: document.querySelector("#currentUserRole"),
   currentWorkspaceCode: document.querySelector("#currentWorkspaceCode"),
+  profileButton: document.querySelector("#profileButton"),
   logout: document.querySelector("#logoutButton"),
   customer: document.querySelector("#customerInput"),
   handler: document.querySelector("#handlerInput"),
@@ -3032,6 +3041,7 @@ function renderRole() {
   document.body.classList.toggle("accounts-disabled", !currentUser?.accountManagement);
   elements.currentUserName.textContent = currentUser?.fullName || "Loading account";
   elements.currentUserRole.textContent = ({ admin: "Admin", manager: "Manager", employee: "Employee" })[currentRole] || "Employee";
+  elements.profileButton?.classList.toggle("hidden", currentUser?.accountType !== "discord");
   if (elements.currentWorkspaceCode) {
     elements.currentWorkspaceCode.textContent = currentWorkspace?.code ? `Workspace ${currentWorkspace.code}` : "";
     elements.currentWorkspaceCode.classList.toggle("hidden", !currentWorkspace?.code);
@@ -4366,7 +4376,8 @@ function employeeCard(user, pending) {
     <div class="employee-row">
       <div class="employee-identity">
         <strong>${escapeHtml(user.fullName)}</strong>
-        <span>${escapeHtml(({ admin: "Admin", manager: "Manager", employee: "Employee" })[user.role] || user.role)} / ${escapeHtml(user.status)}</span>
+        <span>${escapeHtml(({ admin: "Admin", manager: "Manager", employee: "Employee" })[user.role] || user.role)} / ${escapeHtml(user.status)}${user.accountType === "discord" ? " / Discord" : ""}</span>
+        ${user.discordUsername ? `<small>@${escapeHtml(user.discordUsername)}${user.settingName ? ` / ${escapeHtml(user.settingName)}` : ""}</small>` : ""}
         <small>${pending ? `Requested ${formatDateTime(user.createdAt)}` : user.lastLoginAt ? `Last signed in ${formatDateTime(user.lastLoginAt)}` : "Has not signed in yet"}</small>
       </div>
       <div class="employee-actions">${actions}</div>

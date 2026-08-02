@@ -12,3 +12,4 @@
 10. A database backup has been taken after verification.
 11. Hosted deployments use an intentional signup mode; beta deployments should use `invite`.
 12. Two test workspaces with duplicate display names have passed session, stock, staff, and Discord isolation checks.
+13. If Discord login is enabled, its redirect URL exactly matches the public domain, `/health` reports it configured, and a test character can request, receive, and switch business access.

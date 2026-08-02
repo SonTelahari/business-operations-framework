@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const { once } = require("node:events");
+const http = require("node:http");
 const { newDb } = require("pg-mem");
 const { defaultSetupConfiguration } = require("./setup-config");
 
@@ -16,14 +17,22 @@ process.env.HOSTED_SIGNUP_SECRET = "hosted-test-invitation-code";
 process.env.AUTH_SESSION_SECRET = "hosted-server-test-session-secret-with-32-characters";
 process.env.BRIDGE_API_TOKEN = "hosted-server-test-bridge-secret";
 process.env.PORT = "4296";
+process.env.DISCORD_CLIENT_ID = "hosted-test-discord-client";
+process.env.DISCORD_CLIENT_SECRET = "hosted-test-discord-secret";
+process.env.DISCORD_REDIRECT_URI = "http://127.0.0.1:4296/auth/discord/callback";
+process.env.DISCORD_API_BASE_URL = "http://127.0.0.1:4297/api/v10";
+process.env.DISCORD_AUTHORIZE_URL = "http://127.0.0.1:4297/oauth2/authorize";
 delete process.env.ADMIN_FULL_NAME;
 delete process.env.ADMIN_PASSWORD;
 
 const { server, startServer, database } = require("./server");
 const baseUrl = `http://127.0.0.1:${process.env.PORT}`;
+const discordServer = createFakeDiscordServer();
 
 async function run() {
   try {
+    discordServer.listen(4297, "127.0.0.1");
+    await once(discordServer, "listening");
     const listening = once(server, "listening");
     await startServer();
     if (!server.listening) await listening;
@@ -66,6 +75,56 @@ async function run() {
     assert.equal(firstSession.body.workspace.id, first.body.workspace.id);
     assert.equal(secondSession.body.workspace.id, second.body.workspace.id);
 
+    const discordAuthStatus = await request("/api/discord-auth/status");
+    assert.equal(discordAuthStatus.body.enabled, true);
+    const oauthStart = await request("/auth/discord", { redirect: "manual" });
+    assert.equal(oauthStart.status, 302);
+    const authorization = new URL(oauthStart.location);
+    assert.equal(authorization.origin, "http://127.0.0.1:4297");
+    assert.equal(authorization.searchParams.get("scope"), "identify");
+    const oauthCallback = await request(
+      `/auth/discord/callback?state=${encodeURIComponent(authorization.searchParams.get("state"))}&code=test-code`,
+      { redirect: "manual" }
+    );
+    assert.equal(oauthCallback.status, 302);
+    assert.equal(oauthCallback.location, "/profile.html");
+    const identityCookie = oauthCallback.cookie;
+    assert.match(identityCookie, /^discord_identity_session=/);
+    const emptyProfile = await request("/api/profile", { cookie: identityCookie });
+    assert.equal(emptyProfile.body.identity.discordUserId, "123456789012345678");
+    assert.equal(emptyProfile.body.characters.length, 0);
+
+    const characterResponse = await request("/api/profile/characters", {
+      method: "POST",
+      cookie: identityCookie,
+      body: { name: "Arthur Morgan", settingName: "Still Water" }
+    });
+    assert.equal(characterResponse.status, 201, JSON.stringify(characterResponse.body));
+    const characterId = characterResponse.body.character.id;
+    const membershipRequest = await request("/api/profile/memberships", {
+      method: "POST",
+      cookie: identityCookie,
+      body: { characterId, workspaceCode: first.body.workspace.code }
+    });
+    assert.equal(membershipRequest.status, 201, JSON.stringify(membershipRequest.body));
+    assert.equal(membershipRequest.body.membership.status, "pending");
+
+    const pendingStaff = await request("/api/admin/users", { cookie: first.cookie });
+    const discordEmployee = pendingStaff.body.users.find(entry => entry.accountType === "discord");
+    assert.equal(discordEmployee.fullName, "Arthur Morgan");
+    await request(`/api/admin/users/${discordEmployee.id}/approve`, { method: "POST", cookie: first.cookie });
+    const membershipSelect = await request("/api/profile/select", {
+      method: "POST",
+      cookie: identityCookie,
+      body: { membershipId: discordEmployee.id, businessId: first.body.workspace.id }
+    });
+    assert.equal(membershipSelect.status, 200, JSON.stringify(membershipSelect.body));
+    assert.match(membershipSelect.cookie, /^discord_membership_session=/);
+    const discordBusinessSession = await request("/api/auth/session", { cookie: membershipSelect.cookie });
+    assert.equal(discordBusinessSession.body.user.fullName, "Arthur Morgan");
+    assert.equal(discordBusinessSession.body.user.accountType, "discord");
+    assert.equal(discordBusinessSession.body.workspace.id, first.body.workspace.id);
+
     const firstRegistration = await request("/api/auth/register", {
       method: "POST",
       body: { workspaceCode: first.body.workspace.code, fullName: "Arthur Morgan", password: "employee-password-1" }
@@ -96,6 +155,7 @@ async function run() {
     console.log("Hosted workspace HTTP and Discord routing tests passed.");
   } finally {
     if (server.listening) await new Promise(resolve => server.close(resolve));
+    if (discordServer.listening) await new Promise(resolve => discordServer.close(resolve));
     await database.close();
     require.cache[pgPath].exports = originalPg;
   }
@@ -170,9 +230,10 @@ function bridgeRequest(path, options = {}) {
   });
 }
 
-async function request(path, { method = "GET", body = null, cookie = "", headers = {} } = {}) {
+async function request(path, { method = "GET", body = null, cookie = "", headers = {}, redirect = "follow" } = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
+    redirect,
     headers: {
       accept: "application/json",
       ...(body ? { "content-type": "application/json" } : {}),
@@ -185,8 +246,41 @@ async function request(path, { method = "GET", body = null, cookie = "", headers
   return {
     status: response.status,
     body: text ? JSON.parse(text) : {},
-    cookie: String(response.headers.get("set-cookie") || "").split(";", 1)[0]
+    cookie: String(response.headers.get("set-cookie") || "").split(";", 1)[0],
+    location: String(response.headers.get("location") || "")
   };
+}
+
+function createFakeDiscordServer() {
+  return http.createServer(async (request, response) => {
+    if (request.url === "/api/v10/oauth2/token" && request.method === "POST") {
+      await readRequestBody(request);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ access_token: "hosted-test-access-token", token_type: "Bearer" }));
+      return;
+    }
+    if (request.url === "/api/v10/users/@me" && request.method === "GET") {
+      assert.equal(request.headers.authorization, "Bearer hosted-test-access-token");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        id: "123456789012345678",
+        username: "hosted_tester",
+        global_name: "Hosted Tester",
+        avatar: "test-avatar"
+      }));
+      return;
+    }
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ message: "not found" }));
+  });
+}
+
+function readRequestBody(request) {
+  return new Promise(resolve => {
+    let body = "";
+    request.on("data", chunk => { body += chunk; });
+    request.on("end", () => resolve(body));
+  });
 }
 
 run().catch(error => {

@@ -1578,6 +1578,225 @@ tr:last-child td {
   font-size: 0.88rem;
 }
 
+.discord-login-button {
+  display: grid;
+  place-items: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  color: #fff;
+  font-weight: 800;
+  text-decoration: none;
+  background: #5865f2;
+  border: 1px solid #4049bd;
+  border-radius: 3px;
+}
+
+.discord-login-button:hover,
+.discord-login-button:focus-visible {
+  background: #4752c4;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0;
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  flex: 1;
+  height: 1px;
+  content: "";
+  background: var(--line);
+}
+
+.profile-page {
+  display: block;
+  min-height: 100vh;
+}
+
+.profile-ledger {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  overflow: hidden;
+  color: var(--text);
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(90deg, transparent 0 35px, rgba(138, 62, 66, 0.2) 35px 36px, transparent 36px),
+    repeating-linear-gradient(to bottom, transparent 0, transparent 31px, rgba(77, 113, 128, 0.12) 32px, transparent 33px);
+  border: 10px solid var(--cover);
+  border-radius: 7px;
+  box-shadow: var(--shadow), inset 0 0 0 2px #d1ad65;
+}
+
+.profile-header,
+.profile-section-heading,
+.profile-identity,
+.profile-header-actions,
+.profile-row,
+.profile-row-actions {
+  display: flex;
+  align-items: center;
+}
+
+.profile-header {
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 28px;
+  color: #fff2d4;
+  background: var(--cover);
+  border-bottom: 1px dashed rgba(218, 181, 106, 0.62);
+}
+
+.profile-identity,
+.profile-header-actions,
+.profile-row-actions {
+  gap: 12px;
+}
+
+.profile-identity img,
+.profile-avatar-fallback {
+  width: 58px;
+  aspect-ratio: 1;
+  border: 2px solid #d1ad65;
+  border-radius: 50%;
+}
+
+.profile-identity img {
+  object-fit: cover;
+}
+
+.profile-avatar-fallback {
+  display: grid;
+  place-items: center;
+  color: var(--cover);
+  font-weight: 900;
+  background: #e8d6ad;
+}
+
+.profile-header h1,
+.profile-header p {
+  color: inherit;
+}
+
+.profile-header h1 {
+  font-size: 1.45rem;
+}
+
+.profile-message {
+  min-height: 28px;
+  padding: 10px 28px 0;
+  color: var(--muted);
+}
+
+.profile-message.error {
+  color: #7c3037;
+}
+
+.profile-message.success {
+  color: #315b4d;
+}
+
+.profile-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid rgba(86, 65, 43, 0.55);
+}
+
+.profile-section {
+  min-width: 0;
+  padding: 24px 28px 30px;
+}
+
+.profile-section + .profile-section {
+  border-left: 1px solid rgba(86, 65, 43, 0.42);
+}
+
+.profile-section-heading {
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.profile-form,
+.profile-list {
+  display: grid;
+  gap: 12px;
+}
+
+.profile-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  margin-bottom: 20px;
+}
+
+.profile-form button,
+.profile-form .profile-wide {
+  grid-column: 1 / -1;
+}
+
+.profile-row {
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 72px;
+  padding: 12px 14px;
+  background: rgba(255, 252, 239, 0.46);
+  border: 1px solid rgba(86, 65, 43, 0.4);
+  border-radius: 3px;
+}
+
+.profile-row strong,
+.profile-row span,
+.profile-row small {
+  display: block;
+}
+
+.profile-row span,
+.profile-row small,
+.profile-empty {
+  color: var(--muted);
+}
+
+.profile-row small {
+  margin-top: 4px;
+  font-family: "Courier New", Courier, monospace;
+}
+
+.membership-row[data-status="pending"] {
+  border-left: 4px solid #b98a3f;
+}
+
+.membership-row[data-status="active"] {
+  border-left: 4px solid #4f7768;
+}
+
+@media (max-width: 760px) {
+  .profile-header,
+  .profile-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .profile-header-actions,
+  .profile-row-actions {
+    flex-wrap: wrap;
+  }
+
+  .profile-columns,
+  .profile-form {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-section + .profile-section {
+    border-top: 1px solid rgba(86, 65, 43, 0.42);
+    border-left: 0;
+  }
+}
+
 .auth-message.error {
   color: #ffd2cc;
 }

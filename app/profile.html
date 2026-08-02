@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Character Profile - Business Ledger</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="auth-page profile-page">
+    <main class="profile-ledger">
+      <header class="profile-header">
+        <div class="profile-identity">
+          <img class="hidden" id="profileAvatar" alt="">
+          <div class="profile-avatar-fallback" id="profileAvatarFallback" aria-hidden="true">D</div>
+          <div>
+            <p class="eyebrow">Discord Account</p>
+            <h1 id="profileIdentityName">Loading profile</h1>
+            <p id="profileUsername"></p>
+          </div>
+        </div>
+        <div class="profile-header-actions">
+          <a class="secondary-button" href="/setup.html">New Business</a>
+          <button class="ghost-button" id="profileLogoutButton" type="button">Sign Out</button>
+        </div>
+      </header>
+
+      <div class="profile-message" id="profileMessage" role="status" aria-live="polite"></div>
+
+      <div class="profile-columns">
+        <section class="profile-section">
+          <div class="profile-section-heading">
+            <div>
+              <p class="eyebrow">Character Register</p>
+              <h2>Your Characters</h2>
+            </div>
+          </div>
+          <form class="profile-form" id="characterForm">
+            <label>
+              Character name
+              <input id="characterNameInput" required minlength="3" maxlength="80" autocomplete="off" placeholder="First and last name">
+            </label>
+            <label>
+              Server or setting
+              <input id="characterSettingInput" maxlength="100" autocomplete="off" placeholder="Optional">
+            </label>
+            <button class="primary-button" type="submit">Add Character</button>
+          </form>
+          <div class="profile-list" id="characterList"></div>
+        </section>
+
+        <section class="profile-section">
+          <div class="profile-section-heading">
+            <div>
+              <p class="eyebrow">Employment Register</p>
+              <h2>Business Access</h2>
+            </div>
+          </div>
+          <div class="profile-list" id="membershipList"></div>
+        </section>
+      </div>
+
+      <div class="profile-columns profile-actions-grid">
+        <section class="profile-section">
+          <div class="profile-section-heading">
+            <div>
+              <p class="eyebrow">New Employment</p>
+              <h2>Request Business Access</h2>
+            </div>
+          </div>
+          <form class="profile-form" id="membershipForm">
+            <label>
+              Character
+              <select id="membershipCharacterInput" required></select>
+            </label>
+            <label>
+              Workspace code
+              <input id="membershipWorkspaceInput" required maxlength="11" autocomplete="organization" placeholder="ABCDE-FGHIJ">
+            </label>
+            <button class="primary-button" type="submit">Send Request</button>
+          </form>
+        </section>
+
+        <section class="profile-section">
+          <div class="profile-section-heading">
+            <div>
+              <p class="eyebrow">Existing Account</p>
+              <h2>Link Password Account</h2>
+            </div>
+          </div>
+          <form class="profile-form" id="linkAccountForm">
+            <label>
+              Character
+              <select id="linkCharacterInput" required></select>
+            </label>
+            <label>
+              Workspace code
+              <input id="linkWorkspaceInput" required maxlength="11" autocomplete="organization" placeholder="ABCDE-FGHIJ">
+            </label>
+            <label>
+              Existing character name
+              <input id="linkNameInput" required autocomplete="username">
+            </label>
+            <label>
+              Existing password
+              <input id="linkPasswordInput" type="password" required autocomplete="current-password">
+            </label>
+            <button class="secondary-button" type="submit">Link Account</button>
+          </form>
+        </section>
+      </div>
+    </main>
+    <script src="profile.js"></script>
+  </body>
+</html>
