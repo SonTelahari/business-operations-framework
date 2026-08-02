@@ -53,6 +53,8 @@ npm run import:business -- --commit
 
 The command prints the new workspace UUID and code. It creates a fresh owner login; old password hashes are intentionally not copied. Legacy staff names and actions remain in the audit ledger as references, and employees can request access again with Discord or a fresh password account.
 
+On Windows, `scripts/import-business-archive-railway.ps1` performs the same validation and committed import against a linked Railway project. It reads the database public proxy and GUI session secret through the Railway CLI, prompts for the new owner password with `Get-Credential`, and clears all imported credentials from the process when it finishes. Pass `-RailwayPath` and `-NodePath` when those executables are not on `PATH`. Railway PostgreSQL must have a temporary TCP proxy for port `5432` while the local import runs; remove that proxy immediately after verifying the hosted workspace.
+
 ## 6. Verify before reconnecting Discord
 
 Open the new workspace and compare these controls with the final archive summary and the old app:
