@@ -93,6 +93,8 @@ The first-launch ledger also accepts optional Discord server, storefront event, 
 
 The preferred migration path is a portable, versioned business archive. `npm run export:business` signs into the current hosted app with an admin account and exports the catalog, recipes, current inventory and ledger, orders, suppliers, production, finance summary, and sanitized staff audit history. Password hashes, sessions, API tokens, and database credentials are never included.
 
+On Windows, `scripts/export-business-preview.ps1` provides an interactive credential prompt so the legacy password never needs to be placed in the shell history or an environment file.
+
 `npm run import:business` validates the archive and prints a dry-run summary. Re-run it with `-- --commit` to create a fresh workspace with a new UUID and owner password. A failed import removes the incomplete workspace, and the archive fingerprint prevents accidental duplicate imports.
 
 Raw historic timesheet rows were never exposed by the legacy app. Payroll finance totals migrate when available, while staff reconnect with fresh credentials or Discord profiles. The lower-level `import:legacy` command remains available for Apps Script-only recovery imports.
