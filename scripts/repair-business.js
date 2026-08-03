@@ -22,7 +22,12 @@ async function run() {
     const business = await requireBusiness(database, plan);
     const before = await inspectBusiness(database, plan);
     validateDeleteSelectors(before.financeDeletes, plan.financeDeletes || []);
-    printReport("before", { mode: commit ? "commit" : "dry-run", plan: path.basename(planPath), business, ...before });
+    printReport("before", {
+      mode: commit ? "commit" : "dry-run",
+      plan: planPath ? path.basename(planPath) : "BUSINESS_REPAIR_JSON",
+      business,
+      ...before
+    });
     if (!commit) {
       console.log("Dry run only. Re-run with --commit after checking the expected counts and totals.");
       return;
@@ -41,6 +46,7 @@ async function run() {
 }
 
 function resolvePlanPath() {
+  if (process.env.BUSINESS_REPAIR_JSON) return "";
   const explicitIndex = process.argv.indexOf("--plan");
   const value = explicitIndex >= 0 ? process.argv[explicitIndex + 1] : process.env.BUSINESS_REPAIR_PATH;
   if (!value) throw new Error("Pass --plan <file> or set BUSINESS_REPAIR_PATH.");
@@ -48,10 +54,16 @@ function resolvePlanPath() {
 }
 
 function readPlan(filePath) {
-  if (!fs.existsSync(filePath)) throw new Error(`Repair plan not found: ${filePath}`);
-  const plan = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const plan = process.env.BUSINESS_REPAIR_JSON
+    ? JSON.parse(process.env.BUSINESS_REPAIR_JSON)
+    : readPlanFile(filePath);
   if (plan.schemaVersion !== 1 || !plan.businessId) throw new Error("Repair plan schemaVersion 1 and businessId are required.");
   return plan;
+}
+
+function readPlanFile(filePath) {
+  if (!fs.existsSync(filePath)) throw new Error(`Repair plan not found: ${filePath}`);
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 async function requireBusiness(database, plan) {
