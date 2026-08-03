@@ -93,13 +93,16 @@ Use these additional GUI/API variables when offering the app as a shared service
 ```text
 HOSTED_MODE=1
 HOSTED_SIGNUP_MODE=invite
-HOSTED_SIGNUP_SECRET=<code supplied to invited business owners>
+PLATFORM_ADMIN_SECRET=<stable platform operator secret of at least 24 characters>
+HOSTED_SIGNUP_SECRET=<optional legacy shared invitation code>
 DISCORD_CLIENT_ID=<Discord OAuth application client ID>
 DISCORD_CLIENT_SECRET=<Discord OAuth application client secret>
 DISCORD_REDIRECT_URI=https://<gui-public-domain>/auth/discord/callback
 ```
 
-`HOSTED_SIGNUP_MODE` accepts `open`, `invite`, or `closed`. Invite mode is recommended for beta distribution. The invitation code protects workspace creation only. Discord login requests only the `identify` scope; it stores the stable Discord user ID and current public profile fields, then discards the OAuth access token.
+`HOSTED_SIGNUP_MODE` accepts `open`, `invite`, or `closed`. Invite mode is recommended for beta distribution. Open `/operator.html` with `PLATFORM_ADMIN_SECRET` to issue individually tracked, expiring invitation codes, suspend or reactivate workspaces, recover an owner's local password account, review platform actions, and download portable recovery archives. `HOSTED_SIGNUP_SECRET` remains an optional backwards-compatible shared code and can be removed after individual invitations are in use. Invitation codes protect workspace creation only. Discord login requests only the `identify` scope; it stores the stable Discord user ID and current public profile fields, then discards the OAuth access token.
+
+Beta workspaces are permanent tenant records, not disposable previews. Releases apply additive PostgreSQL migrations to the same internal business UUID, so testers keep their catalog, recipes, inventory, finance, staff, orders, webhook history, and audit trail without repeating setup. See `docs/beta-operations.md` for the release and recovery procedure.
 
 The first-launch ledger also accepts optional Discord server, storefront event, inventory, and alert channel IDs. This registers routing immediately; during the private beta, the service operator still adds the shared bot to the Discord server.
 

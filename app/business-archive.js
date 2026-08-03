@@ -65,6 +65,71 @@ function createLegacyBusinessArchive({
   return validateBusinessArchive(archive);
 }
 
+function createBusinessArchive({
+  configuration,
+  business = {},
+  snapshot,
+  finance = null,
+  users = [],
+  audit = [],
+  source = {}
+}) {
+  if (!configuration || typeof configuration !== "object") {
+    throw archiveError("Business configuration is required", "archive_configuration_missing");
+  }
+  if (!snapshot?.ok || !snapshot.inventory) {
+    throw archiveError("A current inventory snapshot is required", "archive_snapshot_missing");
+  }
+  const normalizedConfiguration = normalizeSetupPayload(configuration);
+  const archive = {
+    format: ARCHIVE_FORMAT,
+    version: ARCHIVE_VERSION,
+    exportedAt: new Date().toISOString(),
+    source: {
+      system: cleanText(source.system, 100) || "business-operations-framework",
+      url: cleanSourceUrl(source.url),
+      schemaVersion: finiteNumber(snapshot.schemaVersion, null)
+    },
+    business: {
+      configuration: normalizedConfiguration,
+      salesOrders: cleanArray(business.salesOrders, 5000),
+      supplyOrders: cleanArray(business.supplyOrders, 5000),
+      suppliers: cleanArray(business.suppliers, 1000),
+      storefrontBuyOrders: cleanArray(business.storefrontBuyOrders, 5000),
+      productionBatches: cleanArray(business.productionBatches, 5000),
+      dailyCloses: cleanArray(business.dailyCloses, 5000)
+    },
+    accounts: {
+      users: cleanArray(users, 5000).map(sanitizePublicUser),
+      audit: cleanArray(audit, 5000).map(sanitizeAuditEvent)
+    },
+    operations: {
+      snapshot: stripSensitive(snapshot),
+      finance: finance?.ok ? stripSensitive(finance) : null
+    },
+    coverage: {
+      inventorySnapshot: true,
+      financeSnapshot: Boolean(finance?.ok),
+      rawTimeEntries: false,
+      passwordCredentials: false,
+      counts: {
+        products: normalizedConfiguration.catalog.products.length,
+        suppliers: Array.isArray(business.suppliers) ? business.suppliers.length : 0,
+        supplyOrders: Array.isArray(business.supplyOrders) ? business.supplyOrders.length : 0,
+        staffReferences: Array.isArray(users) ? users.length : 0,
+        auditEvents: Array.isArray(audit) ? audit.length : 0,
+        webhookExceptions: Array.isArray(snapshot.reviewExceptions) ? snapshot.reviewExceptions.length : 0
+      },
+      warnings: [
+        "Account passwords and active sessions are intentionally excluded from portable archives.",
+        "The hosted PostgreSQL database remains authoritative for complete beta history, including raw time entries."
+      ]
+    }
+  };
+  archive.fingerprint = archiveFingerprint(archive);
+  return validateBusinessArchive(archive);
+}
+
 function validateBusinessArchive(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw archiveError("Business archive must be a JSON object", "invalid_archive");
@@ -419,6 +484,7 @@ module.exports = {
   ARCHIVE_VERSION,
   archiveFingerprint,
   archiveSummary,
+  createBusinessArchive,
   createLegacyBusinessArchive,
   validateBusinessArchive
 };

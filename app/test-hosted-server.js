@@ -14,6 +14,7 @@ process.env.DATABASE_URL = "postgresql://hosted-test/business";
 process.env.HOSTED_MODE = "1";
 process.env.HOSTED_SIGNUP_MODE = "invite";
 process.env.HOSTED_SIGNUP_SECRET = "hosted-test-invitation-code";
+process.env.PLATFORM_ADMIN_SECRET = "hosted-test-platform-operator-secret-42";
 process.env.AUTH_SESSION_SECRET = "hosted-server-test-session-secret-with-32-characters";
 process.env.BRIDGE_API_TOKEN = "hosted-server-test-bridge-secret";
 process.env.PORT = "4296";
@@ -41,7 +42,7 @@ async function run() {
     const health = await request("/health");
     assert.equal(health.body.hostedMode, true);
     assert.equal(health.body.tenantScoped, true);
-    assert.equal(health.body.version, "0.2.0");
+    assert.equal(health.body.version, "0.3.0-beta.1");
     assert.equal(health.body.release, "hosted-test-release");
     const serviceWorker = await fetch(`${baseUrl}/service-worker.js`).then(response => response.text());
     assert.match(serviceWorker, /\/\/ release:hosted-test-release\s*$/);
@@ -49,6 +50,31 @@ async function run() {
     const setupStatus = await request("/api/setup/status");
     assert.equal(setupStatus.body.workspaceSignup.mode, "invite");
     assert.equal(setupStatus.body.workspaceSignup.inviteRequired, true);
+    const operatorLogin = await request("/api/operator/login", {
+      method: "POST",
+      body: { secret: process.env.PLATFORM_ADMIN_SECRET }
+    });
+    assert.equal(operatorLogin.status, 200, JSON.stringify(operatorLogin.body));
+    const operatorCookie = operatorLogin.cookie;
+    const issuedInvite = await request("/api/operator/invites", {
+      method: "POST",
+      cookie: operatorCookie,
+      body: { label: "Hosted test businesses", maxUses: 2 }
+    });
+    assert.equal(issuedInvite.status, 201, JSON.stringify(issuedInvite.body));
+    assert.match(issuedInvite.body.invite.code, /^BETA-/);
+    const failedConfiguration = defaultSetupConfiguration();
+    failedConfiguration.business.name = "Failed Provisioning Test";
+    const failedProvision = await request("/api/setup/complete", {
+      method: "POST",
+      body: {
+        inviteCode: issuedInvite.body.invite.code,
+        configuration: failedConfiguration,
+        owner: { fullName: "Retry Owner", password: "short" }
+      }
+    });
+    assert.equal(failedProvision.status, 400);
+    assert.equal(failedProvision.body.code, "invalid_password");
     const rejectedSignup = await request("/api/setup/complete", {
       method: "POST",
       body: {
@@ -63,8 +89,18 @@ async function run() {
     const first = await createBusiness("Frontier Firearms", "23", "William Winther", {
       guildId: "123456789012345671",
       eventChannelId: "223456789012345671"
+    }, issuedInvite.body.invite.code);
+    const second = await createBusiness("Frontier Firearms", "23", "William Winther", null, issuedInvite.body.invite.code);
+    const exhaustedInvite = await request("/api/setup/complete", {
+      method: "POST",
+      body: {
+        inviteCode: issuedInvite.body.invite.code,
+        configuration: defaultSetupConfiguration(),
+        owner: { fullName: "Third Owner", password: "owner-password-123" }
+      }
     });
-    const second = await createBusiness("Frontier Firearms", "23", "William Winther");
+    assert.equal(exhaustedInvite.status, 403);
+    assert.equal(exhaustedInvite.body.code, "workspace_invite_invalid");
     assert.equal(first.body.business.name, second.body.business.name);
     assert.equal(first.body.workspace.referenceId, second.body.workspace.referenceId);
     assert.notEqual(first.body.workspace.id, second.body.workspace.id);
@@ -79,6 +115,37 @@ async function run() {
     const secondSession = await request("/api/auth/session", { cookie: second.cookie });
     assert.equal(firstSession.body.workspace.id, first.body.workspace.id);
     assert.equal(secondSession.body.workspace.id, second.body.workspace.id);
+
+    const operatorOverview = await request("/api/operator/overview", { cookie: operatorCookie });
+    assert.equal(operatorOverview.status, 200, JSON.stringify(operatorOverview.body));
+    assert.equal(operatorOverview.body.workspaces.length, 2);
+    assert.equal(operatorOverview.body.invites[0].useCount, 2);
+    assert.equal(operatorOverview.body.invites[0].status, "exhausted");
+    const archiveExport = await request(`/api/operator/workspaces/${first.body.workspace.id}/export`, {
+      cookie: operatorCookie
+    });
+    assert.equal(archiveExport.status, 200, JSON.stringify(archiveExport.body));
+    assert.equal(archiveExport.body.format, "business-operations-archive");
+    assert.equal(archiveExport.body.business.configuration.business.name, "Frontier Firearms");
+
+    const suspended = await request(`/api/operator/workspaces/${second.body.workspace.id}/suspend`, {
+      method: "POST",
+      cookie: operatorCookie,
+      body: { reason: "Hosted test" }
+    });
+    assert.equal(suspended.body.workspace.status, "suspended");
+    const suspendedSession = await request("/api/auth/session", { cookie: second.cookie });
+    assert.equal(suspendedSession.status, 200);
+    assert.equal(suspendedSession.body.user, null);
+    assert.equal(suspendedSession.body.workspace, null);
+    const reactivated = await request(`/api/operator/workspaces/${second.body.workspace.id}/reactivate`, {
+      method: "POST",
+      cookie: operatorCookie,
+      body: {}
+    });
+    assert.equal(reactivated.body.workspace.status, "active");
+    const restoredSession = await request("/api/auth/session", { cookie: second.cookie });
+    assert.equal(restoredSession.body.workspace.id, second.body.workspace.id);
 
     const discordAuthStatus = await request("/api/discord-auth/status");
     assert.equal(discordAuthStatus.body.enabled, true);
@@ -157,6 +224,29 @@ async function run() {
     assert.equal(unknownChannel.status, 404);
     assert.equal(unknownChannel.body.code, "discord_channel_unregistered");
 
+    const temporaryOwnerPassword = "temporary-owner-password-42";
+    const ownerReset = await request(`/api/operator/workspaces/${first.body.workspace.id}/reset-owner`, {
+      method: "POST",
+      cookie: operatorCookie,
+      body: { password: temporaryOwnerPassword }
+    });
+    assert.equal(ownerReset.status, 200, JSON.stringify(ownerReset.body));
+    assert.equal(ownerReset.body.owner.fullName, "William Winther");
+    const invalidatedOwnerSession = await request("/api/auth/session", { cookie: first.cookie });
+    assert.equal(invalidatedOwnerSession.body.user, null);
+    const recoveredOwner = await request("/api/auth/login", {
+      method: "POST",
+      body: {
+        workspaceCode: first.body.workspace.code,
+        fullName: "William Winther",
+        password: temporaryOwnerPassword
+      }
+    });
+    assert.equal(recoveredOwner.status, 200, JSON.stringify(recoveredOwner.body));
+    const recoveryAudit = await request("/api/operator/overview", { cookie: operatorCookie });
+    assert.equal(recoveryAudit.body.audit[0].action, "workspace.owner_password_reset");
+    assert.equal(JSON.stringify(recoveryAudit.body).includes(temporaryOwnerPassword), false);
+
     console.log("Hosted workspace HTTP and Discord routing tests passed.");
   } finally {
     if (server.listening) await new Promise(resolve => server.close(resolve));
@@ -166,7 +256,7 @@ async function run() {
   }
 }
 
-async function createBusiness(name, referenceId, ownerName, discordIntegration = null) {
+async function createBusiness(name, referenceId, ownerName, discordIntegration = null, inviteCode = process.env.HOSTED_SIGNUP_SECRET) {
   const configuration = defaultSetupConfiguration();
   configuration.business.name = name;
   configuration.business.referenceId = referenceId;
@@ -182,7 +272,7 @@ async function createBusiness(name, referenceId, ownerName, discordIntegration =
   const response = await request("/api/setup/complete", {
     method: "POST",
     body: {
-      inviteCode: process.env.HOSTED_SIGNUP_SECRET,
+      inviteCode,
       discordIntegration,
       configuration,
       owner: { fullName: ownerName, password: "owner-password-123" }

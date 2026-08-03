@@ -33,13 +33,17 @@ For a shared hosted deployment, add:
 ```text
 HOSTED_MODE=1
 HOSTED_SIGNUP_MODE=invite
-HOSTED_SIGNUP_SECRET=<business invitation code>
+PLATFORM_ADMIN_SECRET=<stable platform operator secret of at least 24 characters>
+# Optional backwards-compatible shared invitation. Remove after issuing individual codes.
+HOSTED_SIGNUP_SECRET=
 DISCORD_CLIENT_ID=<OAuth application client ID>
 DISCORD_CLIENT_SECRET=<OAuth application client secret>
 DISCORD_REDIRECT_URI=https://<gui-public-domain>/auth/discord/callback
 ```
 
 Every business receives a random internal UUID and a public workspace code. Duplicate business names and duplicate in-game IDs are supported because neither is used as a database key. Use `HOSTED_SIGNUP_MODE=closed` to pause new workspaces or `open` only when unrestricted registration is intentional.
+
+Open `/operator.html` and sign in with `PLATFORM_ADMIN_SECRET` to issue limited-use invitations, inspect tenant activity, suspend or reactivate access, recover an owner's local password account, and download a sanitized portable archive. The full invitation code is displayed once; only its keyed hash and final four characters are stored. Suspending a workspace does not delete or rewrite any tenant data. Owner recovery invalidates existing local password sessions and records the action without logging the temporary password.
 
 Do not set `ADMIN_FULL_NAME` or `ADMIN_PASSWORD` for a normal new business. Open the public domain and let first launch create the initial administrator.
 

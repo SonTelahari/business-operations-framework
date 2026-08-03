@@ -4,7 +4,7 @@ const { BusinessStore } = require("./business-store");
 const { TenantDocumentRepository } = require("./database");
 const { StandaloneStore } = require("./standalone-store");
 const { normalizeSetupPayload } = require("./setup-config");
-const { validateBusinessArchive } = require("./business-archive");
+const { createBusinessArchive, validateBusinessArchive } = require("./business-archive");
 
 const WORKSPACE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const WORKSPACE_CODE_LENGTH = 10;
@@ -18,8 +18,8 @@ class TenantManager {
     this.contexts = new Map();
   }
 
-  async createWorkspace({ configuration, owner, discordIntegration = null }) {
-    return this.provisionWorkspace({ configuration, owner, discordIntegration });
+  async createWorkspace({ configuration, owner, discordIntegration = null, metadata = {} }) {
+    return this.provisionWorkspace({ configuration, owner, discordIntegration, metadata });
   }
 
   async createWorkspaceFromArchive({ archive, owner, actor = "Business archive import", allowDuplicate = false }) {
@@ -77,7 +77,7 @@ class TenantManager {
     });
   }
 
-  async provisionWorkspace({ configuration, owner, discordIntegration = null, afterSetup = null }) {
+  async provisionWorkspace({ configuration, owner, discordIntegration = null, afterSetup = null, metadata = {} }) {
     const normalized = normalizeSetupPayload(configuration);
     const businessId = crypto.randomUUID();
     const workspaceCode = await this.allocateWorkspaceCode();
@@ -85,7 +85,12 @@ class TenantManager {
     await this.database.query(`
       INSERT INTO businesses (id, workspace_code, name, reference_id, status, metadata)
       VALUES ($1, $2, $3, $4, 'provisioning', $5::jsonb)
-    `, [businessId, workspaceCode, normalized.business.name, referenceId, JSON.stringify({ identityVersion: 1 })]);
+    `, [businessId, workspaceCode, normalized.business.name, referenceId, JSON.stringify({
+      identityVersion: 1,
+      dataLifecycle: "persistent",
+      archiveVersion: 1,
+      ...cleanMetadata(metadata)
+    })]);
 
     try {
       const context = await this.buildContext({
@@ -151,6 +156,54 @@ class TenantManager {
       WHERE upper(workspace_code) = $1 AND status = 'active'
     `, [code]);
     return result.rows[0] ? this.getContextById(result.rows[0].id) : null;
+  }
+
+  invalidateContext(businessId) {
+    this.contexts.delete(String(businessId || "").trim());
+  }
+
+  async exportWorkspace(businessId, source = {}) {
+    const id = String(businessId || "").trim();
+    const result = await this.database.query(`
+      SELECT id, workspace_code, name, reference_id, status, created_at
+      FROM businesses
+      WHERE id = $1 AND status IN ('active', 'suspended')
+    `, [id]);
+    if (!result.rowCount) throw tenantError("Business workspace not found", 404, "workspace_not_found");
+    const cached = this.contexts.get(id);
+    const context = cached || await this.buildContext(result.rows[0]);
+    const [snapshot, finance] = await Promise.all([
+      context.standaloneStore.snapshot(),
+      context.standaloneStore.finance()
+    ]);
+    const business = context.businessStore.getArchiveData();
+    return createBusinessArchive({
+      configuration: business.configuration,
+      business,
+      snapshot,
+      finance,
+      users: context.accountStore.listUsers(),
+      audit: context.accountStore.listAudit(1000),
+      source
+    });
+  }
+
+  async resetWorkspaceOwner(businessId, password, actorName = "Service operator") {
+    const id = String(businessId || "").trim();
+    const result = await this.database.query(`
+      SELECT id, workspace_code, name, reference_id, status, created_at
+      FROM businesses
+      WHERE id = $1 AND status IN ('active', 'suspended')
+    `, [id]);
+    if (!result.rowCount) throw tenantError("Business workspace not found", 404, "workspace_not_found");
+    const context = this.contexts.get(id) || await this.buildContext(result.rows[0]);
+    const owner = context.accountStore.listUsers()
+      .filter(user => user.role === "admin" && user.status === "active")
+      .sort((left, right) => new Date(left.createdAt) - new Date(right.createdAt))[0];
+    if (!owner) throw tenantError("Workspace has no active local administrator to reset", 409, "workspace_owner_unavailable");
+    const reset = await context.accountStore.resetPassword(owner.id, password, actorName);
+    if (result.rows[0].status === "active") this.contexts.set(id, context);
+    return reset;
   }
 
   async resolveDiscordChannel(channelId) {

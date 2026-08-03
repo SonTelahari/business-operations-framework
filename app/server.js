@@ -15,6 +15,7 @@ const {
 const { StandaloneStore } = require("./standalone-store");
 const { defaultSetupConfiguration, normalizeSetupPayload } = require("./setup-config");
 const { TenantManager, normalizeWorkspaceCode } = require("./tenant-manager");
+const { PlatformOperations } = require("./platform-operations");
 
 const root = __dirname;
 loadEnvFile(path.join(root, "..", ".env"));
@@ -57,6 +58,10 @@ const defaultContext = {
   standaloneStore: database.enabled ? new StandaloneStore(database) : null
 };
 const tenantManager = hostedMode ? new TenantManager({ database, sessionSecret }) : null;
+const platformOperations = hostedMode ? new PlatformOperations({
+  database,
+  secret: process.env.PLATFORM_ADMIN_SECRET || ""
+}) : null;
 const discordIdentityStore = hostedMode ? new DiscordIdentityStore({
   database,
   sessionSecret,
@@ -87,11 +92,13 @@ const publicFiles = new Set([
   "/login.html",
   "/profile.html",
   "/setup.html",
+  "/operator.html",
   "/styles.css",
   "/app.js",
   "/login.js",
   "/profile.js",
   "/setup.js",
+  "/operator.js",
   "/pwa.js",
   "/service-worker.js",
   "/manifest.webmanifest",
@@ -335,6 +342,7 @@ async function dispatchHostedRequest(request, response, url) {
       databaseReady: true,
       bridgeApiConfigured: Boolean(process.env.BRIDGE_API_TOKEN),
       discordLoginConfigured: Boolean(discordIdentityStore?.enabled),
+      operatorConsoleConfigured: Boolean(platformOperations?.enabled),
       authMode: discordIdentityStore?.enabled ? "workspace-accounts-and-discord" : "workspace-accounts",
       uptimeSeconds: Math.round(process.uptime())
     });
@@ -349,6 +357,7 @@ async function dispatchHostedRequest(request, response, url) {
     });
     return;
   }
+  if (await handleOperatorRoute(request, response, url)) return;
   if (url.pathname === "/api/setup/status" && request.method === "GET") {
     sendJson(response, {
       ok: true,
@@ -618,21 +627,179 @@ async function handleDiscordIdentityRoute(request, response, url) {
   return true;
 }
 
+async function handleOperatorRoute(request, response, url) {
+  const operatorAsset = url.pathname === "/operator.html"
+    || url.pathname === "/operator.js"
+    || url.pathname === "/styles.css";
+  const operatorApi = url.pathname.startsWith("/api/operator/");
+  if (!operatorAsset && !operatorApi) return false;
+  if (operatorAsset) {
+    serveStatic(response, url.pathname);
+    return true;
+  }
+  if (url.pathname === "/api/operator/session" && request.method === "GET") {
+    sendJson(response, {
+      ok: true,
+      enabled: Boolean(platformOperations?.enabled),
+      authenticated: verifyOperatorSession(readCookie(request, "platform_operator_session"))
+    });
+    return true;
+  }
+  if (url.pathname === "/api/operator/login" && request.method === "POST") {
+    if (!allowAuthAttempt(request)) {
+      sendJson(response, { ok: false, error: "Too many attempts. Try again later.", code: "rate_limited" }, 429);
+      return true;
+    }
+    const body = await readJsonBody(request);
+    if (!platformOperations?.enabled || !safeEqual(body.secret || "", process.env.PLATFORM_ADMIN_SECRET || "")) {
+      sendJson(response, { ok: false, error: "Operator secret is incorrect", code: "operator_credentials_invalid" }, 401);
+      return true;
+    }
+    setCookieHeaders(response, [sessionCookie(
+      request,
+      "platform_operator_session",
+      createOperatorSession(),
+      4 * 60 * 60
+    )]);
+    await platformOperations.recordAudit({ actor: "Service operator", action: "operator.login" });
+    sendJson(response, { ok: true });
+    return true;
+  }
+  if (url.pathname === "/api/operator/logout" && request.method === "POST") {
+    setCookieHeaders(response, [sessionCookie(request, "platform_operator_session", "", 0)]);
+    sendJson(response, { ok: true });
+    return true;
+  }
+  if (!verifyOperatorSession(readCookie(request, "platform_operator_session"))) {
+    sendJson(response, { ok: false, error: "Platform operator authentication required", code: "operator_authentication_required" }, 401);
+    return true;
+  }
+  try {
+    if (url.pathname === "/api/operator/overview" && request.method === "GET") {
+      const [workspaces, invites, audit] = await Promise.all([
+        platformOperations.listWorkspaces(),
+        platformOperations.listInvites(),
+        platformOperations.listAudit(200)
+      ]);
+      sendJson(response, {
+        ok: true,
+        generatedAt: new Date().toISOString(),
+        continuity: {
+          policy: "persistent",
+          migrationMode: "in-place",
+          archiveFormat: "business-operations-archive-v1"
+        },
+        workspaces,
+        invites,
+        audit
+      });
+      return true;
+    }
+    if (url.pathname === "/api/operator/invites" && request.method === "POST") {
+      const invite = await platformOperations.createInvite(await readJsonBody(request));
+      sendJson(response, { ok: true, invite }, 201);
+      return true;
+    }
+    const inviteAction = url.pathname.match(/^\/api\/operator\/invites\/([^/]+)\/revoke$/);
+    if (inviteAction && request.method === "POST") {
+      const invite = await platformOperations.revokeInvite(decodeURIComponent(inviteAction[1]));
+      sendJson(response, { ok: true, invite });
+      return true;
+    }
+    const workspaceAction = url.pathname.match(/^\/api\/operator\/workspaces\/([^/]+)\/(suspend|reactivate)$/);
+    if (workspaceAction && request.method === "POST") {
+      const body = await readJsonBody(request);
+      const businessId = decodeURIComponent(workspaceAction[1]);
+      const workspace = await platformOperations.setWorkspaceStatus(
+        businessId,
+        workspaceAction[2] === "suspend" ? "suspended" : "active",
+        "Service operator",
+        body.reason
+      );
+      tenantManager.invalidateContext(businessId);
+      sendJson(response, { ok: true, workspace });
+      return true;
+    }
+    const workspaceOwnerReset = url.pathname.match(/^\/api\/operator\/workspaces\/([^/]+)\/reset-owner$/);
+    if (workspaceOwnerReset && request.method === "POST") {
+      const body = await readJsonBody(request);
+      const businessId = decodeURIComponent(workspaceOwnerReset[1]);
+      const owner = await tenantManager.resetWorkspaceOwner(businessId, body.password, "Service operator");
+      await platformOperations.recordAudit({
+        actor: "Service operator",
+        action: "workspace.owner_password_reset",
+        businessId,
+        details: { ownerId: owner.id, ownerName: owner.fullName, sessionsInvalidated: true }
+      });
+      sendJson(response, { ok: true, owner });
+      return true;
+    }
+    const workspaceExport = url.pathname.match(/^\/api\/operator\/workspaces\/([^/]+)\/export$/);
+    if (workspaceExport && request.method === "GET") {
+      const businessId = decodeURIComponent(workspaceExport[1]);
+      const archive = await tenantManager.exportWorkspace(businessId, {
+        system: "hosted-beta-operator-export",
+        url: publicBaseUrl(request)
+      });
+      await platformOperations.recordAudit({
+        actor: "Service operator",
+        action: "workspace.exported",
+        businessId,
+        details: { fingerprint: archive.fingerprint }
+      });
+      const slug = archive.business.configuration.business.name
+        .toLocaleLowerCase("en-US")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "business";
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${slug}-${new Date().toISOString().slice(0, 10)}.business-archive.json"`,
+        "Cache-Control": "no-store"
+      });
+      response.end(`${JSON.stringify(archive, null, 2)}\n`);
+      return true;
+    }
+    sendJson(response, { ok: false, error: "Operator route not found", code: "operator_route_not_found" }, 404);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Operator action failed",
+      code: error.code || "operator_action_failed"
+    }, error.status || 500);
+  }
+  return true;
+}
+
 async function handleHostedSetup(request, response) {
   if (!allowAuthAttempt(request)) {
     sendJson(response, { ok: false, error: "Too many attempts. Try again later.", code: "rate_limited" }, 429);
     return;
   }
+  let inviteReservation = null;
   try {
     const body = await readJsonBody(request);
-    requireHostedSignupAccess(body.inviteCode);
-    const created = await tenantManager.createWorkspace({
-      configuration: body.configuration || body,
-      owner: body.owner && typeof body.owner === "object" ? body.owner : {},
-      discordIntegration: body.discordIntegration && typeof body.discordIntegration === "object"
-        ? body.discordIntegration
-        : null
-    });
+    inviteReservation = await requireHostedSignupAccess(body.inviteCode);
+    let created;
+    try {
+      created = await tenantManager.createWorkspace({
+        configuration: body.configuration || body,
+        owner: body.owner && typeof body.owner === "object" ? body.owner : {},
+        discordIntegration: body.discordIntegration && typeof body.discordIntegration === "object"
+          ? body.discordIntegration
+          : null,
+        metadata: {
+          beta: true,
+          createdByInviteId: inviteReservation?.id || "legacy-or-open-signup"
+        }
+      });
+    } catch (error) {
+      if (inviteReservation) await platformOperations.releaseInvite(inviteReservation.id).catch(() => {});
+      throw error;
+    }
+    if (inviteReservation) {
+      await platformOperations.redeemInvite(inviteReservation.id, created.business)
+        .catch(error => console.error("Unable to record beta invitation redemption:", error.message));
+    }
     setSessionCookie(response, request, created.context.accountStore.createSession(created.owner));
     sendJson(response, {
       ok: true,
@@ -654,27 +821,27 @@ function resolveHostedSignupMode(value) {
   return ["open", "invite", "closed"].includes(mode) ? mode : "closed";
 }
 
-function requireHostedSignupAccess(inviteCode) {
+async function requireHostedSignupAccess(inviteCode) {
   if (hostedSignupMode === "closed") {
     const error = new Error("New business registration is currently closed");
     error.status = 403;
     error.code = "workspace_signup_closed";
     throw error;
   }
-  if (hostedSignupMode !== "invite") return;
+  if (hostedSignupMode !== "invite") return null;
   const expected = String(process.env.HOSTED_SIGNUP_SECRET || "");
+  if (expected && safeEqual(inviteCode || "", expected)) return null;
+  if (platformOperations?.enabled) return platformOperations.reserveInvite(inviteCode);
   if (!expected) {
     const error = new Error("Hosted signup is not configured");
     error.status = 503;
     error.code = "workspace_signup_unavailable";
     throw error;
   }
-  if (!safeEqual(inviteCode || "", expected)) {
-    const error = new Error("The business invitation code is incorrect");
-    error.status = 403;
-    error.code = "workspace_invite_invalid";
-    throw error;
-  }
+  const error = new Error("The business invitation code is incorrect");
+  error.status = 403;
+  error.code = "workspace_invite_invalid";
+  throw error;
 }
 
 async function dispatchHostedDiscordRequest(request, response, url) {
@@ -2391,6 +2558,40 @@ function readCookie(request, name) {
     }
   }
   return "";
+}
+
+function createOperatorSession() {
+  const payload = Buffer.from(JSON.stringify({
+    role: "platform_operator",
+    expiresAt: Date.now() + (4 * 60 * 60 * 1000),
+    nonce: crypto.randomBytes(12).toString("base64url")
+  }), "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", process.env.PLATFORM_ADMIN_SECRET || "")
+    .update(payload)
+    .digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function verifyOperatorSession(token) {
+  const secret = String(process.env.PLATFORM_ADMIN_SECRET || "");
+  if (!platformOperations?.enabled || !token || !String(token).includes(".")) return false;
+  const [payload, signature] = String(token).split(".", 2);
+  const expected = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+  if (!safeEqual(signature, expected)) return false;
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return decoded.role === "platform_operator" && Number(decoded.expiresAt) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function publicBaseUrl(request) {
+  const forwardedHost = String(request.headers["x-forwarded-host"] || "").split(",")[0].trim();
+  const host = forwardedHost || String(request.headers.host || "").trim();
+  const forwardedProto = String(request.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  const protocol = forwardedProto || (isHttps(request) ? "https" : "http");
+  return host ? `${protocol}://${host}` : "";
 }
 
 function setSessionCookie(response, request, token) {

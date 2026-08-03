@@ -149,6 +149,24 @@ class AccountStore {
     return this.data.audit.slice(0, safeLimit).map(publicAuditEvent);
   }
 
+  async resetPassword(userId, plainPassword, actorName = "Service operator") {
+    validatePassword(plainPassword);
+    return this.mutate(async () => {
+      const user = this.requireUser(userId);
+      user.password = await hashPassword(plainPassword);
+      user.sessionVersion += 1;
+      this.appendAudit({
+        category: "account",
+        action: "account.password_reset",
+        actorName: String(actorName || "Service operator").slice(0, 100),
+        subjectId: user.id,
+        subjectName: user.fullName,
+        details: { sessionsInvalidated: true }
+      });
+      return publicUser(user);
+    });
+  }
+
   async approve(userId, actor) {
     return this.mutate(async () => {
       const user = this.requireUser(userId);

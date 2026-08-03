@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#4b2026">
+    <title>Service Desk - Business Operations Ledger</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/operations-ledger-32.png">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="operator-page">
+    <main class="operator-book">
+      <header class="operator-header">
+        <div>
+          <p class="eyebrow">Private Beta</p>
+          <h1>Service Desk</h1>
+        </div>
+        <button class="secondary-button hidden" id="operatorLogoutButton" type="button">Sign Out</button>
+      </header>
+
+      <section class="operator-login" id="operatorLoginPanel">
+        <div>
+          <p class="eyebrow">Protected Record</p>
+          <h2>Operator Access</h2>
+          <p>Use the platform secret. Business owners and employees use the ordinary ledger sign-in.</p>
+        </div>
+        <form id="operatorLoginForm">
+          <label>
+            Platform secret
+            <input id="operatorSecretInput" type="password" required minlength="24" maxlength="256" autocomplete="current-password">
+          </label>
+          <button type="submit">Open Service Desk</button>
+        </form>
+      </section>
+
+      <div class="hidden" id="operatorDesk">
+        <section class="operator-continuity">
+          <div>
+            <p class="eyebrow">Data Continuity</p>
+            <h2>Beta Records Are Permanent</h2>
+            <p>Releases upgrade these PostgreSQL workspaces in place. Suspension preserves every record, and archive exports provide a portable recovery copy.</p>
+          </div>
+          <dl>
+            <div><dt>Storage</dt><dd>Persistent</dd></div>
+            <div><dt>Upgrades</dt><dd>Versioned migrations</dd></div>
+            <div><dt>Fallback</dt><dd>Portable archive</dd></div>
+          </dl>
+        </section>
+
+        <section class="operator-section">
+          <div class="operator-section-heading">
+            <div>
+              <p class="eyebrow">Access Ledger</p>
+              <h2>Beta Invitations</h2>
+            </div>
+            <form class="operator-invite-form" id="operatorInviteForm">
+              <label>Label <input id="inviteLabelInput" maxlength="120" placeholder="Business or tester"></label>
+              <label>Uses <input id="inviteUsesInput" type="number" min="1" max="25" value="1"></label>
+              <label>Expires <input id="inviteExpiryInput" type="date"></label>
+              <button type="submit">Issue Invitation</button>
+            </form>
+          </div>
+          <div class="operator-issued hidden" id="operatorIssuedInvite" aria-live="polite">
+            <span>New invitation</span>
+            <strong id="operatorIssuedCode"></strong>
+            <button class="secondary-button" id="operatorCopyInviteButton" type="button">Copy Code</button>
+          </div>
+          <div class="operator-table-wrap">
+            <table class="operator-table">
+              <thead><tr><th>Label</th><th>Code</th><th>Use</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+              <tbody id="operatorInviteRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="operator-section">
+          <div class="operator-section-heading">
+            <div>
+              <p class="eyebrow">Tenant Ledger</p>
+              <h2>Business Workspaces</h2>
+            </div>
+            <button class="secondary-button" id="operatorRefreshButton" type="button">Refresh</button>
+          </div>
+          <div class="operator-table-wrap">
+            <table class="operator-table">
+              <thead><tr><th>Business</th><th>Workspace</th><th>Catalog</th><th>Last activity</th><th>Status</th><th>Recovery</th></tr></thead>
+              <tbody id="operatorWorkspaceRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="operator-section">
+          <div class="operator-section-heading">
+            <div>
+              <p class="eyebrow">Platform Audit</p>
+              <h2>Recent Actions</h2>
+            </div>
+          </div>
+          <div class="operator-audit" id="operatorAuditRows"></div>
+        </section>
+      </div>
+      <p class="form-message" id="operatorMessage" role="status"></p>
+    </main>
+    <dialog class="operator-dialog" id="operatorOwnerResetDialog">
+      <form id="operatorOwnerResetForm">
+        <div>
+          <p class="eyebrow">Account Recovery</p>
+          <h2>Reset Owner Password</h2>
+          <p id="operatorOwnerResetBusiness"></p>
+        </div>
+        <input id="operatorOwnerResetBusinessId" type="hidden">
+        <label>
+          Temporary password
+          <input id="operatorOwnerResetPassword" type="password" required minlength="10" maxlength="128" autocomplete="new-password">
+        </label>
+        <label>
+          Confirm temporary password
+          <input id="operatorOwnerResetConfirm" type="password" required minlength="10" maxlength="128" autocomplete="new-password">
+        </label>
+        <p class="field-hint">This invalidates the owner's existing password sessions. Share the temporary password privately.</p>
+        <div class="operator-dialog-actions">
+          <button class="secondary-button" id="operatorOwnerResetCancel" type="button">Cancel</button>
+          <button type="submit">Reset Password</button>
+        </div>
+      </form>
+    </dialog>
+    <script src="/operator.js" defer></script>
+  </body>
+</html>

@@ -24,7 +24,8 @@ async function run() {
     assert.deepEqual(migrations.rows.map(row => row.id), [
       "001_initial.sql",
       "002_multitenancy.sql",
-      "003_discord_identity.sql"
+      "003_discord_identity.sql",
+      "004_beta_operations.sql"
     ]);
 
     const tables = await database.query(`
@@ -42,6 +43,9 @@ async function run() {
       "identity_characters",
       "business_memberships",
       "oauth_states",
+      "beta_invites",
+      "beta_invite_redemptions",
+      "platform_audit_events",
       "catalog_items",
       "inventory_events",
       "ledger_events",
