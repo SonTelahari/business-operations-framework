@@ -13,3 +13,6 @@
 11. Hosted deployments use an intentional signup mode; beta deployments should use `invite`.
 12. Two test workspaces with duplicate display names have passed session, stock, staff, and Discord isolation checks.
 13. If Discord login is enabled, its redirect URL exactly matches the public domain, `/health` reports it configured, and a test character can request, receive, and switch business access.
+14. `/health` reports the intended application version and a deployment-specific release identifier.
+15. An installed PWA detects a test deployment and offers **Update App**.
+16. Staff know the difference between P&L entries and ledger-only transfers so supplier payments and other recorded obligations are not counted twice.

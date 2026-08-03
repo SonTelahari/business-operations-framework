@@ -61,12 +61,12 @@ class StandaloneStore {
     });
   }
 
-  async importLegacySnapshot({ snapshot, finance = null, actor = "Legacy import", fingerprint = "" }) {
+  async importLegacySnapshot({ snapshot, finance = null, audit = [], actor = "Legacy import", fingerprint = "" }) {
     if (!snapshot?.ok || !snapshot.inventory) {
       throw storeError("Legacy import requires a valid bootstrap snapshot", 400, "invalid_import_snapshot");
     }
     const sourceFingerprint = cleanText(fingerprint, 200)
-      || crypto.createHash("sha256").update(JSON.stringify({ snapshot, finance })).digest("hex");
+      || crypto.createHash("sha256").update(JSON.stringify({ snapshot, finance, audit })).digest("hex");
     const batchId = `legacy-${sourceFingerprint.slice(0, 24)}`;
     return this.database.transaction(async client => {
       const existing = await client.query(`
@@ -221,18 +221,38 @@ class StandaloneStore {
         });
       }
       const balances = finance?.balances || {};
+      const auditedFunds = legacyFundAuditEntries(audit);
       const balanceEntries = [
-        ["Owner Capital", "Owner Funds", "Owner Capital", "Cash In", balances.ownerCapitalDeposits],
-        ["Owner Capital", "Owner Funds", "Owner Capital", "Cash Out", balances.ownerWithdrawals],
-        ["Safekeeping", "Safekeeping", "Safekeeping Funds", "Cash In", balances.safekeepingDeposits],
-        ["Safekeeping", "Safekeeping", "Safekeeping Funds", "Cash Out", balances.safekeepingWithdrawals]
+        ["ownerCapitalDeposits", "Owner Capital", "Owner Funds", "Owner Capital", "Cash In"],
+        ["ownerWithdrawals", "Owner Capital", "Owner Funds", "Owner Capital", "Cash Out"],
+        ["safekeepingDeposits", "Safekeeping", "Safekeeping", "Safekeeping Funds", "Cash In"],
+        ["safekeepingWithdrawals", "Safekeeping", "Safekeeping", "Safekeeping Funds", "Cash Out"]
       ];
       for (let index = 0; index < balanceEntries.length; index += 1) {
-        const [type, category, label, direction, amount] = balanceEntries[index];
-        await insertFinance(client, this.businessId, {
-          eventId: `${batchId}:balance:${index}`, occurredAt, type, category, label,
-          source: "Legacy Import", direction, amount: number(amount), metadata: { batchId }
-        });
+        const [balanceKey, type, category, label, direction] = balanceEntries[index];
+        const reportedAmount = number(balances[balanceKey]);
+        const auditEntries = auditedFunds.filter(entry => entry.balanceKey === balanceKey);
+        if (reportedAmount > 0 || !auditEntries.length) {
+          await insertFinance(client, this.businessId, {
+            eventId: `${batchId}:balance:${index}`, occurredAt, type, category, label,
+            source: "Legacy Import", direction, amount: reportedAmount, metadata: { batchId }
+          });
+          continue;
+        }
+        for (let auditIndex = 0; auditIndex < auditEntries.length; auditIndex += 1) {
+          const entry = auditEntries[auditIndex];
+          await insertFinance(client, this.businessId, {
+            eventId: `${batchId}:balance:${index}:audit:${auditIndex}`,
+            occurredAt: entry.occurredAt,
+            type,
+            category,
+            label,
+            source: "Legacy Audit Import",
+            direction,
+            amount: entry.amount,
+            metadata: { batchId, legacyAuditId: entry.id, note: entry.note, importedAudit: true }
+          });
+        }
       }
 
       const summary = {
@@ -397,6 +417,135 @@ class StandaloneStore {
     };
   }
 
+  async reconcileImportedFundAudit(audit = []) {
+    const importedFunds = legacyFundAuditEntries(
+      (Array.isArray(audit) ? audit : []).filter(event => String(event?.id || "").startsWith("legacy-"))
+    );
+    if (!importedFunds.length) return { ok: true, inserted: 0, amount: 0 };
+    return this.database.transaction(async client => {
+      const result = await client.query(`
+        SELECT entry_type, direction, COALESCE(SUM(amount), 0) AS amount
+        FROM finance_events
+        WHERE business_id = $1 AND source IN ('Legacy Import', 'Legacy Audit Import')
+          AND entry_type IN ('Owner Capital', 'Safekeeping')
+        GROUP BY entry_type, direction
+      `, [this.businessId]);
+      const existing = new Map(result.rows.map(row => [
+        `${row.entry_type}:${row.direction}`,
+        number(row.amount)
+      ]));
+      const grouped = new Map();
+      for (const entry of importedFunds) {
+        const group = grouped.get(entry.balanceKey) || [];
+        group.push(entry);
+        grouped.set(entry.balanceKey, group);
+      }
+      let inserted = 0;
+      let insertedAmount = 0;
+      for (const [balanceKey, entries] of grouped) {
+        const descriptor = fundBalanceDescriptor(balanceKey);
+        if (!descriptor) continue;
+        const existingAmount = existing.get(`${descriptor.type}:${descriptor.direction}`) || 0;
+        let remaining = Math.max(0, sum(entries, entry => entry.amount) - existingAmount);
+        for (const entry of entries) {
+          if (!(remaining > 0)) break;
+          const amount = Math.min(entry.amount, remaining);
+          await insertFinance(client, this.businessId, {
+            eventId: `legacy-audit-fund:${entry.id}`,
+            occurredAt: entry.occurredAt,
+            type: descriptor.type,
+            category: descriptor.category,
+            label: descriptor.label,
+            source: "Legacy Audit Import",
+            direction: descriptor.direction,
+            amount,
+            metadata: { legacyAuditId: entry.id, note: entry.note, importedAudit: true, repaired: true }
+          });
+          remaining -= amount;
+          inserted += 1;
+          insertedAmount += amount;
+        }
+      }
+      return { ok: true, inserted, amount: money(insertedAmount) };
+    });
+  }
+
+  async reconcileCatalogPricesFromWebhooks() {
+    return this.database.transaction(async client => {
+      const result = await client.query(`
+        SELECT item_name, unit_price
+        FROM webhook_events
+        WHERE business_id = $1 AND status = 'applied' AND event_type = 'Stocking Movement'
+          AND direction = 'Stock In' AND item_name <> '' AND unit_price > 0
+        ORDER BY occurred_at DESC, recorded_at DESC, webhook_id DESC
+      `, [this.businessId]);
+      const seen = new Set();
+      const repaired = [];
+      for (const row of result.rows) {
+        const normalizedName = inventoryKey(row.item_name);
+        if (!normalizedName || seen.has(normalizedName)) continue;
+        seen.add(normalizedName);
+        const update = await client.query(`
+          UPDATE catalog_items
+          SET sale_price = $3, updated_at = now()
+          WHERE business_id = $1 AND normalized_name = $2 AND sale_price = 0
+          RETURNING name
+        `, [this.businessId, normalizedName, number(row.unit_price)]);
+        if (update.rowCount) repaired.push(update.rows[0].name);
+      }
+      return { ok: true, repaired };
+    });
+  }
+
+  async reconcileImportedExceptions() {
+    return this.database.transaction(async client => {
+      const result = await client.query(`
+        SELECT e.*, w.payload
+        FROM webhook_exceptions e
+        JOIN webhook_events w USING (business_id, webhook_id)
+        WHERE e.business_id = $1 AND e.status = 'Open'
+        ORDER BY e.created_at, e.webhook_id
+        FOR UPDATE
+      `, [this.businessId]);
+      const repaired = [];
+      for (const stored of result.rows) {
+        if (json(stored.payload, {}).importedFromArchive !== true) continue;
+        const matched = await resolveAgainstCatalog(client, this.businessId, {
+          item: cleanText(stored.resolved_item_name || stored.discord_item_label || stored.discord_item_name, 150),
+          discordItemName: cleanText(stored.discord_item_name, 200),
+          discordItemLabel: cleanText(stored.discord_item_label, 200),
+          reviewReason: cleanText(stored.reason, 300),
+          reviewRequired: true
+        });
+        if (matched.reviewRequired || !matched.item) continue;
+        await rememberMapping(client, this.businessId, {
+          discordItemName: stored.discord_item_name,
+          discordItemLabel: stored.discord_item_label,
+          itemName: matched.item,
+          resolvedBy: "Archive reconciliation",
+          webhookId: stored.webhook_id
+        });
+        await client.query(`
+          UPDATE webhook_exceptions SET
+            status = 'Resolved', resolved_item_name = $3, resolved_at = now(),
+            resolved_by = 'Archive reconciliation',
+            resolution_note = CASE WHEN resolution_note = ''
+              THEN 'Matched to the current catalog without replaying imported history'
+              ELSE resolution_note
+            END,
+            transaction_written = false
+          WHERE business_id = $1 AND webhook_id = $2
+        `, [this.businessId, stored.webhook_id, matched.item]);
+        await client.query(`
+          UPDATE webhook_events SET status = 'ignored', item_name = $3
+          WHERE business_id = $1 AND webhook_id = $2
+        `, [this.businessId, stored.webhook_id, matched.item]);
+        repaired.push(stored.webhook_id);
+      }
+      return { ok: true, repaired };
+    });
+  }
+
   async handleGuiPayload(payload) {
     const action = String(payload?.action || "");
     if (action === "manual_operation") return this.recordManualOperation(payload.entry || {});
@@ -488,6 +637,10 @@ class StandaloneStore {
         eventId: `${eventId}:finance`, occurredAt, type: "Safekeeping", category: "Safekeeping",
         label: "Safekeeping Funds", source: "GUI", direction: incoming ? "Cash In" : "Cash Out", amount: total, metadata
       });
+      return;
+    }
+    if (kind === "Cash Transfer In" || kind === "Cash Transfer Out") {
+      await cashEvent(kind === "Cash Transfer In" ? total : -total);
       return;
     }
     if (kind === "P2P Sale" || kind === "Cash In") {
@@ -625,6 +778,7 @@ class StandaloneStore {
       }
       requireItem(itemName);
       const payload = json(stored.payload, {});
+      const historyPreserved = payload.importedFromArchive === true;
       const event = normalizeWebhook({
         ...payload,
         webhook_id: webhookId,
@@ -641,7 +795,9 @@ class StandaloneStore {
         review_required: false,
         review_reason: ""
       });
-      const applied = await applyWebhookEvent(client, this.businessId, event, { applyLedger: false });
+      const applied = historyPreserved
+        ? { stockControlWritten: false, ledgerControlWritten: false }
+        : await applyWebhookEvent(client, this.businessId, event, { applyLedger: false });
       const resolvedBy = cleanText(correction.resolvedBy, 100) || "Manager";
       if (correction.rememberMapping !== false) {
         await rememberMapping(client, this.businessId, {
@@ -655,16 +811,16 @@ class StandaloneStore {
       await client.query(`
         UPDATE webhook_exceptions SET
           status = 'Resolved', resolved_item_name = $3, resolved_at = now(), resolved_by = $4,
-          resolution_note = $5, transaction_written = true
+          resolution_note = $5, transaction_written = $6
         WHERE business_id = $1 AND webhook_id = $2
-      `, [this.businessId, webhookId, itemName, resolvedBy, cleanText(correction.note, 2500)]);
+      `, [this.businessId, webhookId, itemName, resolvedBy, cleanText(correction.note, 2500), !historyPreserved]);
       await client.query(`
-        UPDATE webhook_events SET status = 'applied', item_name = $3, quantity = $4, unit_price = $5
+        UPDATE webhook_events SET status = $3, item_name = $4, quantity = $5, unit_price = $6
         WHERE business_id = $1 AND webhook_id = $2
-      `, [this.businessId, webhookId, itemName, quantity, event.unitPrice]);
+      `, [this.businessId, webhookId, historyPreserved ? "ignored" : "applied", itemName, quantity, event.unitPrice]);
       return {
         ok: true, action: "resolve_exception", webhookId, status: "Resolved", itemName,
-        productCreated, transactionWritten: true, ...applied
+        productCreated, transactionWritten: !historyPreserved, historyPreserved, ...applied
       };
     });
   }
@@ -705,7 +861,10 @@ async function upsertCatalogItem(client, businessId, item) {
       category = EXCLUDED.category,
       unit_name = EXCLUDED.unit_name,
       unit_cost = EXCLUDED.unit_cost,
-      sale_price = EXCLUDED.sale_price,
+      sale_price = CASE
+        WHEN catalog_items.sale_price > 0 THEN catalog_items.sale_price
+        ELSE EXCLUDED.sale_price
+      END,
       active = EXCLUDED.active,
       aliases = EXCLUDED.aliases,
       metadata = EXCLUDED.metadata,
@@ -810,6 +969,13 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
       absoluteQuantity: event.currentItemTotal,
       unitPrice: event.unitPrice, actor: event.actor, metadata
     });
+    if (event.type === "Stocking Movement" && event.direction === "Stock In" && event.unitPrice > 0) {
+      await client.query(`
+        UPDATE catalog_items
+        SET sale_price = $3, updated_at = now()
+        WHERE business_id = $1 AND normalized_name = $2
+      `, [businessId, inventoryKey(event.item), event.unitPrice]);
+    }
   }
   if (applyLedger) {
     const derivedCash = event.type === "Sale"
@@ -850,7 +1016,7 @@ async function applyStoredMapping(client, businessId, event) {
     ) ORDER BY created_at DESC LIMIT 1
   `, [businessId, inventoryKey(event.discordItemName), inventoryKey(event.discordItemLabel)]);
   if (!result.rowCount) return event;
-  const reasons = event.reviewReason.split(",").filter(reason => reason && reason !== "unknown_item");
+  const reasons = event.reviewReason.split(",").filter(reason => reason && reason !== "unknown_item" && reason !== "missing_item");
   return { ...event, item: result.rows[0].canonical_item_name, reviewReason: reasons.join(","), reviewRequired: reasons.length > 0 };
 }
 
@@ -871,6 +1037,7 @@ async function resolveAgainstCatalog(client, businessId, event) {
   ].some(value => wanted.has(inventoryKey(value))));
   let reasons = event.reviewReason.split(",").filter(Boolean).filter(reason => reason !== "unknown_item");
   if (match) {
+    reasons = reasons.filter(reason => reason !== "missing_item");
     return {
       ...event,
       item: match.name,
@@ -952,8 +1119,10 @@ function normalizeWebhook(payload) {
   const quantity = number(firstValue(payload, reviewRequested
     ? ["proposed_quantity", "qty", "quantity", "count", "amount"]
     : ["qty", "quantity", "count", "amount"]));
+  const discordItemName = cleanText(firstValue(payload, ["discord_item_name"]), 200);
+  const discordItemLabel = cleanText(firstValue(payload, ["discord_item_label"]), 200);
   const reasons = cleanText(firstValue(payload, ["review_reason"]), 300).split(",").map(value => value.trim()).filter(Boolean);
-  if (!item && !reasons.includes("missing_item")) reasons.push("missing_item");
+  if (!item && !discordItemName && !discordItemLabel && !reasons.includes("missing_item")) reasons.push("missing_item");
   if (!(quantity > 0) && !reasons.includes("missing_quantity")) reasons.push("missing_quantity");
   return {
     webhookId: cleanText(firstValue(payload, ["webhook_id", "id", "event_id", "discord_message_id", "order_id", "buy_order_id", "receipt_id"]), 150) || crypto.randomUUID(),
@@ -968,11 +1137,43 @@ function normalizeWebhook(payload) {
     actor: cleanText(firstValue(payload, ["actor", "customer", "buyer", "seller", "player"]), 150),
     orderId: cleanText(firstValue(payload, ["order_id", "buy_order_id", "receipt_id", "transaction_id"]), 150),
     discordTitle: cleanText(firstValue(payload, ["discord_title", "title"]), 200),
-    discordItemName: cleanText(firstValue(payload, ["discord_item_name"]), 200),
-    discordItemLabel: cleanText(firstValue(payload, ["discord_item_label"]), 200),
+    discordItemName,
+    discordItemLabel,
     reviewRequired: reviewRequested || reasons.length > 0,
     reviewReason: reasons.join(",")
   };
+}
+
+function legacyFundAuditEntries(audit) {
+  const descriptors = {
+    "Owner Capital Deposit": "ownerCapitalDeposits",
+    "Owner Withdrawal": "ownerWithdrawals",
+    "Safekeeping Deposit": "safekeepingDeposits",
+    "Safekeeping Withdrawal": "safekeepingWithdrawals"
+  };
+  return (Array.isArray(audit) ? audit : []).flatMap((event, index) => {
+    if (String(event?.action || "") !== "finance.funds_recorded") return [];
+    const details = json(event?.details, {});
+    const balanceKey = descriptors[String(details.kind || "")];
+    const amount = Math.abs(number(details.amount));
+    if (!balanceKey || !(amount > 0)) return [];
+    return [{
+      id: cleanText(event?.id, 100) || `legacy-fund-${index}`,
+      occurredAt: validDate(event?.createdAt),
+      balanceKey,
+      amount,
+      note: cleanText(details.note, 500)
+    }];
+  });
+}
+
+function fundBalanceDescriptor(balanceKey) {
+  return {
+    ownerCapitalDeposits: { type: "Owner Capital", category: "Owner Funds", label: "Owner Capital", direction: "Cash In" },
+    ownerWithdrawals: { type: "Owner Capital", category: "Owner Funds", label: "Owner Capital", direction: "Cash Out" },
+    safekeepingDeposits: { type: "Safekeeping", category: "Safekeeping", label: "Safekeeping Funds", direction: "Cash In" },
+    safekeepingWithdrawals: { type: "Safekeeping", category: "Safekeeping", label: "Safekeeping Funds", direction: "Cash Out" }
+  }[balanceKey] || null;
 }
 
 function normalizeNewProduct(input) {

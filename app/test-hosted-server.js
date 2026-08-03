@@ -22,6 +22,7 @@ process.env.DISCORD_CLIENT_SECRET = "hosted-test-discord-secret";
 process.env.DISCORD_REDIRECT_URI = "http://127.0.0.1:4296/auth/discord/callback";
 process.env.DISCORD_API_BASE_URL = "http://127.0.0.1:4297/api/v10";
 process.env.DISCORD_AUTHORIZE_URL = "http://127.0.0.1:4297/oauth2/authorize";
+process.env.APP_RELEASE = "hosted-test-release";
 delete process.env.ADMIN_FULL_NAME;
 delete process.env.ADMIN_PASSWORD;
 
@@ -40,6 +41,10 @@ async function run() {
     const health = await request("/health");
     assert.equal(health.body.hostedMode, true);
     assert.equal(health.body.tenantScoped, true);
+    assert.equal(health.body.version, "0.2.0");
+    assert.equal(health.body.release, "hosted-test-release");
+    const serviceWorker = await fetch(`${baseUrl}/service-worker.js`).then(response => response.text());
+    assert.match(serviceWorker, /\/\/ release:hosted-test-release\s*$/);
 
     const setupStatus = await request("/api/setup/status");
     assert.equal(setupStatus.body.workspaceSignup.mode, "invite");

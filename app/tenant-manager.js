@@ -52,6 +52,7 @@ class TenantManager {
         const operations = await context.standaloneStore.importLegacySnapshot({
           snapshot: normalizedArchive.operations.snapshot,
           finance: normalizedArchive.operations.finance,
+          audit: normalizedArchive.accounts.audit,
           actor: actorUser.fullName,
           fingerprint: normalizedArchive.fingerprint
         });
@@ -59,11 +60,17 @@ class TenantManager {
           ...normalizedArchive.accounts,
           fingerprint: normalizedArchive.fingerprint
         }, administrator);
+        const [catalogPricing, importedExceptions] = await Promise.all([
+          context.standaloneStore.reconcileCatalogPricesFromWebhooks(),
+          context.standaloneStore.reconcileImportedExceptions()
+        ]);
         return {
           fingerprint: normalizedArchive.fingerprint,
           businessDocuments,
           operations: operations.summary,
           accounts,
+          catalogPricing,
+          importedExceptions,
           coverage: normalizedArchive.coverage
         };
       }
@@ -242,12 +249,18 @@ class TenantManager {
       repository: new TenantDocumentRepository(this.database, business.id, "business")
     });
     await Promise.all([accountStore.initialize(), businessStore.initialize()]);
+    const standaloneStore = new StandaloneStore(this.database, { businessId: business.id });
+    await Promise.all([
+      standaloneStore.reconcileImportedFundAudit(accountStore.listAudit(1000)),
+      standaloneStore.reconcileCatalogPricesFromWebhooks(),
+      standaloneStore.reconcileImportedExceptions()
+    ]);
     return {
       business,
       businessId: business.id,
       accountStore,
       businessStore,
-      standaloneStore: new StandaloneStore(this.database, { businessId: business.id })
+      standaloneStore
     };
   }
 

@@ -45,6 +45,8 @@ Do not set `ADMIN_FULL_NAME` or `ADMIN_PASSWORD` for a normal new business. Open
 
 `AUTH_SESSION_SECRET` signs employee sessions. Changing it logs everyone out. `BRIDGE_API_TOKEN` authenticates the bridge and should not be shared with employees or placed in browser code.
 
+Railway supplies a unique deployment ID automatically, which the app uses for installed-PWA update detection. On another host, set `APP_RELEASE` to a new build number or commit ID for each deployment. `/health` exposes the semantic application version and current release identifier for verification.
+
 ## Discord Login
 
 Discord login is separate from the storefront bridge bot. Configure it once for the shared GUI service:

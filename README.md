@@ -32,6 +32,8 @@ The hosted ledger is an installable progressive web app. In Chrome or Edge, open
 
 Every installed copy uses the same hosted PostgreSQL data and existing workspace or Discord login. Updates are downloaded by the browser; when a new version is ready, **Update App** reloads into it. Authenticated pages, API responses, finance data, and business records are always network-only and are never written to the service-worker cache. The cache contains only the public manifest and generic app icons.
 
+Releases use semantic versions. `/health` reports both the application version and the deployment release identifier. Railway deployments stamp their unique deployment ID into the served service worker, so installed copies detect every deployment even when the checked-in worker file itself did not change. `APP_RELEASE` can provide the same behavior on another host.
+
 Local development is installable from `http://localhost`; production installation requires HTTPS. Run `npm run test:pwa` to verify the manifest, icons, routing, and private-data cache exclusions.
 
 ## Local Start
@@ -57,6 +59,10 @@ Set `AUTH_SESSION_SECRET` and `BRIDGE_API_TOKEN` before starting Compose. Add `-
 - **Admins** additionally control finance, payroll, owner funds, manager promotion, and protected corrections.
 
 New registrations use either the employee's character name and chosen password or Discord login. Discord users create one or more explicitly labelled character profiles, request access using a workspace code, and select an approved business from their profile. A manager or admin approves either kind of request from Staff. Existing password accounts can be linked once from the Discord profile and remain available as a recovery path.
+
+## Finance Entry Rules
+
+Storefront sales and purchases, supplier receipts, payroll payouts, owner funds, and safekeeping movements create their own finance records. Use **Other Income** or **Other Expense** only for activity that has not already been recorded elsewhere. When cash merely enters or leaves the in-game ledger for an already-recorded transaction, use **Ledger Transfer In/Out**; it updates cash without duplicating revenue or expense in P&L.
 
 ## Catalog Model
 

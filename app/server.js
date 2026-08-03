@@ -19,6 +19,13 @@ const { TenantManager, normalizeWorkspaceCode } = require("./tenant-manager");
 const root = __dirname;
 loadEnvFile(path.join(root, "..", ".env"));
 loadEnvFile(path.join(root, "..", "discord-bridge", ".env"));
+const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "..", "package.json"), "utf8")).version;
+const releaseVersion = String(
+  process.env.APP_RELEASE
+  || process.env.RAILWAY_DEPLOYMENT_ID
+  || process.env.RAILWAY_GIT_COMMIT_SHA
+  || packageVersion
+).slice(0, 120);
 const port = Number(process.env.PORT || 4273);
 const authUser = process.env.APP_AUTH_USER || "frontier";
 const authPassword = process.env.APP_AUTH_PASSWORD || "";
@@ -138,6 +145,8 @@ async function handleApplicationRequest(request, response, url) {
       sendJson(response, {
         ok: true,
         service: "business-operations-framework",
+        version: packageVersion,
+        release: releaseVersion,
         setupRequired: !businessStore.isConfigured(),
         dataBackend: standaloneStore ? "postgresql" : "apps-script",
         databaseConfigured: database.enabled,
@@ -317,6 +326,8 @@ async function dispatchHostedRequest(request, response, url) {
     sendJson(response, {
       ok: true,
       service: "business-operations-framework",
+      version: packageVersion,
+      release: releaseVersion,
       hostedMode: true,
       tenantScoped: true,
       dataBackend: "postgresql",
@@ -982,7 +993,7 @@ async function handleSupplierRoute(request, response, url, user) {
   return true;
 }
 
-async function handleDiscordIntegrationRoute(request, response, url) {
+async function handleDiscordIntegrationRoute(request, response, url, tokenVerified = false) {
   const eventRoute = url.pathname === "/api/integrations/discord/events";
   const snapshotRoute = url.pathname === "/api/integrations/discord/snapshot";
   if (!eventRoute && !snapshotRoute) return false;
@@ -994,20 +1005,22 @@ async function handleDiscordIntegrationRoute(request, response, url) {
     }, 503);
     return true;
   }
-  const expectedToken = String(process.env.BRIDGE_API_TOKEN || "");
-  if (!expectedToken) {
-    sendJson(response, {
-      ok: false,
-      error: "BRIDGE_API_TOKEN is not configured",
-      code: "bridge_token_required"
-    }, 503);
-    return true;
-  }
-  const authorization = String(request.headers.authorization || "");
-  const suppliedToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
-  if (!suppliedToken || !safeEqual(suppliedToken, expectedToken)) {
-    sendJson(response, { ok: false, error: "Invalid integration token", code: "invalid_integration_token" }, 401);
-    return true;
+  if (!tokenVerified) {
+    const expectedToken = String(process.env.BRIDGE_API_TOKEN || "");
+    if (!expectedToken) {
+      sendJson(response, {
+        ok: false,
+        error: "BRIDGE_API_TOKEN is not configured",
+        code: "bridge_token_required"
+      }, 503);
+      return true;
+    }
+    const authorization = String(request.headers.authorization || "");
+    const suppliedToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+    if (!suppliedToken || !safeEqual(suppliedToken, expectedToken)) {
+      sendJson(response, { ok: false, error: "Invalid integration token", code: "invalid_integration_token" }, 401);
+      return true;
+    }
   }
   try {
     if (eventRoute && request.method === "POST") {
@@ -2346,8 +2359,11 @@ function serveStatic(response, pathname) {
         : "public, max-age=300"
     };
     if (pathname === "/service-worker.js") headers["Service-Worker-Allowed"] = "/";
+    const body = pathname === "/service-worker.js"
+      ? Buffer.concat([data, Buffer.from(`\n// release:${releaseVersion}\n`, "utf8")])
+      : data;
     response.writeHead(200, headers);
-    response.end(data);
+    response.end(body);
   });
 }
 
@@ -2502,6 +2518,11 @@ async function startServer() {
     }
     if (defaultContext.standaloneStore && defaultContext.businessStore.isConfigured()) {
       await defaultContext.standaloneStore.syncCatalog(defaultContext.businessStore.getConfiguration());
+      await Promise.all([
+        defaultContext.standaloneStore.reconcileImportedFundAudit(defaultContext.accountStore.listAudit(1000)),
+        defaultContext.standaloneStore.reconcileCatalogPricesFromWebhooks(),
+        defaultContext.standaloneStore.reconcileImportedExceptions()
+      ]);
     }
   }
   server.listen(port, () => {
@@ -2569,9 +2590,10 @@ async function getBootstrapData(user) {
     delete sheetSnapshot.reviewExceptions;
     if (sheetSnapshot.inventory) delete sheetSnapshot.inventory.ledger;
   }
+  const allDailyCloses = businessStore.listDailyCloses();
   const dailyCloses = canManage
-    ? businessStore.listDailyCloses()
-    : businessStore.listDailyCloses()
+    ? allDailyCloses
+    : allDailyCloses
       .filter(close => close.status === "Finalized")
       .slice(0, 20)
       .map(employeeDailyCloseView);
