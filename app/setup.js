@@ -265,7 +265,7 @@ function addRecipeRow(recipe = {}) {
   elements.recipes.insertAdjacentHTML("beforeend", `
     <article class="setup-recipe-row" data-setup-row>
       <div class="recipe-row-heading">
-        <label>Product<input data-field="productName" list="setupProductOptions" required value="${escapeHtml(recipe.productName || "")}"></label>
+        <label>Output<input data-field="productName" list="setupProductOptions" required value="${escapeHtml(recipe.productName || "")}"></label>
         <label>Output quantity<input data-field="yield" type="number" min="0.01" step="0.01" value="${numericValue(recipe.yield || 1)}"></label>
         <button class="remove-row-button" data-remove-row type="button" aria-label="Remove recipe">Remove</button>
       </div>
@@ -281,7 +281,9 @@ function updateDerivedViews() {
   const products = collectRows(elements.products);
   elements.materialCount.textContent = `${materials.length} ${materials.length === 1 ? "entry" : "entries"}`;
   elements.productCount.textContent = `${products.length} ${products.length === 1 ? "entry" : "entries"}`;
-  elements.productOptions.innerHTML = products.map(row => `<option value="${escapeHtml(value(row, "name"))}"></option>`).join("");
+  elements.productOptions.innerHTML = [...materials, ...products]
+    .map(row => `<option value="${escapeHtml(value(row, "name"))}"></option>`)
+    .join("");
   ensureEmpty(elements.materials, "No materials entered");
   ensureEmpty(elements.products, "No products entered");
   ensureEmpty(elements.recipes, "No recipes entered");

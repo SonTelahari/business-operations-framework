@@ -45,6 +45,10 @@ async function run() {
     archive.business.configuration.catalog.recipes[0].ingredients,
     [{ name: "Iron", quantity: 2 }, { name: "Softwood", quantity: 2 }]
   );
+  assert.deepEqual(
+    archive.business.configuration.catalog.recipes.find(recipe => recipe.productName === "Fabric").ingredients,
+    [{ name: "Flax", quantity: 2 }]
+  );
   assert.equal(Object.prototype.hasOwnProperty.call(archive.accounts.users[0], "password"), false);
   assert.equal(archive.coverage.rawTimeEntries, false);
   assert.equal(archiveSummary(archive).ledgerAvailable, true);
@@ -132,8 +136,11 @@ function legacyFixture() {
       target: 10,
       active: true
     }],
-    recipes: { "Navy Revolver": [["Iron", 2], ["Wood", 2]] },
-    recipeYields: { "Navy Revolver": 1 },
+    recipes: {
+      "Navy Revolver": [["Iron", 2], ["Wood", 2]],
+      Fabric: [["Flax", 2]]
+    },
+    recipeYields: { "Navy Revolver": 1, Fabric: 1 },
     salesOrders: [{
       id: "SO-1",
       customer: "Arthur Morgan",
@@ -186,8 +193,18 @@ function legacyFixture() {
       generatedAt: at,
       inventory: {
         products: [{ itemName: "Navy Revolver", itemLabel: "Revolver Navy", currentStock: 5, target: 10, salePrice: 105 }],
-        materials: [{ ingredient: "Iron", storageCount: 40 }, { ingredient: "Softwood", storageCount: 20 }],
-        storage: [{ ingredient: "Iron", storageCount: 40 }, { ingredient: "Softwood", storageCount: 20 }],
+        materials: [
+          { ingredient: "Iron", storageCount: 40 },
+          { ingredient: "Softwood", storageCount: 20 },
+          { ingredient: "Flax", storageCount: 20 },
+          { ingredient: "Fabric", storageCount: 5 }
+        ],
+        storage: [
+          { ingredient: "Iron", storageCount: 40 },
+          { ingredient: "Softwood", storageCount: 20 },
+          { ingredient: "Flax", storageCount: 20 },
+          { ingredient: "Fabric", storageCount: 5 }
+        ],
         ledger: { balance: 1094.25, countedAt: at }
       },
       reviewExceptions: [{

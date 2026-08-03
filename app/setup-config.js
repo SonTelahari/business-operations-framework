@@ -244,7 +244,10 @@ function assertCatalogNamesDoNotOverlap(materials, products) {
 }
 
 function normalizeRecipes(input, products, materials) {
-  const productNames = new Map(products.map(product => [normalizeKey(product.name), product.name]));
+  const outputNames = new Map([
+    ...materials.map(material => [normalizeKey(material.name), material.name]),
+    ...products.map(product => [normalizeKey(product.name), product.name])
+  ]);
   const ingredientNames = new Map([
     ...materials.map(material => [normalizeKey(material.name), material.name]),
     ...products.map(product => [normalizeKey(product.name), product.name])
@@ -252,8 +255,13 @@ function normalizeRecipes(input, products, materials) {
   const seen = new Set();
   return (Array.isArray(input) ? input : []).slice(0, 1000).map((recipe, index) => {
     const productKey = normalizeKey(recipe?.productName);
-    const productName = productNames.get(productKey);
-    if (!productName) throw setupError(`Recipe ${index + 1} must use a catalog product`, "invalid_recipe_product");
+    const productName = outputNames.get(productKey);
+    if (!productName) {
+      throw setupError(
+        `Recipe ${index + 1} must use a catalog product or material`,
+        "invalid_recipe_product"
+      );
+    }
     assertUnique(seen, productName, "recipe");
     const ingredients = (Array.isArray(recipe?.ingredients) ? recipe.ingredients : []).slice(0, 100).map((ingredient, ingredientIndex) => {
       const ingredientKey = normalizeKey(ingredient?.name);

@@ -25,9 +25,15 @@ const configuration = normalizeSetupPayload({
   ],
   modules: { discord: true },
   catalog: {
-    materials: [{ name: "Copper", category: "Metals", unit: "bar", unitCost: 2.5 }],
+    materials: [
+      { name: "Copper", category: "Metals", unit: "bar", unitCost: 2.5 },
+      { name: "Copper Sheet", category: "Metals", unit: "sheet", unitCost: 5 }
+    ],
     products: [{ name: "Copper Pan", category: "Cookware", salePrice: 15, target: 4 }],
-    recipes: [{ productName: "Copper Pan", yield: 1, ingredients: [{ name: "Copper", quantity: 3 }] }]
+    recipes: [
+      { productName: "Copper Pan", yield: 1, ingredients: [{ name: "Copper", quantity: 3 }] },
+      { productName: "Copper Sheet", yield: 1, ingredients: [{ name: "Copper", quantity: 2 }] }
+    ]
   }
 });
 
@@ -40,6 +46,7 @@ const catalog = configurationToCatalogData(configuration);
 assert.equal(catalog.items[0].price, 15);
 assert.deepEqual(catalog.recipes["Copper Pan"], [["Copper", 3]]);
 assert.equal(catalog.recipeYields["Copper Pan"], 1);
+assert.deepEqual(catalog.recipes["Copper Sheet"], [["Copper", 2]]);
 assert.equal(catalog.pricing.materials.Copper.midpoint, 2.5);
 
 assert.throws(

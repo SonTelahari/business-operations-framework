@@ -1,6 +1,6 @@
 {
   "name": "business-operations-framework",
-  "version": "0.3.0-beta.1",
+  "version": "0.3.0-beta.2",
   "private": true,
   "type": "commonjs",
   "engines": {
@@ -39,6 +39,7 @@
     "test:forward": "npm --prefix discord-bridge run test:forward",
     "import:legacy": "node scripts/import-legacy.js",
     "export:business": "node scripts/export-legacy-business.js",
-    "import:business": "node scripts/import-business-archive.js"
+    "import:business": "node scripts/import-business-archive.js",
+    "repair:business": "node scripts/repair-business.js"
   }
 }

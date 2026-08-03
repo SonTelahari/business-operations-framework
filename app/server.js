@@ -1557,6 +1557,11 @@ function buildRecordedPurchaseFinance(from, to) {
       (Array.isArray(line.receipts) ? line.receipts : []).forEach(receipt => {
         const date = financeDateKey(receipt.receivedAt);
         const amount = roundFinanceMoney(Number(receipt.quantity || 0) * Number(receipt.unitPrice || 0));
+        const legacyReceipt = String(receipt.id || "").startsWith("legacy-receipt:");
+        if (legacyReceipt) {
+          legacyReceiptCount += 1;
+          return;
+        }
         if (!addExpense({
           date,
           amount,
@@ -1566,7 +1571,6 @@ function buildRecordedPurchaseFinance(from, to) {
         })) return;
         receiptCount += 1;
         supplierReceiptExpenses += amount;
-        if (String(receipt.id || "").startsWith("legacy-receipt:")) legacyReceiptCount += 1;
       });
     });
   });

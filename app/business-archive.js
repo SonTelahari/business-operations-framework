@@ -274,14 +274,17 @@ function legacyConfiguration({ bootstrap, suppliers, business, materialCosts, pr
       0
     )
   }));
-  const canonicalProducts = new Map(products.map(product => [inventoryKey(product.name), product.name]));
+  const canonicalOutputs = new Map([
+    ...materials.map(material => [inventoryKey(material.name), material.name]),
+    ...products.map(product => [inventoryKey(product.name), product.name])
+  ]);
   const canonicalIngredients = new Map([
     ...materials.map(material => [inventoryKey(material.name), material.name]),
     ...products.map(product => [inventoryKey(product.name), product.name])
   ]);
   if (canonicalIngredients.has("softwood")) canonicalIngredients.set("wood", canonicalIngredients.get("softwood"));
   const recipes = Object.entries(bootstrap.recipes || {}).map(([rawProductName, recipe]) => {
-    const productName = canonicalProducts.get(inventoryKey(rawProductName));
+    const productName = canonicalOutputs.get(inventoryKey(rawProductName));
     if (!productName || !Array.isArray(recipe) || !recipe.length) return null;
     const ingredients = recipe.map(ingredient => {
       const rawName = Array.isArray(ingredient) ? ingredient[0] : ingredient?.name;
