@@ -239,6 +239,7 @@ async function handleApplicationRequest(request, response, url) {
         redirect(response, "/");
         return;
       }
+      if (await handleBusinessProfileRoute(request, response, url, user)) return;
       if (await handleBusinessIntegrationRoute(request, response, url, user)) return;
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
@@ -298,6 +299,7 @@ async function handleApplicationRequest(request, response, url) {
         sendJson(response, { ok: true });
         return;
       }
+      if (await handleBusinessProfileRoute(request, response, url, user)) return;
       if (await handleBusinessIntegrationRoute(request, response, url, user)) return;
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
@@ -1254,6 +1256,66 @@ async function handleBusinessIntegrationRoute(request, response, url, user) {
     return true;
   }
   sendJson(response, { ok: false, error: "Integration route not found", code: "not_found" }, 404);
+  return true;
+}
+
+async function handleBusinessProfileRoute(request, response, url, user) {
+  if (url.pathname !== "/api/admin/business-profile") return false;
+  if (!requireAdmin(response, user)) return true;
+  if (request.method === "GET") {
+    const configuration = businessStore.getConfiguration();
+    sendJson(response, {
+      ok: true,
+      business: configuration?.business || null,
+      terminology: configuration?.terminology || null,
+      updatedAt: configuration?.updatedAt || "",
+      updatedBy: configuration?.updatedBy || ""
+    });
+    return true;
+  }
+  if (request.method !== "PUT") {
+    sendJson(response, { ok: false, error: "Business profile route not found", code: "not_found" }, 404);
+    return true;
+  }
+  try {
+    const previous = businessStore.getConfiguration()?.business || {};
+    const configuration = await businessStore.updateBusinessProfile(await readJsonBody(request), user);
+    if (tenantManager) {
+      await tenantManager.updateWorkspaceIdentity(
+        currentTenantContext().businessId,
+        configuration.business
+      );
+    }
+    await accountStore.recordAudit({
+      category: "business",
+      action: "business.profile_updated",
+      actorId: user.id,
+      actorName: user.fullName,
+      subjectId: currentTenantContext().businessId,
+      subjectName: configuration.business.name,
+      details: {
+        previousName: previous.name || "",
+        name: configuration.business.name,
+        location: configuration.business.location,
+        referenceId: configuration.business.referenceId,
+        logoChanged: previous.logoUrl !== configuration.business.logoUrl
+      }
+    }).catch(error => console.error("Unable to write business profile audit event:", error.message));
+    sendJson(response, {
+      ok: true,
+      business: configuration.business,
+      terminology: configuration.terminology,
+      workspace: tenantManager ? publicWorkspace() : null,
+      updatedAt: configuration.updatedAt,
+      updatedBy: configuration.updatedBy
+    });
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Business profile could not be saved",
+      code: error.code || "business_profile_failed"
+    }, error.status || 500);
+  }
   return true;
 }
 

@@ -22,7 +22,8 @@ const SECTION_MIN_ROLE = Object.freeze({
   "daily-close": "manager",
   review: "manager",
   employees: "manager",
-  finance: "admin"
+  finance: "admin",
+  "business-settings": "admin"
 });
 let deliveryDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "2-digit",
@@ -70,6 +71,7 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "target.updated": "Storefront target updated",
   "target.removed": "Storefront target removed",
   "catalog.item_created": "Catalog good added",
+  "business.profile_updated": "Business profile updated",
   "supplier.saved": "Supplier record saved",
   "supplier.removed": "Supplier record removed",
   "storefront_buy_order.saved": "Storefront buy order saved",
@@ -97,7 +99,8 @@ const { buildSupplyQuoteTelegram } = window.FRONTIER_SUPPLY_TELEGRAM;
 const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
 const productCatalogByKey = new Map();
-let businessProfile = { name: "Business", ledgerName: "Business Ledger", location: "", currency: "USD", locale: "en-US", timezone: "UTC" };
+let businessProfile = { name: "Business", ledgerName: "Business Ledger", location: "", referenceId: "", description: "", logoUrl: "", currency: "USD", locale: "en-US", timezone: "UTC" };
+let businessTerminology = { salesLocation: "Storefront", storageLocation: "Storage", salesOrder: "Sales Order" };
 let enabledModules = {};
 rebuildCatalogIndexes();
 
@@ -141,6 +144,8 @@ let financeLoading = false;
 let activeProductCardKey = "";
 let productInsightRequestId = 0;
 let catalogItemSavePending = false;
+let businessSettingsSavePending = false;
+let businessSettingsDirty = false;
 const productInsightCache = new Map();
 
 const elements = {
@@ -283,6 +288,7 @@ const elements = {
   dailyCloseSection: document.querySelector("#dailyCloseSection"),
   reviewSection: document.querySelector("#reviewSection"),
   employeesSection: document.querySelector("#employeesSection"),
+  businessSettingsSection: document.querySelector("#businessSettingsSection"),
   exceptionNavCount: document.querySelector("#exceptionNavCount"),
   dashboardReviewCount: document.querySelector("#dashboardReviewCount"),
   reviewDataStatus: document.querySelector("#reviewDataStatus"),
@@ -366,6 +372,29 @@ const elements = {
   catalogItemTarget: document.querySelector("#catalogItemTargetInput"),
   catalogItemStatus: document.querySelector("#catalogItemStatus"),
   saveCatalogItem: document.querySelector("#saveCatalogItemButton"),
+  businessSettingsForm: document.querySelector("#businessSettingsForm"),
+  businessSettingsMeta: document.querySelector("#businessSettingsMeta"),
+  businessSettingsStatus: document.querySelector("#businessSettingsStatus"),
+  saveBusinessSettings: document.querySelector("#saveBusinessSettingsButton"),
+  resetBusinessSettings: document.querySelector("#resetBusinessSettingsButton"),
+  settingsBusinessName: document.querySelector("#settingsBusinessNameInput"),
+  settingsLedgerName: document.querySelector("#settingsLedgerNameInput"),
+  settingsLocation: document.querySelector("#settingsLocationInput"),
+  settingsReferenceId: document.querySelector("#settingsReferenceIdInput"),
+  settingsLogoUrl: document.querySelector("#settingsLogoUrlInput"),
+  settingsDescription: document.querySelector("#settingsDescriptionInput"),
+  settingsCurrency: document.querySelector("#settingsCurrencyInput"),
+  settingsLocale: document.querySelector("#settingsLocaleInput"),
+  settingsTimezone: document.querySelector("#settingsTimezoneInput"),
+  settingsSalesLocation: document.querySelector("#settingsSalesLocationInput"),
+  settingsStorageLocation: document.querySelector("#settingsStorageLocationInput"),
+  settingsSalesOrder: document.querySelector("#settingsSalesOrderInput"),
+  settingsLogoPreview: document.querySelector("#settingsLogoPreview"),
+  settingsMonogramPreview: document.querySelector("#settingsMonogramPreview"),
+  settingsNamePreview: document.querySelector("#settingsNamePreview"),
+  settingsLedgerPreview: document.querySelector("#settingsLedgerPreview"),
+  settingsLocationPreview: document.querySelector("#settingsLocationPreview"),
+  settingsDescriptionPreview: document.querySelector("#settingsDescriptionPreview"),
   financeSection: document.querySelector("#financeSection"),
   financeDataStatus: document.querySelector("#financeDataStatus"),
   financeCoverageStatus: document.querySelector("#financeCoverageStatus"),
@@ -709,6 +738,7 @@ function replaceObject(target, source) {
 
 function applyBusinessConfiguration(snapshot) {
   businessProfile = { ...businessProfile, ...(snapshot?.business || {}) };
+  businessTerminology = { ...businessTerminology, ...(snapshot?.terminology || {}) };
   enabledModules = { ...(snapshot?.modules || {}) };
   const name = businessProfile.name || "Business";
   const ledgerName = businessProfile.ledgerName || `${name} Ledger`;
@@ -746,11 +776,17 @@ function applyBusinessConfiguration(snapshot) {
   const logo = document.querySelector("#businessLogo");
   const monogram = document.querySelector("#businessMonogram");
   if (businessProfile.logoUrl) {
+    logo.onerror = () => {
+      logo.classList.add("hidden");
+      monogram.classList.remove("hidden");
+      monogram.textContent = businessInitials(name);
+    };
     logo.src = businessProfile.logoUrl;
     logo.alt = `${name} logo`;
     logo.classList.remove("hidden");
     monogram.classList.add("hidden");
   } else {
+    logo.onerror = null;
     logo.classList.add("hidden");
     monogram.classList.remove("hidden");
     monogram.textContent = businessInitials(name);
@@ -767,10 +803,111 @@ function applyBusinessConfiguration(snapshot) {
       control.classList.toggle("module-disabled", enabledModules[moduleName] === false);
     });
   });
+  if (isAdmin() && !businessSettingsDirty) populateBusinessSettings();
 }
 
 function businessInitials(value) {
   return String(value || "Business Ledger").split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0]).join("").toUpperCase();
+}
+
+function populateBusinessSettings() {
+  if (!elements.businessSettingsForm) return;
+  elements.settingsBusinessName.value = businessProfile.name || "";
+  elements.settingsLedgerName.value = businessProfile.ledgerName || `${businessProfile.name || "Business"} Ledger`;
+  elements.settingsLocation.value = businessProfile.location || "";
+  elements.settingsReferenceId.value = businessProfile.referenceId || "";
+  elements.settingsLogoUrl.value = businessProfile.logoUrl || "";
+  elements.settingsDescription.value = businessProfile.description || "";
+  elements.settingsCurrency.value = businessProfile.currency || "USD";
+  elements.settingsLocale.value = businessProfile.locale || "en-US";
+  elements.settingsTimezone.value = businessProfile.timezone || "UTC";
+  elements.settingsSalesLocation.value = businessTerminology.salesLocation || "Storefront";
+  elements.settingsStorageLocation.value = businessTerminology.storageLocation || "Storage";
+  elements.settingsSalesOrder.value = businessTerminology.salesOrder || "Sales Order";
+  const workspaceCode = currentWorkspace?.workspaceCode || currentWorkspace?.code || "";
+  elements.businessSettingsMeta.textContent = workspaceCode
+    ? `Workspace ${workspaceCode} / business identity and ledger presentation`
+    : "Business identity and ledger presentation";
+  renderBusinessSettingsPreview();
+}
+
+function renderBusinessSettingsPreview() {
+  if (!elements.businessSettingsForm) return;
+  const name = elements.settingsBusinessName.value.trim() || "Business";
+  const ledgerName = elements.settingsLedgerName.value.trim() || `${name} Ledger`;
+  const location = elements.settingsLocation.value.trim();
+  const referenceId = elements.settingsReferenceId.value.trim();
+  const description = elements.settingsDescription.value.trim();
+  const logoUrl = elements.settingsLogoUrl.value.trim();
+  elements.settingsNamePreview.textContent = name;
+  elements.settingsLedgerPreview.textContent = ledgerName;
+  elements.settingsLocationPreview.textContent = [location, referenceId].filter(Boolean).join(" / ");
+  elements.settingsLocationPreview.classList.toggle("hidden", !location && !referenceId);
+  elements.settingsDescriptionPreview.textContent = description;
+  elements.settingsDescriptionPreview.classList.toggle("hidden", !description);
+  elements.settingsMonogramPreview.textContent = businessInitials(name);
+  if (/^https:\/\//i.test(logoUrl)) {
+    elements.settingsLogoPreview.src = logoUrl;
+    elements.settingsLogoPreview.alt = `${name} logo preview`;
+    elements.settingsLogoPreview.classList.remove("hidden");
+    elements.settingsMonogramPreview.classList.add("hidden");
+  } else {
+    elements.settingsLogoPreview.removeAttribute("src");
+    elements.settingsLogoPreview.classList.add("hidden");
+    elements.settingsMonogramPreview.classList.remove("hidden");
+  }
+}
+
+async function saveBusinessSettings() {
+  if (!isAdmin() || businessSettingsSavePending) return;
+  businessSettingsSavePending = true;
+  elements.saveBusinessSettings.disabled = true;
+  elements.resetBusinessSettings.disabled = true;
+  elements.businessSettingsStatus.textContent = "Saving business profile";
+  try {
+    const response = await fetch("/api/admin/business-profile", {
+      method: "PUT",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        business: {
+          name: elements.settingsBusinessName.value.trim(),
+          ledgerName: elements.settingsLedgerName.value.trim(),
+          location: elements.settingsLocation.value.trim(),
+          referenceId: elements.settingsReferenceId.value.trim(),
+          logoUrl: elements.settingsLogoUrl.value.trim(),
+          description: elements.settingsDescription.value.trim(),
+          currency: elements.settingsCurrency.value.trim().toUpperCase(),
+          locale: elements.settingsLocale.value.trim(),
+          timezone: elements.settingsTimezone.value.trim()
+        },
+        terminology: {
+          salesLocation: elements.settingsSalesLocation.value.trim(),
+          storageLocation: elements.settingsStorageLocation.value.trim(),
+          salesOrder: elements.settingsSalesOrder.value.trim()
+        }
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
+    if (!response.ok) throw new Error(result.error || `API ${response.status}`);
+    businessSettingsDirty = false;
+    if (result.workspace) currentWorkspace = result.workspace;
+    applyBusinessConfiguration({
+      business: result.business,
+      terminology: result.terminology,
+      modules: enabledModules
+    });
+    elements.businessSettingsStatus.textContent = `Saved ${formatDateTime(result.updatedAt || new Date().toISOString())}`;
+  } catch (error) {
+    elements.businessSettingsStatus.textContent = error.message;
+  } finally {
+    businessSettingsSavePending = false;
+    elements.saveBusinessSettings.disabled = false;
+    elements.resetBusinessSettings.disabled = false;
+  }
 }
 
 function seedSupplyMaterialOptions() {
@@ -892,6 +1029,37 @@ function wireEvents() {
     event.preventDefault();
     saveCatalogItem();
   });
+  elements.businessSettingsForm.addEventListener("submit", event => {
+    event.preventDefault();
+    saveBusinessSettings();
+  });
+  elements.resetBusinessSettings.addEventListener("click", () => {
+    businessSettingsDirty = false;
+    populateBusinessSettings();
+    elements.businessSettingsStatus.textContent = "Saved profile restored";
+  });
+  [
+    elements.settingsBusinessName,
+    elements.settingsLedgerName,
+    elements.settingsLocation,
+    elements.settingsReferenceId,
+    elements.settingsLogoUrl,
+    elements.settingsDescription,
+    elements.settingsCurrency,
+    elements.settingsLocale,
+    elements.settingsTimezone,
+    elements.settingsSalesLocation,
+    elements.settingsStorageLocation,
+    elements.settingsSalesOrder
+  ].forEach(field => field.addEventListener("input", () => {
+    businessSettingsDirty = true;
+    elements.businessSettingsStatus.textContent = "Unsaved changes";
+    renderBusinessSettingsPreview();
+  }));
+  elements.settingsLogoPreview.addEventListener("error", () => {
+    elements.settingsLogoPreview.classList.add("hidden");
+    elements.settingsMonogramPreview.classList.remove("hidden");
+  });
   elements.financePeriod.addEventListener("change", () => setFinancePeriod(elements.financePeriod.value));
   elements.financeFrom.addEventListener("change", () => {
     elements.financePeriod.value = "custom";
@@ -954,6 +1122,7 @@ function wireEvents() {
       if (activeSection === "buy-orders" && isManagement()) loadStorefrontBuyOrders({ silent: true });
       if (activeSection === "review" && isManagement()) loadBackendSnapshot({ silent: true });
       if (activeSection === "finance" && isAdmin()) loadFinance();
+      if (activeSection === "business-settings" && isAdmin() && !businessSettingsDirty) populateBusinessSettings();
       if (activeSection === "production") loadProductionBatches({ silent: true });
       if (activeSection === "daily-close" && isManagement()) renderDailyCloseWorkspace();
     });
@@ -2198,6 +2367,7 @@ function renderSection() {
   elements.dailyCloseSection.classList.toggle("hidden", activeSection !== "daily-close");
   elements.reviewSection.classList.toggle("hidden", activeSection !== "review");
   elements.employeesSection.classList.toggle("hidden", activeSection !== "employees");
+  elements.businessSettingsSection.classList.toggle("hidden", activeSection !== "business-settings");
   const supplyMode = activeSection === "supplies";
   const buyOrderMode = activeSection === "buy-orders";
   const closeMode = activeSection === "daily-close";

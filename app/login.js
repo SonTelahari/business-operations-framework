@@ -56,14 +56,28 @@ async function loadPublicConfig() {
     document.title = `Sign In - ${name}`;
     document.querySelector("#loginLedgerName").textContent = ledgerName;
     document.querySelector("#loginBrand").setAttribute("aria-label", name);
+    const location = document.querySelector("#loginBusinessLocation");
+    const description = document.querySelector("#loginBusinessDescription");
+    location.textContent = business.location || "";
+    location.classList.toggle("hidden", !business.location);
+    description.textContent = business.description || "";
+    description.classList.toggle("hidden", !business.description);
     const logo = document.querySelector("#loginBusinessLogo");
     const monogram = document.querySelector("#loginBusinessMonogram");
     if (business.logoUrl) {
+      logo.onerror = () => {
+        logo.classList.add("hidden");
+        monogram.classList.remove("hidden");
+        monogram.textContent = initials(name);
+      };
       logo.src = business.logoUrl;
       logo.alt = `${name} logo`;
       logo.classList.remove("hidden");
       monogram.classList.add("hidden");
     } else {
+      logo.onerror = null;
+      logo.classList.add("hidden");
+      monogram.classList.remove("hidden");
       monogram.textContent = initials(name);
     }
   } catch {}
@@ -75,6 +89,8 @@ function resetBusinessIdentity(title) {
   document.querySelector("#loginBusinessLogo").classList.add("hidden");
   document.querySelector("#loginBusinessMonogram").classList.remove("hidden");
   document.querySelector("#loginBusinessMonogram").textContent = "BL";
+  document.querySelector("#loginBusinessLocation").classList.add("hidden");
+  document.querySelector("#loginBusinessDescription").classList.add("hidden");
 }
 
 function formatWorkspaceCode(value) {

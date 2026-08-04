@@ -1559,6 +1559,21 @@ tr:last-child td {
   padding: 40px;
 }
 
+.auth-business-location {
+  margin: 10px 0 0;
+  color: #e0bd73;
+  font-family: "Courier New", Courier, monospace;
+  text-transform: uppercase;
+}
+
+.auth-business-description {
+  max-width: 38ch;
+  margin: 14px 0 0;
+  color: #f1e4c7;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
 .auth-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -4706,6 +4721,140 @@ body.auth-page {
 
   .production-cycle-control {
     grid-template-columns: minmax(0, 1fr) 72px;
+  }
+}
+
+/* Business administration ledger */
+.business-settings-panel {
+  padding: 22px;
+}
+
+.business-settings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.8fr);
+  gap: 24px;
+  align-items: start;
+  margin-top: 18px;
+}
+
+.business-settings-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.business-settings-fields label {
+  display: grid;
+  gap: 6px;
+}
+
+.business-settings-fields textarea {
+  resize: vertical;
+  min-height: 118px;
+}
+
+.business-profile-preview {
+  min-height: 280px;
+  padding: 20px;
+  border: 1px solid rgba(91, 69, 43, 0.66);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 31px, rgba(104, 79, 45, 0.1) 31px 32px),
+    rgba(255, 249, 226, 0.55);
+  box-shadow: 4px 5px 0 rgba(82, 62, 39, 0.1);
+}
+
+.business-preview-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  margin: 18px 0;
+}
+
+.business-preview-brand img,
+.business-preview-brand .brand-monogram {
+  width: 84px;
+  height: 84px;
+  flex: 0 0 84px;
+  object-fit: contain;
+}
+
+.business-preview-brand > div:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.business-preview-brand strong,
+.business-preview-brand span {
+  overflow-wrap: anywhere;
+}
+
+.business-preview-brand strong {
+  font-family: var(--display-font);
+  font-size: 1.25rem;
+}
+
+.business-preview-brand span,
+.business-preview-location {
+  color: var(--muted);
+}
+
+.business-preview-description {
+  white-space: pre-wrap;
+}
+
+.business-settings-divider {
+  height: 1px;
+  margin: 24px 0;
+  background: rgba(92, 69, 43, 0.5);
+}
+
+.business-settings-regional {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.business-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(92, 69, 43, 0.34);
+}
+
+.business-settings-actions .form-status {
+  flex: 1;
+  min-height: 1.3em;
+  margin: 0;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+@media (max-width: 940px) {
+  .business-settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .business-profile-preview {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .business-settings-panel {
+    padding: 14px 10px;
+  }
+
+  .business-settings-fields,
+  .business-settings-regional {
+    grid-template-columns: 1fr;
+  }
+
+  .business-settings-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

@@ -38,6 +38,11 @@ assert(!setupScript.includes("parseIngredients("), "first-launch recipes must no
 assert(appHtml.includes('id="openCatalogItemDialogButton"'), "the Store tab must expose manager catalog creation");
 assert(appHtml.includes('id="catalogItemTypeInput"'), "manual catalog creation must distinguish products and materials");
 assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
+assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
+assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");
+assert(appHtml.includes('id="settingsLogoPreview"'), "business settings must preview branding changes");
+const loginHtml = fs.readFileSync(path.join(root, "login.html"), "utf8");
+assert(loginHtml.includes('id="loginBusinessDescription"'), "the sign-in cover must display the configured business description");
 
 function pngSize(fileName) {
   const data = fs.readFileSync(path.join(root, "assets", fileName));

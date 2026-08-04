@@ -54,6 +54,7 @@
         </button>
         <button class="section-button management-only accounts-only" data-section="employees" type="button">Staff</button>
         <button class="section-button admin-only" data-section="finance" type="button">Finance</button>
+        <button class="section-button admin-only" data-section="business-settings" type="button">Business Settings</button>
       </nav>
 
       <main class="dashboard workspace-section" id="dashboardSection">
@@ -1661,6 +1662,97 @@
           <div class="audit-list" id="auditList"></div>
         </section>
       </main>
+
+      <main class="business-settings workspace-section hidden admin-only" id="businessSettingsSection">
+        <section class="panel business-settings-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Administration</p>
+              <h2>Business Profile</h2>
+              <p id="businessSettingsMeta">Business identity and ledger presentation</p>
+            </div>
+          </div>
+
+          <form id="businessSettingsForm">
+            <div class="business-settings-layout">
+              <div class="business-settings-fields">
+                <label>
+                  Business name
+                  <input id="settingsBusinessNameInput" required maxlength="100" autocomplete="organization">
+                </label>
+                <label>
+                  Ledger heading
+                  <input id="settingsLedgerNameInput" required maxlength="100">
+                </label>
+                <label>
+                  Location
+                  <input id="settingsLocationInput" maxlength="100">
+                </label>
+                <label>
+                  Business reference
+                  <input id="settingsReferenceIdInput" maxlength="100">
+                </label>
+                <label class="wide-field">
+                  Logo URL
+                  <input id="settingsLogoUrlInput" type="url" maxlength="500" placeholder="https://...">
+                </label>
+                <label class="wide-field">
+                  Business description
+                  <textarea id="settingsDescriptionInput" rows="5" maxlength="1000"></textarea>
+                </label>
+              </div>
+
+              <aside class="business-profile-preview" aria-label="Business profile preview">
+                <p class="eyebrow">Ledger Mark</p>
+                <div class="business-preview-brand">
+                  <img class="hidden" id="settingsLogoPreview" alt="">
+                  <div class="brand-monogram" id="settingsMonogramPreview" aria-hidden="true">BL</div>
+                  <div>
+                    <strong id="settingsNamePreview">Business</strong>
+                    <span id="settingsLedgerPreview">Business Ledger</span>
+                  </div>
+                </div>
+                <p class="business-preview-location" id="settingsLocationPreview"></p>
+                <p class="business-preview-description" id="settingsDescriptionPreview"></p>
+              </aside>
+            </div>
+
+            <div class="business-settings-divider"></div>
+            <div class="business-settings-fields business-settings-regional">
+              <label>
+                Currency
+                <input id="settingsCurrencyInput" required maxlength="3" list="businessCurrencyOptions">
+              </label>
+              <label>
+                Locale
+                <input id="settingsLocaleInput" required maxlength="30" list="businessLocaleOptions">
+              </label>
+              <label>
+                Timezone
+                <input id="settingsTimezoneInput" required maxlength="80" list="businessTimezoneOptions">
+              </label>
+              <label>
+                Sales location name
+                <input id="settingsSalesLocationInput" required maxlength="50">
+              </label>
+              <label>
+                Storage location name
+                <input id="settingsStorageLocationInput" required maxlength="50">
+              </label>
+              <label>
+                Sales order name
+                <input id="settingsSalesOrderInput" required maxlength="50">
+              </label>
+            </div>
+
+            <div class="business-settings-actions">
+              <p class="form-status" id="businessSettingsStatus" role="status"></p>
+              <button class="ghost-button" id="resetBusinessSettingsButton" type="button">Reload Saved</button>
+              <button class="primary-button" id="saveBusinessSettingsButton" type="submit">Save Changes</button>
+            </div>
+          </form>
+        </section>
+      </main>
     </div>
 
     <script src="pricing.js?v=20260714-kits"></script>
@@ -1681,8 +1773,36 @@
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
     <datalist id="catalogCategoryOptions"></datalist>
+    <datalist id="businessCurrencyOptions">
+      <option value="USD"></option>
+      <option value="EUR"></option>
+      <option value="GBP"></option>
+      <option value="NOK"></option>
+      <option value="SEK"></option>
+      <option value="DKK"></option>
+      <option value="CAD"></option>
+      <option value="AUD"></option>
+    </datalist>
+    <datalist id="businessLocaleOptions">
+      <option value="en-US"></option>
+      <option value="en-GB"></option>
+      <option value="nb-NO"></option>
+      <option value="nl-NL"></option>
+      <option value="de-DE"></option>
+      <option value="fr-FR"></option>
+    </datalist>
+    <datalist id="businessTimezoneOptions">
+      <option value="UTC"></option>
+      <option value="Europe/Oslo"></option>
+      <option value="Europe/London"></option>
+      <option value="America/New_York"></option>
+      <option value="America/Chicago"></option>
+      <option value="America/Denver"></option>
+      <option value="America/Los_Angeles"></option>
+      <option value="Australia/Sydney"></option>
+    </datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260805-catalog-goods"></script>
+    <script src="app.js?v=20260805-business-settings"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

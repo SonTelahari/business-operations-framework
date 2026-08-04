@@ -162,6 +162,24 @@ class TenantManager {
     this.contexts.delete(String(businessId || "").trim());
   }
 
+  async updateWorkspaceIdentity(businessId, businessProfile = {}) {
+    const id = String(businessId || "").trim();
+    const name = String(businessProfile.name || "").trim().replace(/\s+/g, " ").slice(0, 100);
+    const referenceId = cleanReferenceId(businessProfile.referenceId);
+    if (!id || !name) throw tenantError("Business workspace identity is incomplete", 400, "invalid_workspace_identity");
+    const result = await this.database.query(`
+      UPDATE businesses
+      SET name = $2, reference_id = $3, updated_at = now()
+      WHERE id = $1 AND status = 'active'
+      RETURNING id, workspace_code, name, reference_id, status, created_at
+    `, [id, name, referenceId]);
+    if (!result.rowCount) throw tenantError("Business workspace not found", 404, "workspace_not_found");
+    const updated = publicBusiness(result.rows[0]);
+    const cached = this.contexts.get(id);
+    if (cached) cached.business = updated;
+    return structuredClone(updated);
+  }
+
   async exportWorkspace(businessId, source = {}) {
     const id = String(businessId || "").trim();
     const result = await this.database.query(`

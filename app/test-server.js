@@ -460,6 +460,11 @@ async function run() {
   assert.equal(employeeBuyOrderAttempt.response.status, 403);
   const employeeFinanceAttempt = await getJson(`${baseUrl}/api/finance`, employeeCookie);
   assert.equal(employeeFinanceAttempt.response.status, 403);
+  const employeeBusinessProfileAttempt = await put(`${baseUrl}/api/admin/business-profile`, {
+    business: { name: "Unauthorized Rename" }
+  }, employeeCookie);
+  assert.equal(employeeBusinessProfileAttempt.response.status, 403);
+  assert.equal(employeeBusinessProfileAttempt.body.code, "admin_required");
   const employeeSupplierAttempt = await getJson(`${baseUrl}/api/suppliers`, employeeCookie);
   assert.equal(employeeSupplierAttempt.response.status, 403);
   const employeeDailyCloseAttempt = await getJson(`${baseUrl}/api/daily-closes`, employeeCookie);
@@ -513,6 +518,11 @@ async function run() {
   const managerFinanceAttempt = await getJson(`${baseUrl}/api/finance`, managerCookie);
   assert.equal(managerFinanceAttempt.response.status, 403);
   assert.equal(managerFinanceAttempt.body.code, "admin_required");
+  const managerBusinessProfileAttempt = await put(`${baseUrl}/api/admin/business-profile`, {
+    business: { name: "Manager Rename" }
+  }, managerCookie);
+  assert.equal(managerBusinessProfileAttempt.response.status, 403);
+  assert.equal(managerBusinessProfileAttempt.body.code, "admin_required");
   const managerProductInsight = await getJson(`${baseUrl}/api/product-insights/Navy%20Revolver`, managerCookie);
   assert.equal(managerProductInsight.response.status, 200);
   assert.equal(managerProductInsight.body.item.name, "Navy Revolver");
@@ -1197,6 +1207,19 @@ async function run() {
 async function post(url, payload, cookie = "") {
   const response = await fetch(url, {
     method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      ...(cookie ? { cookie } : {})
+    },
+    body: JSON.stringify(payload)
+  });
+  return { response, body: await response.json() };
+}
+
+async function put(url, payload, cookie = "") {
+  const response = await fetch(url, {
+    method: "PUT",
     headers: {
       "content-type": "application/json",
       accept: "application/json",

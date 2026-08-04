@@ -93,6 +93,33 @@ class BusinessStore {
     });
   }
 
+  async updateBusinessProfile(input, actor) {
+    return this.mutate(async () => {
+      if (!this.isConfigured()) {
+        throw businessError("Complete business setup before changing its profile", 409, "setup_required");
+      }
+      const current = this.data.configuration;
+      const source = input && typeof input === "object" ? input : {};
+      const normalized = normalizeSetupPayload({
+        ...current,
+        business: {
+          ...current.business,
+          ...(source.business && typeof source.business === "object" ? source.business : {})
+        },
+        terminology: {
+          ...current.terminology,
+          ...(source.terminology && typeof source.terminology === "object" ? source.terminology : {})
+        }
+      });
+      normalized.completedAt = current.completedAt;
+      normalized.completedBy = current.completedBy;
+      normalized.updatedAt = new Date().toISOString();
+      normalized.updatedBy = cleanText(actor?.fullName, 100) || "Administrator";
+      this.data.configuration = normalized;
+      return structuredClone(normalized);
+    });
+  }
+
   listSupplyOrders() {
     return this.data.supplyOrders
       .map(order => structuredClone(order))

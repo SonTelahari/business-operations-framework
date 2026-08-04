@@ -78,6 +78,38 @@ async function run() {
   assert.deepEqual(bootstrap.body.recipes["Copper Pan"], [["Copper", 3]]);
   assert.equal(bootstrap.body.pricing.materials.Copper.midpoint, 2.5);
 
+  const unsafeProfile = await put(`${baseUrl}/api/admin/business-profile`, {
+    business: { logoUrl: "javascript:alert(1)" }
+  }, cookie);
+  assert.equal(unsafeProfile.response.status, 400);
+  assert.equal(unsafeProfile.body.code, "invalid_logo_url");
+
+  const updatedProfile = await put(`${baseUrl}/api/admin/business-profile`, {
+    business: {
+      name: "Copper & Pine Trading",
+      ledgerName: "Trading House Ledger",
+      location: "Saint Denis",
+      referenceId: "SD-42",
+      description: "Fine cookware and household metalwork.",
+      logoUrl: "https://example.com/copper-pine.png",
+      currency: "USD",
+      locale: "en-US",
+      timezone: "America/Chicago"
+    },
+    terminology: {
+      salesLocation: "Showroom",
+      storageLocation: "Warehouse",
+      salesOrder: "Customer Order"
+    }
+  }, cookie);
+  assert.equal(updatedProfile.response.status, 200);
+  assert.equal(updatedProfile.body.business.name, "Copper & Pine Trading");
+  assert.equal(updatedProfile.body.business.description, "Fine cookware and household metalwork.");
+  assert.equal(updatedProfile.body.terminology.salesOrder, "Customer Order");
+  const updatedBootstrap = await getJson(`${baseUrl}/api/bootstrap`, cookie);
+  assert.equal(updatedBootstrap.body.business.ledgerName, "Trading House Ledger");
+  assert.equal(updatedBootstrap.body.items[0].name, "Copper Pan", "profile changes must preserve the catalog");
+
   const repeatedSetup = await post(`${baseUrl}/api/setup/complete`, {}, cookie);
   assert.equal(repeatedSetup.response.status, 409);
   assert.equal(repeatedSetup.body.code, "setup_already_completed");
@@ -91,10 +123,12 @@ async function run() {
   assert.equal(restartedHealth.body.setupRequired, false);
   const publicConfig = await getJson(`${baseUrl}/api/public/config`);
   assert.equal(publicConfig.body.configured, true);
-  assert.equal(publicConfig.body.business.name, "Copper & Pine");
+  assert.equal(publicConfig.body.business.name, "Copper & Pine Trading");
+  assert.equal(publicConfig.body.business.logoUrl, "https://example.com/copper-pine.png");
   const persistedBootstrap = await getJson(`${baseUrl}/api/bootstrap`, cookie);
   assert.equal(persistedBootstrap.response.status, 200);
   assert.equal(persistedBootstrap.body.items[0].target, 4);
+  assert.equal(persistedBootstrap.body.terminology.storageLocation, "Warehouse");
 
   console.log("First-launch owner, business catalog, and restart persistence checks passed.");
 }
@@ -132,6 +166,15 @@ async function getJson(url, cookie = "") {
 async function post(url, payload, cookie = "") {
   const response = await fetch(url, {
     method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json", ...(cookie ? { cookie } : {}) },
+    body: JSON.stringify(payload)
+  });
+  return { response, body: await response.json() };
+}
+
+async function put(url, payload, cookie = "") {
+  const response = await fetch(url, {
+    method: "PUT",
     headers: { "content-type": "application/json", accept: "application/json", ...(cookie ? { cookie } : {}) },
     body: JSON.stringify(payload)
   });

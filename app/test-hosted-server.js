@@ -239,6 +239,34 @@ async function run() {
     const catalogBootstrap = await request("/api/bootstrap", { cookie: first.cookie });
     assert.equal(catalogBootstrap.body.materials.find(item => item.name === "Hosted Iron").price, 2);
 
+    const employeeProfileAttempt = await request("/api/admin/business-profile", {
+      method: "PUT",
+      cookie: membershipSelect.cookie,
+      body: { business: { name: "Unauthorized Rename" } }
+    });
+    assert.equal(employeeProfileAttempt.status, 403);
+    assert.equal(employeeProfileAttempt.body.code, "admin_required");
+    const profileUpdate = await request("/api/admin/business-profile", {
+      method: "PUT",
+      cookie: first.cookie,
+      body: {
+        business: {
+          name: "Frontier Firearms Van Horn",
+          description: "Arms, ammunition, and field equipment.",
+          logoUrl: "https://example.com/frontier-firearms.png"
+        }
+      }
+    });
+    assert.equal(profileUpdate.status, 200, JSON.stringify(profileUpdate.body));
+    assert.equal(profileUpdate.body.workspace.name, "Frontier Firearms Van Horn");
+    const renamedPublicConfig = await request(`/api/public/config?workspace=${first.body.workspace.code}`);
+    assert.equal(renamedPublicConfig.body.business.name, "Frontier Firearms Van Horn");
+    const renamedProfile = await request("/api/profile", { cookie: identityCookie });
+    assert.equal(
+      renamedProfile.body.memberships.find(entry => entry.businessId === first.body.workspace.id).businessName,
+      "Frontier Firearms Van Horn"
+    );
+
     const unknownChannel = await bridgeRequest("/api/integrations/discord/events", {
       method: "POST",
       body: depositPayload("unknown-deposit", "223456789012345679", 1)
@@ -268,6 +296,8 @@ async function run() {
     const recoveryAudit = await request("/api/operator/overview", { cookie: operatorCookie });
     assert.equal(recoveryAudit.body.audit[0].action, "workspace.owner_password_reset");
     assert.equal(JSON.stringify(recoveryAudit.body).includes(temporaryOwnerPassword), false);
+    const profileAudit = await request("/api/admin/audit?limit=1000", { cookie: recoveredOwner.cookie });
+    assert(profileAudit.body.events.some(event => event.action === "business.profile_updated"));
 
     console.log("Hosted workspace HTTP and Discord routing tests passed.");
   } finally {
