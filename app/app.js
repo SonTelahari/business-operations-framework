@@ -297,6 +297,9 @@ const elements = {
   reviewReason: document.querySelector("#reviewReason"),
   reviewDiscordName: document.querySelector("#reviewDiscordName"),
   reviewDiscordLabel: document.querySelector("#reviewDiscordLabel"),
+  reviewAppInventoryTotal: document.querySelector("#reviewAppInventoryTotal"),
+  reviewReportedItemTotal: document.querySelector("#reviewReportedItemTotal"),
+  reviewStockVariance: document.querySelector("#reviewStockVariance"),
   reviewItem: document.querySelector("#reviewItemInput"),
   reviewEventType: document.querySelector("#reviewEventTypeInput"),
   reviewDirection: document.querySelector("#reviewDirectionInput"),
@@ -3149,6 +3152,9 @@ function renderReviewEditor(entry) {
     elements.reviewReason.textContent = "-";
     elements.reviewDiscordName.textContent = "-";
     elements.reviewDiscordLabel.textContent = "-";
+    elements.reviewAppInventoryTotal.textContent = "-";
+    elements.reviewReportedItemTotal.textContent = "-";
+    elements.reviewStockVariance.textContent = "-";
     elements.reviewItem.value = "";
     elements.reviewQuantity.value = 0;
     elements.reviewUnitPrice.value = 0;
@@ -3172,6 +3178,11 @@ function renderReviewEditor(entry) {
   elements.reviewReason.textContent = reviewReasonText(entry.reason);
   elements.reviewDiscordName.textContent = entry.discordItemName || "Not supplied";
   elements.reviewDiscordLabel.textContent = entry.discordItemLabel || "Not supplied";
+  elements.reviewAppInventoryTotal.textContent = reviewCountText(entry.appInventoryTotal);
+  elements.reviewReportedItemTotal.textContent = reviewCountText(entry.currentItemTotal);
+  elements.reviewStockVariance.textContent = entry.stockVariance === null || entry.stockVariance === undefined
+    ? "Not applicable"
+    : `${Number(entry.stockVariance) > 0 ? "+" : ""}${formatNumber(entry.stockVariance)}`;
   elements.reviewItem.value = entry.resolvedItem || suggestedItem?.label || entry.discordItemLabel || entry.discordItemName || "";
   elements.reviewEventType.value = ["Sale", "Purchase", "Stocking Movement"].includes(entry.eventType)
     ? entry.eventType
@@ -3182,7 +3193,7 @@ function renderReviewEditor(entry) {
   elements.reviewQuantity.value = Number(entry.quantity || 0);
   elements.reviewUnitPrice.value = Number(entry.unitPrice || 0);
   elements.reviewNote.value = entry.note || "";
-  elements.reviewRememberMapping.checked = true;
+  elements.reviewRememberMapping.checked = !entry.transactionWritten;
   elements.reviewCreateProduct.checked = false;
   elements.reviewProductLabel.value = entry.discordItemLabel || entry.discordItemName || "";
   elements.reviewProductTag.value = entry.discordItemName || "";
@@ -3191,8 +3202,9 @@ function renderReviewEditor(entry) {
   );
   elements.reviewProductPrice.value = Number(entry.unitPrice || 0);
   elements.reviewRawText.textContent = entry.rawText || "No webhook text was supplied";
-  renderReviewProductMode();
+  renderReviewProductMode(entry);
   setReviewEditorDisabled(entry.status !== "Open");
+  if (entry.status === "Open" && entry.transactionWritten) setRecordedReviewMode();
 }
 
 function setReviewEditorDisabled(disabled) {
@@ -3214,10 +3226,29 @@ function setReviewEditorDisabled(disabled) {
   ].forEach(element => { element.disabled = disabled; });
 }
 
-function renderReviewProductMode() {
+function renderReviewProductMode(entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId)) {
   const creating = elements.reviewCreateProduct.checked;
   elements.reviewNewProductFields.classList.toggle("hidden", !creating);
-  elements.resolveReview.textContent = creating ? "Add Ware and Apply" : "Resolve and Apply";
+  elements.resolveReview.textContent = entry?.transactionWritten
+    ? "Acknowledge Review"
+    : creating ? "Add Ware and Apply" : "Resolve and Apply";
+  elements.ignoreReview.textContent = entry?.transactionWritten ? "Dismiss Review" : "Ignore Event";
+}
+
+function setRecordedReviewMode() {
+  [
+    elements.reviewItem,
+    elements.reviewEventType,
+    elements.reviewDirection,
+    elements.reviewQuantity,
+    elements.reviewUnitPrice,
+    elements.reviewRememberMapping,
+    elements.reviewCreateProduct,
+    elements.reviewProductLabel,
+    elements.reviewProductTag,
+    elements.reviewProductCategory,
+    elements.reviewProductPrice
+  ].forEach(element => { element.disabled = true; });
 }
 
 function suggestProductCategory(value) {
@@ -3245,7 +3276,8 @@ function reviewReasonText(value) {
   const labels = {
     unknown_item: "Unknown item label",
     missing_item: "Item missing",
-    missing_quantity: "Quantity missing"
+    missing_quantity: "Quantity missing",
+    stock_count_mismatch: "Storefront count discrepancy"
   };
   return String(value || "Review required")
     .split(",")
@@ -3254,10 +3286,15 @@ function reviewReasonText(value) {
     .join(" / ");
 }
 
+function reviewCountText(value) {
+  return value === null || value === undefined || value === "" ? "Not supplied" : formatNumber(value);
+}
+
 async function resolveReviewException() {
   const entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId);
   if (!entry || entry.status !== "Open") return;
-  const creating = elements.reviewCreateProduct.checked;
+  const transactionAlreadyWritten = Boolean(entry.transactionWritten);
+  const creating = !transactionAlreadyWritten && elements.reviewCreateProduct.checked;
   const item = findExactStockItem(elements.reviewItem.value);
   const quantity = Number(elements.reviewQuantity.value);
   if (!creating && !item) {
@@ -3308,7 +3345,7 @@ async function resolveReviewException() {
       direction: elements.reviewDirection.value,
       quantity,
       unitPrice: Number(elements.reviewUnitPrice.value || 0),
-      rememberMapping: elements.reviewRememberMapping.checked,
+      rememberMapping: !transactionAlreadyWritten && elements.reviewRememberMapping.checked,
       note: elements.reviewNote.value.trim(),
       newProduct
     }

@@ -132,6 +132,11 @@ async function run() {
     });
     assert.equal(rifleWithdrawal.stockControlWritten, false);
     assert.equal(rifleWithdrawal.listingTotalObserved, true);
+    assert.equal(rifleWithdrawal.reviewRequired, true);
+    assert.equal(rifleWithdrawal.reviewReason, "stock_count_mismatch");
+    assert.equal(rifleWithdrawal.appInventoryTotal, 48);
+    assert.equal(rifleWithdrawal.reportedItemTotal, 0);
+    assert.equal(rifleWithdrawal.stockVariance, 48);
     await store.ingestWebhook({
       webhook_id: "discord-rifle-correct-price",
       event_type: "Stocking Movement",
@@ -203,7 +208,14 @@ async function run() {
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").salePrice, 2.25);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Iron").storageCount, 25);
     assert.equal(snapshot.inventory.ledger.balance, 140);
-    assert.equal(snapshot.reviewExceptions[0].status, "Resolved");
+    assert.equal(snapshot.reviewExceptions.find(entry => entry.webhookId === "discord-unknown-1").status, "Resolved");
+    const countDiscrepancy = snapshot.reviewExceptions.find(entry => entry.webhookId === "discord-rifle-withdrawal");
+    assert.equal(countDiscrepancy.status, "Open");
+    assert.equal(countDiscrepancy.reason, "stock_count_mismatch");
+    assert.equal(countDiscrepancy.currentItemTotal, 0);
+    assert.equal(countDiscrepancy.appInventoryTotal, 48);
+    assert.equal(countDiscrepancy.stockVariance, 48);
+    assert.equal(countDiscrepancy.transactionWritten, true);
 
     const listingWithdrawal = await database.query(`
       SELECT quantity_delta, absolute_quantity, metadata
@@ -213,6 +225,44 @@ async function run() {
     assert.equal(Number(listingWithdrawal.rows[0].quantity_delta), -2);
     assert.equal(listingWithdrawal.rows[0].absolute_quantity, null);
     assert.equal(listingWithdrawal.rows[0].metadata.listingItemTotal, 0);
+
+    const acknowledgedDiscrepancy = await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-rifle-withdrawal",
+        itemName: "Rifle Ammo Express",
+        quantity: 2,
+        eventType: "Stocking Movement",
+        direction: "Stock Out",
+        unitPrice: 2,
+        rememberMapping: false,
+        resolvedBy: "Ada Lovelace",
+        note: "Price-specific listing total acknowledged"
+      }
+    });
+    assert.equal(acknowledgedDiscrepancy.transactionAlreadyWritten, true);
+    assert.equal((await store.snapshot()).inventory.products.find(item => item.itemName === "Rifle Ammo Express").currentStock, 50);
+
+    const dismissedDiscrepancy = await store.ingestWebhook({
+      webhook_id: "discord-unpriced-count-mismatch",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      item_name: "Unpriced Widget",
+      quantity: 1,
+      unit_price: 12,
+      current_item_total: 0,
+      occurred_at: "2026-08-01T13:00:00.000Z"
+    });
+    assert.equal(dismissedDiscrepancy.reviewRequired, true);
+    await store.handleGuiPayload({
+      action: "ignore_exception",
+      exception: { webhookId: "discord-unpriced-count-mismatch", resolvedBy: "Ada Lovelace" }
+    });
+    const dismissedWebhook = await database.query(`
+      SELECT status FROM webhook_events WHERE webhook_id = 'discord-unpriced-count-mismatch'
+    `);
+    assert.equal(dismissedWebhook.rows[0].status, "applied");
+    assert.equal((await store.snapshot()).inventory.products.find(item => item.itemName === "Unpriced Widget").currentStock, 2);
 
     const finance = await store.finance({ from: "2026-08-01", to: "2026-08-31" });
     assert.deepEqual(finance.totals, { revenue: 50, expenses: 10, profit: 40 });

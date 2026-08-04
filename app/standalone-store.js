@@ -747,6 +747,30 @@ class StandaloneStore {
         };
       }
       const applied = await applyWebhookEvent(client, this.businessId, event, { applyLedger: true });
+      if (applied.stockDiscrepancy) {
+        const reviewReason = "stock_count_mismatch";
+        await insertException(client, this.businessId, {
+          ...event,
+          reviewReason,
+          discordTitle: event.discordTitle || `${event.item} count discrepancy`,
+          discordItemName: event.discordItemName || event.item,
+          discordItemLabel: event.discordItemLabel || event.item
+        }, {
+          ...payload,
+          app_inventory_total: applied.appInventoryTotal,
+          reported_item_total: applied.reportedItemTotal,
+          stock_variance: applied.stockVariance,
+          transaction_already_written: true
+        }, { transactionWritten: true });
+        return {
+          ok: true,
+          webhookId: event.webhookId,
+          transactionWritten: true,
+          reviewRequired: true,
+          reviewReason,
+          ...applied
+        };
+      }
       return { ok: true, webhookId: event.webhookId, transactionWritten: true, ...applied };
     });
   }
@@ -779,6 +803,7 @@ class StandaloneStore {
       requireItem(itemName);
       const payload = json(stored.payload, {});
       const historyPreserved = payload.importedFromArchive === true;
+      const transactionAlreadyWritten = Boolean(stored.transaction_written);
       const event = normalizeWebhook({
         ...payload,
         webhook_id: webhookId,
@@ -795,7 +820,7 @@ class StandaloneStore {
         review_required: false,
         review_reason: ""
       });
-      const applied = historyPreserved
+      const applied = historyPreserved || transactionAlreadyWritten
         ? { stockControlWritten: false, ledgerControlWritten: false }
         : await applyWebhookEvent(client, this.businessId, event, { applyLedger: false });
       const resolvedBy = cleanText(correction.resolvedBy, 100) || "Manager";
@@ -813,37 +838,51 @@ class StandaloneStore {
           status = 'Resolved', resolved_item_name = $3, resolved_at = now(), resolved_by = $4,
           resolution_note = $5, transaction_written = $6
         WHERE business_id = $1 AND webhook_id = $2
-      `, [this.businessId, webhookId, itemName, resolvedBy, cleanText(correction.note, 2500), !historyPreserved]);
+      `, [
+        this.businessId,
+        webhookId,
+        itemName,
+        resolvedBy,
+        cleanText(correction.note, 2500),
+        transactionAlreadyWritten || !historyPreserved
+      ]);
       await client.query(`
         UPDATE webhook_events SET status = $3, item_name = $4, quantity = $5, unit_price = $6
         WHERE business_id = $1 AND webhook_id = $2
       `, [this.businessId, webhookId, historyPreserved ? "ignored" : "applied", itemName, quantity, event.unitPrice]);
       return {
         ok: true, action: "resolve_exception", webhookId, status: "Resolved", itemName,
-        productCreated, transactionWritten: !historyPreserved, historyPreserved, ...applied
+        productCreated,
+        transactionWritten: transactionAlreadyWritten || !historyPreserved,
+        transactionAlreadyWritten,
+        historyPreserved,
+        ...applied
       };
     });
   }
 
   async ignoreException(correction) {
     const webhookId = cleanText(correction.webhookId, 150);
-    const result = await this.database.query(`
-      UPDATE webhook_exceptions SET
-        status = 'Ignored', resolved_at = now(), resolved_by = $3, resolution_note = $4
-      WHERE business_id = $1 AND webhook_id = $2 AND status = 'Open'
-      RETURNING webhook_id
-    `, [this.businessId, webhookId, cleanText(correction.resolvedBy, 100) || "Manager", cleanText(correction.note, 2500)]);
-    if (!result.rowCount) {
-      const existing = await this.database.query(`
-        SELECT status FROM webhook_exceptions WHERE business_id = $1 AND webhook_id = $2
-      `, [this.businessId, webhookId]);
-      if (!existing.rowCount) throw storeError("Webhook exception not found", 404, "exception_not_found");
-      return { ok: true, duplicate: true, action: "ignore_exception", webhookId, status: existing.rows[0].status };
-    }
-    await this.database.query(`
-      UPDATE webhook_events SET status = 'ignored' WHERE business_id = $1 AND webhook_id = $2
-    `, [this.businessId, webhookId]);
-    return { ok: true, action: "ignore_exception", webhookId, status: "Ignored" };
+    return this.database.transaction(async client => {
+      const result = await client.query(`
+        UPDATE webhook_exceptions SET
+          status = 'Ignored', resolved_at = now(), resolved_by = $3, resolution_note = $4
+        WHERE business_id = $1 AND webhook_id = $2 AND status = 'Open'
+        RETURNING webhook_id, transaction_written
+      `, [this.businessId, webhookId, cleanText(correction.resolvedBy, 100) || "Manager", cleanText(correction.note, 2500)]);
+      if (!result.rowCount) {
+        const existing = await client.query(`
+          SELECT status FROM webhook_exceptions WHERE business_id = $1 AND webhook_id = $2
+        `, [this.businessId, webhookId]);
+        if (!existing.rowCount) throw storeError("Webhook exception not found", 404, "exception_not_found");
+        return { ok: true, duplicate: true, action: "ignore_exception", webhookId, status: existing.rows[0].status };
+      }
+      const transactionWritten = Boolean(result.rows[0].transaction_written);
+      await client.query(`
+        UPDATE webhook_events SET status = $3 WHERE business_id = $1 AND webhook_id = $2
+      `, [this.businessId, webhookId, transactionWritten ? "applied" : "ignored"]);
+      return { ok: true, action: "ignore_exception", webhookId, status: "Ignored", transactionWritten };
+    });
   }
 }
 
@@ -942,17 +981,17 @@ async function insertWebhook(client, businessId, event, payload, status) {
   ]);
 }
 
-async function insertException(client, businessId, event, payload) {
+async function insertException(client, businessId, event, payload, { transactionWritten = false } = {}) {
   await client.query(`
     INSERT INTO webhook_exceptions (
       business_id, webhook_id, status, reason, discord_title, discord_item_name, discord_item_label,
       proposed_event_type, proposed_direction, proposed_quantity, proposed_unit_price,
-      ledger_balance, current_item_total, original_payload
-    ) VALUES ($1, $2, 'Open', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+      ledger_balance, current_item_total, original_payload, transaction_written
+    ) VALUES ($1, $2, 'Open', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)
   `, [
     businessId, event.webhookId, event.reviewReason, event.discordTitle, event.discordItemName,
     event.discordItemLabel, event.type, event.direction, event.quantity, event.unitPrice,
-    event.ledgerBalance, event.currentItemTotal, JSON.stringify(payload)
+    event.ledgerBalance, event.currentItemTotal, JSON.stringify(payload), transactionWritten
   ]);
 }
 
@@ -982,6 +1021,13 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
       `, [businessId, inventoryKey(event.item), event.unitPrice]);
     }
   }
+  const appInventoryTotal = event.item && event.quantity > 0
+    ? await currentInventoryQuantity(client, businessId, "sales", event.item)
+    : null;
+  const stockVariance = appInventoryTotal === null || event.currentItemTotal === null
+    ? null
+    : appInventoryTotal - event.currentItemTotal;
+  const stockDiscrepancy = stockVariance !== null && Math.abs(stockVariance) > 0.0005;
   if (applyLedger) {
     const derivedCash = event.type === "Sale"
       ? event.quantity * event.unitPrice
@@ -1008,8 +1054,24 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
   return {
     stockControlWritten: false,
     listingTotalObserved: event.currentItemTotal !== null,
+    reportedItemTotal: event.currentItemTotal,
+    appInventoryTotal,
+    stockVariance,
+    stockDiscrepancy,
     ledgerControlWritten: applyLedger && event.ledgerBalance !== null
   };
+}
+
+async function currentInventoryQuantity(client, businessId, location, item) {
+  const normalizedItem = inventoryKey(item);
+  const result = await client.query(`
+    SELECT location_type, normalized_item_name, item_name, absolute_quantity, quantity_delta, occurred_at
+    FROM inventory_events
+    WHERE business_id = $1 AND location_type = $2 AND normalized_item_name = $3
+    ORDER BY occurred_at, recorded_at, event_id
+  `, [businessId, location, normalizedItem]);
+  const count = reduceInventory(result.rows).get(`${location}:${normalizedItem}`);
+  return Math.max(0, number(count?.quantity));
 }
 
 async function applyStoredMapping(client, businessId, event) {
@@ -1278,6 +1340,8 @@ function exceptionRow(row) {
     unitPrice: number(row.proposed_unit_price),
     ledgerBalance: nullableNumber(row.ledger_balance),
     currentItemTotal: nullableNumber(row.current_item_total),
+    appInventoryTotal: nullableNumber(payload.app_inventory_total),
+    stockVariance: nullableNumber(payload.stock_variance),
     resolvedItem: row.resolved_item_name,
     resolvedAt: iso(row.resolved_at),
     resolvedBy: row.resolved_by,
