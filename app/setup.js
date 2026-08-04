@@ -18,7 +18,7 @@ const elements = {
   recipes: document.querySelector("#recipeRows"),
   materialCount: document.querySelector("#materialCount"),
   productCount: document.querySelector("#productCount"),
-  productOptions: document.querySelector("#setupProductOptions"),
+  addRecipe: document.querySelector("#addRecipeButton"),
   review: document.querySelector("#setupReview")
 };
 
@@ -57,7 +57,7 @@ function wireEvents() {
   document.querySelector("#addLocationButton").addEventListener("click", () => addLocationRow());
   document.querySelector("#addMaterialButton").addEventListener("click", () => addMaterialRow());
   document.querySelector("#addProductButton").addEventListener("click", () => addProductRow());
-  document.querySelector("#addRecipeButton").addEventListener("click", () => addRecipeRow());
+  elements.addRecipe.addEventListener("click", () => addRecipeRow());
   document.querySelectorAll("[data-setup-nav]").forEach(button => {
     button.addEventListener("click", () => {
       const target = Number(button.dataset.setupNav);
@@ -70,6 +70,20 @@ function wireEvents() {
     saveTimer = setTimeout(saveDraft, 300);
   });
   elements.form.addEventListener("click", event => {
+    const addIngredient = event.target.closest("[data-add-ingredient-row]");
+    if (addIngredient) {
+      addRecipeIngredientRow(addIngredient.closest("[data-setup-row]"));
+      updateDerivedViews();
+      saveDraft();
+      return;
+    }
+    const removeIngredient = event.target.closest("[data-remove-ingredient-row]");
+    if (removeIngredient) {
+      removeIngredient.closest("[data-ingredient-row]")?.remove();
+      updateDerivedViews();
+      saveDraft();
+      return;
+    }
     const remove = event.target.closest("[data-remove-row]");
     if (!remove) return;
     remove.closest("[data-setup-row]")?.remove();
@@ -117,6 +131,34 @@ function validateStep(step) {
     if (!types.includes("sales") || !types.includes("storage")) {
       setMessage("Keep at least one sales location and one storage location.", "error");
       return false;
+    }
+  }
+  if (step === 4) {
+    const seenOutputs = new Set();
+    for (const recipe of collectRows(elements.recipes)) {
+      const productName = value(recipe, "productName");
+      if (seenOutputs.has(productName.toLowerCase())) {
+        setMessage(`Only one recipe can be entered for ${productName}.`, "error");
+        recipe.querySelector('[data-field="productName"]')?.focus();
+        return false;
+      }
+      seenOutputs.add(productName.toLowerCase());
+      const ingredients = collectRecipeIngredients(recipe);
+      if (!ingredients.length) {
+        setMessage(`${productName || "Each recipe"} needs at least one ingredient.`, "error");
+        recipe.querySelector("[data-add-ingredient-row]")?.focus();
+        return false;
+      }
+      const seenIngredients = new Set();
+      for (const ingredient of ingredients) {
+        const key = ingredient.name.toLowerCase();
+        if (seenIngredients.has(key)) {
+          setMessage(`${ingredient.name} is listed twice in ${productName}.`, "error");
+          ingredient.row.querySelector('[data-field="ingredientName"]')?.focus();
+          return false;
+        }
+        seenIngredients.add(key);
+      }
     }
   }
   return true;
@@ -201,19 +243,14 @@ function collectPayload() {
         recipes: collectRows(elements.recipes).map(row => ({
           productName: value(row, "productName"),
           yield: numberValue(row, "yield") || 1,
-          ingredients: parseIngredients(value(row, "ingredients"), value(row, "productName"))
+          ingredients: collectRecipeIngredients(row).map(ingredient => ({
+            name: ingredient.name,
+            quantity: ingredient.quantity
+          }))
         }))
       }
     }
   };
-}
-
-function parseIngredients(text, productName) {
-  return String(text || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean).map((line, index) => {
-    const match = line.match(/^(.+?)\s*(?:\||,)\s*([0-9]+(?:\.[0-9]+)?)$/);
-    if (!match) throw new Error(`Recipe line ${index + 1} for ${productName || "product"} must use: Ingredient | quantity`);
-    return { name: match[1].trim(), quantity: Number(match[2]) };
-  });
 }
 
 function addLocationRow(location = {}) {
@@ -261,18 +298,40 @@ function addProductRow(product = {}) {
 
 function addRecipeRow(recipe = {}) {
   removeEmpty(elements.recipes);
-  const ingredientText = recipe.ingredientText || (recipe.ingredients || []).map(item => `${item.name} | ${item.quantity}`).join("\n");
   elements.recipes.insertAdjacentHTML("beforeend", `
     <article class="setup-recipe-row" data-setup-row>
       <div class="recipe-row-heading">
-        <label>Output<input data-field="productName" list="setupProductOptions" required value="${escapeHtml(recipe.productName || "")}"></label>
+        <label>Output<select data-field="productName" required>${recipeOutputOptionMarkup(recipe.productName)}</select></label>
         <label>Output quantity<input data-field="yield" type="number" min="0.01" step="0.01" value="${numericValue(recipe.yield || 1)}"></label>
         <button class="remove-row-button" data-remove-row type="button" aria-label="Remove recipe">Remove</button>
       </div>
-      <label>Ingredients
-        <textarea data-field="ingredients" rows="5" required placeholder="Material | quantity">${escapeHtml(ingredientText)}</textarea>
-      </label>
+      <div class="recipe-ingredient-list" data-recipe-ingredients></div>
+      <div class="recipe-ingredient-actions">
+        <button class="secondary-button compact-button" data-add-ingredient-row type="button">Add Material</button>
+      </div>
     </article>
+  `);
+  const row = collectRows(elements.recipes).at(-1);
+  const ingredients = Array.isArray(recipe.ingredients) && recipe.ingredients.length
+    ? recipe.ingredients
+    : parseIngredientDraft(recipe.ingredientText);
+  (ingredients.length ? ingredients : [{}]).forEach(ingredient => addRecipeIngredientRow(row, ingredient));
+  updateDerivedViews();
+}
+
+function addRecipeIngredientRow(recipeRow, ingredient = {}) {
+  const container = recipeRow?.querySelector("[data-recipe-ingredients]");
+  if (!container) return;
+  container.insertAdjacentHTML("beforeend", `
+    <div class="recipe-ingredient-row" data-ingredient-row>
+      <label>Material or component
+        <select data-field="ingredientName" required>${recipeIngredientOptionMarkup(ingredient.name)}</select>
+      </label>
+      <label>Quantity
+        <input data-field="ingredientQuantity" type="number" min="0.001" step="0.001" required value="${positiveNumericValue(ingredient.quantity, 1)}">
+      </label>
+      <button class="remove-row-button" data-remove-ingredient-row type="button" aria-label="Remove recipe ingredient">Remove</button>
+    </div>
   `);
 }
 
@@ -281,13 +340,24 @@ function updateDerivedViews() {
   const products = collectRows(elements.products);
   elements.materialCount.textContent = `${materials.length} ${materials.length === 1 ? "entry" : "entries"}`;
   elements.productCount.textContent = `${products.length} ${products.length === 1 ? "entry" : "entries"}`;
-  elements.productOptions.innerHTML = [...materials, ...products]
-    .map(row => `<option value="${escapeHtml(value(row, "name"))}"></option>`)
-    .join("");
+  elements.addRecipe.disabled = materials.length + products.length === 0;
+  refreshRecipeCatalogOptions();
   ensureEmpty(elements.materials, "No materials entered");
   ensureEmpty(elements.products, "No products entered");
   ensureEmpty(elements.recipes, "No recipes entered");
   if (activeStep === STEP_COUNT - 1) renderReview();
+}
+
+function refreshRecipeCatalogOptions() {
+  collectRows(elements.recipes).forEach(recipe => {
+    const output = recipe.querySelector('[data-field="productName"]');
+    const selectedOutput = output?.value || "";
+    if (output) output.innerHTML = recipeOutputOptionMarkup(selectedOutput);
+    recipe.querySelectorAll('[data-field="ingredientName"]').forEach(select => {
+      const selectedIngredient = select.value;
+      select.innerHTML = recipeIngredientOptionMarkup(selectedIngredient);
+    });
+  });
 }
 
 function renderReview() {
@@ -319,7 +389,10 @@ function saveDraft() {
     recipes: collectRows(elements.recipes).map(row => ({
       productName: value(row, "productName"),
       yield: value(row, "yield"),
-      ingredientText: value(row, "ingredients")
+      ingredients: collectRecipeIngredients(row).map(ingredient => ({
+        name: ingredient.name,
+        quantity: ingredient.quantity
+      }))
     }))
   };
   localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -361,6 +434,14 @@ function collectRows(container) {
   return [...container.querySelectorAll(":scope > [data-setup-row]")];
 }
 
+function collectRecipeIngredients(recipeRow) {
+  return [...recipeRow.querySelectorAll("[data-ingredient-row]")].map(row => ({
+    name: value(row, "ingredientName"),
+    quantity: numberValue(row, "ingredientQuantity"),
+    row
+  }));
+}
+
 function value(row, field) {
   return row?.querySelector(`[data-field="${field}"]`)?.value.trim() || "";
 }
@@ -388,9 +469,61 @@ function optionMarkup(options, selected) {
   return options.map(option => `<option value="${option}"${option === selected ? " selected" : ""}>${option[0].toUpperCase()}${option.slice(1)}</option>`).join("");
 }
 
+function recipeOutputOptionMarkup(selected = "") {
+  return groupedCatalogOptionMarkup([
+    { label: "Products", options: catalogOptions(elements.products, true) },
+    { label: "Crafted materials", options: catalogOptions(elements.materials) }
+  ], selected, "Select product or crafted material");
+}
+
+function recipeIngredientOptionMarkup(selected = "") {
+  return groupedCatalogOptionMarkup([
+    { label: "Materials", options: catalogOptions(elements.materials) },
+    { label: "Product components", options: catalogOptions(elements.products, true) }
+  ], selected, "Select material");
+}
+
+function catalogOptions(container, includeDisplayLabel = false) {
+  return collectRows(container).map(row => {
+    const name = value(row, "name");
+    const displayLabel = includeDisplayLabel ? value(row, "label") : "";
+    return {
+      value: name,
+      label: displayLabel && displayLabel !== name ? `${displayLabel} - ${name}` : name
+    };
+  }).filter(option => option.value);
+}
+
+function groupedCatalogOptionMarkup(groups, selected, placeholder) {
+  const markup = [`<option value="">${escapeHtml(placeholder)}</option>`];
+  groups.forEach(group => {
+    if (!group.options.length) return;
+    markup.push(`<optgroup label="${escapeHtml(group.label)}">`);
+    group.options.forEach(option => {
+      markup.push(`<option value="${escapeHtml(option.value)}"${option.value === selected ? " selected" : ""}>${escapeHtml(option.label)}</option>`);
+    });
+    markup.push("</optgroup>");
+  });
+  return markup.join("");
+}
+
+function parseIngredientDraft(text) {
+  return String(text || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+    const match = line.match(/^(.+?)\s*(?:\||,)\s*([0-9]+(?:\.[0-9]+)?)$/);
+    return match
+      ? { name: match[1].trim(), quantity: Number(match[2]) }
+      : { name: line, quantity: 1 };
+  });
+}
+
 function numericValue(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? String(number) : "0";
+}
+
+function positiveNumericValue(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? String(number) : String(fallback);
 }
 
 function setBusy(busy) {

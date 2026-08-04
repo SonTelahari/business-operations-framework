@@ -279,6 +279,26 @@
   margin-bottom: 12px;
 }
 
+.recipe-ingredient-list {
+  display: grid;
+  gap: 8px;
+}
+
+.recipe-ingredient-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(120px, 0.35fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(126, 105, 75, 0.28);
+}
+
+.recipe-ingredient-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
 .setup-review {
   margin-top: 28px;
   padding: 16px 0;
@@ -374,6 +394,7 @@
   .material-row,
   .product-row,
   .recipe-row-heading,
+  .recipe-ingredient-row,
   .module-grid,
   .setup-review > div {
     grid-template-columns: 1fr;

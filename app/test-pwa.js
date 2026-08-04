@@ -6,6 +6,7 @@ const root = __dirname;
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.webmanifest"), "utf8"));
 const serviceWorker = fs.readFileSync(path.join(root, "service-worker.js"), "utf8");
 const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
+const setupScript = fs.readFileSync(path.join(root, "setup.js"), "utf8");
 
 assert.equal(manifest.name, "Business Operations Ledger");
 assert.equal(manifest.display, "standalone");
@@ -27,6 +28,12 @@ for (const htmlFile of ["index.html", "login.html", "profile.html", "setup.html"
   assert(html.includes('rel="manifest" href="/manifest.webmanifest"'), `${htmlFile} must link the manifest`);
   assert(html.includes('src="/pwa.js"'), `${htmlFile} must load the PWA controller`);
 }
+
+assert(setupScript.includes('select data-field="productName" required'), "recipe outputs must use a catalog dropdown");
+assert(setupScript.includes('select data-field="ingredientName" required'), "recipe ingredients must use catalog dropdowns");
+assert(setupScript.includes("data-add-ingredient-row"), "recipe cards must support additional ingredient rows");
+assert(setupScript.includes("collectRecipeIngredients"), "recipe dropdown rows must serialize as structured ingredients");
+assert(!setupScript.includes("parseIngredients("), "first-launch recipes must not require free-form ingredient parsing");
 
 function pngSize(fileName) {
   const data = fs.readFileSync(path.join(root, "assets", fileName));
