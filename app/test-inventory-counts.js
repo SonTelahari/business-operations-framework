@@ -97,6 +97,19 @@ const completeStorageCount = selectLatestCounts({
 assert.equal(completeStorageCount.get("iron"), 25, "the complete storage snapshot must take precedence over materials-only data");
 assert.equal(completeStorageCount.get("navy revolver"), 2, "counted finished goods in storage must be preserved");
 
+const completeStorefrontCount = selectLatestCounts({
+  location: "Storefront",
+  inventory: {
+    products: [{ itemName: "Navy Revolver", currentStock: 2 }],
+    storefront: [
+      { itemName: "Navy Revolver", itemType: "product", currentStock: 2 },
+      { itemName: "Native Ore", itemType: "material", currentStock: 5 }
+    ]
+  },
+  operations: []
+});
+assert.equal(completeStorefrontCount.get("native ore"), 5, "reviewed materials in the storefront must remain countable");
+
 const pendingTransferStorefront = selectLatestCounts({
   location: "Storefront",
   inventory: { products: [{ itemName: "Navy Revolver", currentStock: 5, countedAt: "2026-07-13T10:00:00.000Z" }] },

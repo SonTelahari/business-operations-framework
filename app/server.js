@@ -2402,13 +2402,17 @@ function requiresAdmin(payload) {
 }
 
 function requiresManagement(payload) {
-  return payload.action === "stock_target"
+  return payload.action === "catalog_item"
+    || payload.action === "stock_target"
     || payload.action === "manual_operation"
     || payload.action === "resolve_exception"
     || payload.action === "ignore_exception";
 }
 
 function stampEmployee(payload, user) {
+  if (payload.action === "catalog_item" && payload.item) {
+    payload.item.createdBy = user.fullName;
+  }
   if ((payload.action === "manual_operation" || payload.action === "time_clock") && payload.entry) {
     payload.entry.employee = user.fullName;
   }
@@ -2418,6 +2422,25 @@ function stampEmployee(payload, user) {
 }
 
 async function auditGuiPayload(payload, user, syncResult) {
+  if (payload.action === "catalog_item" && payload.item) {
+    if (!syncResult?.ok) return;
+    await accountStore.recordAudit({
+      category: "catalog",
+      action: "catalog.item_created",
+      actorId: user.id,
+      actorName: user.fullName,
+      subjectId: syncResult?.item?.id || payload.item.name,
+      subjectName: payload.item.label || payload.item.name,
+      fingerprint: `catalog:${syncResult?.item?.id || inventoryKey(payload.item.name)}`,
+      details: {
+        type: payload.item.type,
+        category: payload.item.category,
+        itemTag: payload.item.tag,
+        sheetSync: Boolean(syncResult?.ok)
+      }
+    });
+    return;
+  }
   if ((payload.action === "resolve_exception" || payload.action === "ignore_exception") && payload.exception) {
     const resolved = payload.action === "resolve_exception";
     await accountStore.recordAudit({
@@ -2434,6 +2457,11 @@ async function auditGuiPayload(payload, user, syncResult) {
         eventType: payload.exception.eventType,
         direction: payload.exception.direction,
         rememberMapping: payload.exception.rememberMapping,
+        catalogItem: payload.exception.newItem?.enabled ? {
+          type: payload.exception.newItem.type,
+          name: payload.exception.newItem.name,
+          category: payload.exception.newItem.category
+        } : null,
         note: payload.exception.note,
         sheetSync: Boolean(syncResult?.ok)
       }
@@ -3053,9 +3081,18 @@ function mergeCatalogWithSheetProducts(data, sheetSnapshot) {
   const sheetProducts = Array.isArray(sheetSnapshot?.inventory?.products)
     ? sheetSnapshot.inventory.products
     : [];
-  if (!sheetProducts.length) return data;
+  const sheetMaterials = Array.isArray(sheetSnapshot?.inventory?.materials)
+    ? sheetSnapshot.inventory.materials
+    : [];
+  if (!sheetProducts.length && !sheetMaterials.length) return data;
 
   const items = data.items.map(item => ({ ...item }));
+  const materials = data.materials.map(material => ({ ...material }));
+  const pricing = {
+    ...data.pricing,
+    products: { ...(data.pricing?.products || {}) },
+    materials: { ...(data.pricing?.materials || {}) }
+  };
   const lookup = new Map();
   items.forEach((item, index) => {
     [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])].forEach(value => {
@@ -3082,6 +3119,9 @@ function mergeCatalogWithSheetProducts(data, sheetSnapshot) {
       tag,
       category,
       price: Number(product.salePrice || 0),
+      target: Number(product.target || 0),
+      active: product.active !== false,
+      aliases: Array.isArray(product.aliases) ? [...product.aliases] : base.aliases || [],
       msrpLow: product.msrpLow === null || product.msrpLow === undefined
         ? null
         : Number(product.msrpLow),
@@ -3098,13 +3138,62 @@ function mergeCatalogWithSheetProducts(data, sheetSnapshot) {
         if (key) lookup.set(key, mergedIndex);
       });
     categories.add(category);
+    pricing.products[name] = catalogPrice(Number(product.salePrice || 0), product.pricingSource || "Store Catalog");
+  });
+
+  const materialLookup = new Map();
+  materials.forEach((material, index) => {
+    [material.name, material.label, material.tag, ...(Array.isArray(material.aliases) ? material.aliases : [])]
+      .forEach(value => {
+        const key = inventoryKey(value);
+        if (key && !materialLookup.has(key)) materialLookup.set(key, index);
+      });
+  });
+  sheetMaterials.forEach(material => {
+    if (material.active === false) return;
+    const name = String(material.name || material.ingredient || "").trim();
+    if (!name) return;
+    const label = String(material.label || name).trim() || name;
+    const tag = String(material.itemTag || "").trim();
+    const category = String(material.category || "Materials").trim() || "Materials";
+    const keys = [name, label, tag].map(inventoryKey).filter(Boolean);
+    const index = keys.map(key => materialLookup.get(key)).find(value => value !== undefined);
+    const base = index === undefined ? {} : materials[index];
+    const unitCost = Number(material.unitCost ?? material.price ?? 0);
+    const merged = {
+      ...base,
+      name,
+      label,
+      tag,
+      category,
+      unit: String(material.unit || material.unitName || "unit"),
+      price: unitCost,
+      active: material.active !== false,
+      aliases: Array.isArray(material.aliases) ? [...material.aliases] : base.aliases || []
+    };
+    const mergedIndex = index === undefined ? materials.push(merged) - 1 : index;
+    if (index !== undefined) materials[index] = merged;
+    [merged.name, merged.label, merged.tag, ...(Array.isArray(merged.aliases) ? merged.aliases : [])]
+      .forEach(value => {
+        const key = inventoryKey(value);
+        if (key) materialLookup.set(key, mergedIndex);
+      });
+    categories.add(category);
+    pricing.materials[name] = catalogPrice(unitCost, "Store Catalog");
   });
 
   return {
     ...data,
     categories: [...categories],
-    items
+    items,
+    materials,
+    pricing
   };
+}
+
+function catalogPrice(value, source) {
+  const amount = Number.isFinite(Number(value)) ? Number(value) : 0;
+  return { low: amount, high: amount, midpoint: amount, source: String(source || "Store Catalog") };
 }
 
 function loadEnvFile(filePath) {

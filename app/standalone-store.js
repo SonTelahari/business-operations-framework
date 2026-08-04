@@ -309,12 +309,16 @@ class StandaloneStore {
         itemName: item.name,
         itemLabel: item.label,
         itemTag: item.itemTag,
+        itemType: item.itemType,
         category: item.category,
+        unitName: item.unitName,
+        unitCost: item.unitCost,
         salePrice: item.salePrice,
         target: item.stockTarget,
         currentStock: Math.max(0, count.quantity),
         countedAt: count.countedAt,
         active: item.active,
+        aliases: item.aliases,
         msrpLow: nullableNumber(item.metadata?.msrpLow),
         msrpHigh: nullableNumber(item.metadata?.msrpHigh),
         pricingSource: String(item.metadata?.pricingSource || "")
@@ -324,8 +328,33 @@ class StandaloneStore {
       const count = inventory.get(`storage:${item.normalizedName}`) || emptyCount(item.name);
       return {
         ingredient: item.name,
+        name: item.name,
+        label: item.label,
+        itemTag: item.itemTag,
+        itemType: item.itemType,
+        category: item.category,
+        unit: item.unitName,
+        unitCost: item.unitCost,
         storageCount: Math.max(0, count.quantity),
-        countedAt: count.countedAt
+        countedAt: count.countedAt,
+        active: item.active,
+        aliases: item.aliases
+      };
+    });
+    const storefront = catalog.filter(item => item.active).map(item => {
+      const count = inventory.get(`sales:${item.normalizedName}`) || emptyCount(item.name);
+      return {
+        itemName: item.name,
+        itemLabel: item.label,
+        itemTag: item.itemTag,
+        itemType: item.itemType,
+        category: item.category,
+        salePrice: item.salePrice,
+        target: item.itemType === "product" ? item.stockTarget : 0,
+        currentStock: Math.max(0, count.quantity),
+        countedAt: count.countedAt,
+        active: item.active,
+        aliases: item.aliases
       };
     });
     const storageKeys = new Set();
@@ -333,7 +362,15 @@ class StandaloneStore {
     for (const item of catalog) {
       const count = inventory.get(`storage:${item.normalizedName}`) || emptyCount(item.name);
       storageKeys.add(item.normalizedName);
-      storage.push({ ingredient: item.name, storageCount: Math.max(0, count.quantity), countedAt: count.countedAt });
+      storage.push({
+        ingredient: item.name,
+        itemLabel: item.label,
+        itemTag: item.itemTag,
+        itemType: item.itemType,
+        category: item.category,
+        storageCount: Math.max(0, count.quantity),
+        countedAt: count.countedAt
+      });
     }
     for (const [key, count] of inventory) {
       if (!key.startsWith("storage:") || storageKeys.has(count.normalizedName)) continue;
@@ -350,6 +387,7 @@ class StandaloneStore {
       inventory: {
         products,
         materials,
+        storefront,
         storage,
         ledger: reduceLedger(ledgerResult.rows),
         buyOrderPurchases: purchaseResult.rows.map(row => ({
@@ -548,12 +586,24 @@ class StandaloneStore {
 
   async handleGuiPayload(payload) {
     const action = String(payload?.action || "");
+    if (action === "catalog_item") return this.createCatalogItem(payload.item || {});
     if (action === "manual_operation") return this.recordManualOperation(payload.entry || {});
     if (action === "stock_target") return this.updateStockTarget(payload.target || {});
     if (action === "time_clock") return this.recordTimeEntry(payload.entry || {});
     if (action === "resolve_exception") return this.resolveException(payload.exception || {});
     if (action === "ignore_exception") return this.ignoreException(payload.exception || {});
     throw storeError(`Unknown operation: ${action}`, 400, "unknown_operation");
+  }
+
+  async createCatalogItem(input) {
+    const item = normalizeCatalogItem(input);
+    return this.database.transaction(async client => {
+      const created = await createCatalogItemRecord(client, this.businessId, item, {
+        source: "Store Catalog",
+        createdBy: cleanText(input.createdBy, 100)
+      });
+      return { ok: true, action: "catalog_item", item: created };
+    });
   }
 
   async recordManualOperation(entry) {
@@ -793,12 +843,21 @@ class StandaloneStore {
       const quantity = number(correction.quantity);
       if (!(quantity > 0)) throw storeError("Resolving an exception requires a positive quantity", 400, "invalid_quantity");
       let itemName = cleanText(correction.itemName, 150);
-      let productCreated = false;
-      if (correction.newProduct?.enabled) {
-        const product = normalizeNewProduct(correction.newProduct);
-        const created = await createReviewedProduct(client, this.businessId, product);
-        itemName = created.name;
-        productCreated = created.created;
+      let catalogItemCreated = false;
+      let createdCatalogItem = null;
+      const requestedCatalogItem = correction.newItem?.enabled
+        ? correction.newItem
+        : correction.newProduct?.enabled
+          ? { ...correction.newProduct, type: "product", salePrice: correction.newProduct.price }
+          : null;
+      if (requestedCatalogItem) {
+        const catalogItem = normalizeCatalogItem(requestedCatalogItem);
+        createdCatalogItem = await createCatalogItemRecord(client, this.businessId, catalogItem, {
+          source: "Webhook Review",
+          createdBy: cleanText(correction.resolvedBy, 100) || "Manager"
+        });
+        itemName = createdCatalogItem.name;
+        catalogItemCreated = true;
       }
       requireItem(itemName);
       const payload = json(stored.payload, {});
@@ -852,7 +911,9 @@ class StandaloneStore {
       `, [this.businessId, webhookId, historyPreserved ? "ignored" : "applied", itemName, quantity, event.unitPrice]);
       return {
         ok: true, action: "resolve_exception", webhookId, status: "Resolved", itemName,
-        productCreated,
+        catalogItemCreated,
+        catalogItem: createdCatalogItem,
+        productCreated: catalogItemCreated && createdCatalogItem?.itemType === "product",
         transactionWritten: transactionAlreadyWritten || !historyPreserved,
         transactionAlreadyWritten,
         historyPreserved,
@@ -1145,35 +1206,59 @@ async function rememberMapping(client, businessId, mapping) {
   ]);
 }
 
-async function createReviewedProduct(client, businessId, input) {
-  const byName = await client.query(`
+async function createCatalogItemRecord(client, businessId, input, { source, createdBy = "" }) {
+  const conflict = await client.query(`
     SELECT name, label, item_tag FROM catalog_items
-    WHERE business_id = $1 AND normalized_name = $2
-  `, [businessId, inventoryKey(input.name)]);
-  if (byName.rowCount) {
-    const existing = byName.rows[0];
-    if (inventoryKey(existing.label) !== inventoryKey(input.label) || inventoryKey(existing.item_tag) !== inventoryKey(input.tag)) {
-      throw storeError("That product name belongs to a different label or game item tag", 409, "product_conflict");
-    }
-    return { name: existing.name, created: false };
+    WHERE business_id = $1 AND (
+      normalized_name = $2 OR lower(label) = $3 OR ($4 <> '' AND lower(item_tag) = $4)
+    )
+    LIMIT 1
+  `, [businessId, inventoryKey(input.name), inventoryKey(input.label), inventoryKey(input.tag)]);
+  if (conflict.rowCount) {
+    throw storeError(
+      `A catalog good already uses ${conflict.rows[0].label || conflict.rows[0].name}`,
+      409,
+      "catalog_item_conflict"
+    );
+  }
+  const metadata = {
+    source,
+    createdBy
+  };
+  if (input.type === "product" && input.salePrice > 0) {
+    metadata.msrpLow = input.salePrice;
+    metadata.msrpHigh = input.salePrice;
+    metadata.pricingSource = source;
   }
   try {
-    await upsertCatalogItem(client, businessId, {
-      id: crypto.randomUUID(), type: "product", name: input.name, label: input.label, tag: input.tag,
-      category: input.category, unit: "unit", unitCost: 0, salePrice: input.price, target: 0,
-      active: true, aliases: []
-    });
+    const result = await client.query(`
+      INSERT INTO catalog_items (
+        business_id, id, item_type, name, normalized_name, label, item_tag, category,
+        unit_name, unit_cost, sale_price, stock_target, active, aliases, metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, '[]'::jsonb, $13::jsonb)
+      RETURNING *
+    `, [
+      businessId,
+      crypto.randomUUID(),
+      input.type,
+      input.name,
+      inventoryKey(input.name),
+      input.label,
+      input.tag,
+      input.category,
+      input.unit,
+      input.unitCost,
+      input.salePrice,
+      input.target,
+      JSON.stringify(metadata)
+    ]);
+    return catalogRow(result.rows[0]);
   } catch (error) {
-    if (error.code === "23505") throw storeError("That display label or game item tag already exists", 409, "product_conflict");
+    if (error.code === "23505") {
+      throw storeError("That catalog name or game item tag already exists", 409, "catalog_item_conflict");
+    }
     throw error;
   }
-  await client.query(`
-    UPDATE catalog_items SET metadata = $3::jsonb
-    WHERE business_id = $1 AND normalized_name = $2
-  `, [businessId, inventoryKey(input.name), JSON.stringify({
-    msrpLow: input.price, msrpHigh: input.price, pricingSource: "Webhook Review"
-  })]);
-  return { name: input.name, created: true };
 }
 
 function normalizeWebhook(payload) {
@@ -1244,16 +1329,33 @@ function fundBalanceDescriptor(balanceKey) {
   }[balanceKey] || null;
 }
 
-function normalizeNewProduct(input) {
-  const product = {
-    name: cleanText(input?.name, 120), label: cleanText(input?.label, 120), tag: cleanText(input?.tag, 150),
-    category: cleanText(input?.category, 120) || "Resale", price: number(input?.price)
-  };
-  if (!product.name || !product.label || !product.tag) {
-    throw storeError("A new ware requires a name, display label, and game item tag", 400, "invalid_new_product");
+function normalizeCatalogItem(input) {
+  const type = inventoryKey(input?.type || input?.itemType) === "material" ? "material" : "product";
+  const name = cleanText(input?.name, 120);
+  const label = cleanText(input?.label, 120) || name;
+  if (!name || !label) {
+    throw storeError("A catalog good requires a name and display label", 400, "invalid_catalog_item");
   }
-  if (product.price < 0) throw storeError("A new ware requires a non-negative sale price", 400, "invalid_new_product");
-  return product;
+  return {
+    type,
+    name,
+    label,
+    tag: cleanText(input?.tag || input?.itemTag, 150),
+    category: cleanText(input?.category, 120) || (type === "material" ? "Materials" : "Products"),
+    unit: cleanText(input?.unit || input?.unitName, 50) || "unit",
+    unitCost: catalogNumber(input?.unitCost, "Unit cost"),
+    salePrice: catalogNumber(input?.salePrice ?? input?.price, "Sale price"),
+    target: type === "product" ? catalogNumber(input?.target ?? input?.stockTarget, "Stock target") : 0
+  };
+}
+
+function catalogNumber(value, label) {
+  if (value === "" || value === null || value === undefined) return 0;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw storeError(`${label} must be zero or greater`, 400, "invalid_catalog_item");
+  }
+  return parsed;
 }
 
 function reduceInventory(rows) {

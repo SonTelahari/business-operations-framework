@@ -34,6 +34,30 @@ async function run() {
     });
     await store.syncCatalog(configuration);
 
+    const addedMaterial = await store.handleGuiPayload({
+      action: "catalog_item",
+      item: {
+        type: "material", name: "Glass Bottle", label: "Glass Bottle", category: "Containers",
+        unit: "bottle", unitCost: 0.5, createdBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(addedMaterial.item.itemType, "material");
+    const addedProduct = await store.handleGuiPayload({
+      action: "catalog_item",
+      item: {
+        type: "product", name: "Imported Knife", label: "Imported Knife", category: "Resale",
+        salePrice: 12, target: 2, createdBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(addedProduct.item.itemTag, "", "manual catalog goods may learn their game tag later");
+    await assert.rejects(
+      () => store.handleGuiPayload({
+        action: "catalog_item",
+        item: { type: "product", name: "Another Knife", label: "Imported Knife" }
+      }),
+      error => error.code === "catalog_item_conflict"
+    );
+
     await store.handleGuiPayload({
       action: "manual_operation",
       entry: {
@@ -191,6 +215,95 @@ async function run() {
     });
     assert.equal(resolved.productCreated, true);
 
+    await store.ingestWebhook({
+      webhook_id: "discord-unknown-material-1",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      discord_item_name: "ITEM_NATIVE_ORE",
+      discord_item_label: "Native Ore",
+      item_name: "Native Ore",
+      quantity: 3,
+      current_item_total: 3,
+      review_required: true,
+      review_reason: "unknown_item",
+      occurred_at: "2026-08-01T12:05:00.000Z"
+    });
+    const resolvedMaterial = await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-unknown-material-1",
+        itemName: "Native Ore",
+        quantity: 3,
+        eventType: "Stocking Movement",
+        direction: "Stock In",
+        rememberMapping: true,
+        resolvedBy: "Ada Lovelace",
+        newItem: {
+          enabled: true,
+          type: "material",
+          name: "Native Ore",
+          label: "Native Ore",
+          tag: "ITEM_NATIVE_ORE",
+          category: "Metals",
+          unit: "ore",
+          unitCost: 1.5
+        }
+      }
+    });
+    assert.equal(resolvedMaterial.catalogItem.itemType, "material");
+    const mappedMaterial = await store.ingestWebhook({
+      webhook_id: "discord-unknown-material-2",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      discord_item_name: "ITEM_NATIVE_ORE",
+      discord_item_label: "Native Ore",
+      quantity: 2,
+      current_item_total: 5,
+      review_required: true,
+      review_reason: "unknown_item",
+      occurred_at: "2026-08-01T12:06:00.000Z"
+    });
+    assert.equal(mappedMaterial.reviewRequired, undefined, "a reviewed material mapping must apply future webhooks");
+
+    await store.ingestWebhook({
+      webhook_id: "discord-manual-product-1",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      discord_item_name: "ITEM_IMPORTED_KNIFE",
+      discord_item_label: "Native Trade Knife",
+      quantity: 1,
+      current_item_total: 1,
+      review_required: true,
+      review_reason: "unknown_item",
+      occurred_at: "2026-08-01T12:07:00.000Z"
+    });
+    const linkedManualProduct = await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-manual-product-1",
+        itemName: "Imported Knife",
+        quantity: 1,
+        eventType: "Stocking Movement",
+        direction: "Stock In",
+        rememberMapping: true,
+        resolvedBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(linkedManualProduct.catalogItemCreated, false);
+    const mappedManualProduct = await store.ingestWebhook({
+      webhook_id: "discord-manual-product-2",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      discord_item_name: "ITEM_IMPORTED_KNIFE",
+      discord_item_label: "Native Trade Knife",
+      quantity: 1,
+      current_item_total: 2,
+      review_required: true,
+      review_reason: "unknown_item",
+      occurred_at: "2026-08-01T12:08:00.000Z"
+    });
+    assert.equal(mappedManualProduct.reviewRequired, undefined, "Review must link a Discord tag to a manually added good");
+
     await store.handleGuiPayload({
       action: "time_clock",
       entry: {
@@ -203,10 +316,16 @@ async function run() {
     assert.equal(snapshot.dataBackend, "postgresql");
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 3);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Native Clock").currentStock, 2);
+    assert.equal(snapshot.inventory.products.some(item => item.itemName === "Native Ore"), false);
+    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Imported Knife").target, 2);
+    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Imported Knife").currentStock, 2);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Unpriced Widget").salePrice, 12);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").currentStock, 50);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").salePrice, 2.25);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Iron").storageCount, 25);
+    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Glass Bottle").unitCost, 0.5);
+    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Native Ore").category, "Metals");
+    assert.equal(snapshot.inventory.storefront.find(item => item.itemName === "Native Ore").currentStock, 5);
     assert.equal(snapshot.inventory.ledger.balance, 140);
     assert.equal(snapshot.reviewExceptions.find(entry => entry.webhookId === "discord-unknown-1").status, "Resolved");
     const countDiscrepancy = snapshot.reviewExceptions.find(entry => entry.webhookId === "discord-rifle-withdrawal");
@@ -340,7 +459,7 @@ async function run() {
     assert.equal((await store.importLegacySnapshot(legacyPayload)).duplicate, true);
     const importedSnapshot = await store.snapshot();
     assert.equal(importedSnapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 8);
-    assert.equal(importedSnapshot.inventory.materials[0].storageCount, 30);
+    assert.equal(importedSnapshot.inventory.materials.find(item => item.ingredient === "Iron").storageCount, 30);
     assert.equal(importedSnapshot.inventory.ledger.balance, 200);
 
     const importedFinance = await store.finance();

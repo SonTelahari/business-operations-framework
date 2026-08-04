@@ -69,6 +69,7 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "finance.funds_recorded": "Owner funds recorded",
   "target.updated": "Storefront target updated",
   "target.removed": "Storefront target removed",
+  "catalog.item_created": "Catalog good added",
   "supplier.saved": "Supplier record saved",
   "supplier.removed": "Supplier record removed",
   "storefront_buy_order.saved": "Storefront buy order saved",
@@ -139,6 +140,7 @@ let financeSnapshot = null;
 let financeLoading = false;
 let activeProductCardKey = "";
 let productInsightRequestId = 0;
+let catalogItemSavePending = false;
 const productInsightCache = new Map();
 
 const elements = {
@@ -309,10 +311,14 @@ const elements = {
   reviewRememberMapping: document.querySelector("#reviewRememberMappingInput"),
   reviewCreateProduct: document.querySelector("#reviewCreateProductInput"),
   reviewNewProductFields: document.querySelector("#reviewNewProductFields"),
+  reviewItemType: document.querySelector("#reviewItemTypeInput"),
   reviewProductLabel: document.querySelector("#reviewProductLabelInput"),
   reviewProductTag: document.querySelector("#reviewProductTagInput"),
   reviewProductCategory: document.querySelector("#reviewProductCategoryInput"),
+  reviewItemUnit: document.querySelector("#reviewItemUnitInput"),
+  reviewItemUnitCost: document.querySelector("#reviewItemUnitCostInput"),
   reviewProductPrice: document.querySelector("#reviewProductPriceInput"),
+  reviewProductTarget: document.querySelector("#reviewProductTargetInput"),
   resolveReview: document.querySelector("#resolveReviewButton"),
   ignoreReview: document.querySelector("#ignoreReviewButton"),
   reviewRawText: document.querySelector("#reviewRawText"),
@@ -327,6 +333,7 @@ const elements = {
   auditList: document.querySelector("#auditList"),
   refreshAudit: document.querySelector("#refreshAuditButton"),
   dataStatus: document.querySelector("#dataStatusText"),
+  catalogCategoryOptions: document.querySelector("#catalogCategoryOptions"),
   storeOverviewSearch: document.querySelector("#storeOverviewSearchInput"),
   storeOverviewMeta: document.querySelector("#storeOverviewMeta"),
   storefrontOverviewUnits: document.querySelector("#storefrontOverviewUnits"),
@@ -343,6 +350,22 @@ const elements = {
   productCardMeta: document.querySelector("#productCardMeta"),
   productCardBody: document.querySelector("#productCardBody"),
   closeProductCard: document.querySelector("#closeProductCardButton"),
+  openCatalogItemDialog: document.querySelector("#openCatalogItemDialogButton"),
+  catalogItemDialog: document.querySelector("#catalogItemDialog"),
+  catalogItemForm: document.querySelector("#catalogItemForm"),
+  closeCatalogItemDialog: document.querySelector("#closeCatalogItemDialogButton"),
+  cancelCatalogItem: document.querySelector("#cancelCatalogItemButton"),
+  catalogItemType: document.querySelector("#catalogItemTypeInput"),
+  catalogItemName: document.querySelector("#catalogItemNameInput"),
+  catalogItemLabel: document.querySelector("#catalogItemLabelInput"),
+  catalogItemTag: document.querySelector("#catalogItemTagInput"),
+  catalogItemCategory: document.querySelector("#catalogItemCategoryInput"),
+  catalogItemUnit: document.querySelector("#catalogItemUnitInput"),
+  catalogItemUnitCost: document.querySelector("#catalogItemUnitCostInput"),
+  catalogItemSalePrice: document.querySelector("#catalogItemSalePriceInput"),
+  catalogItemTarget: document.querySelector("#catalogItemTargetInput"),
+  catalogItemStatus: document.querySelector("#catalogItemStatus"),
+  saveCatalogItem: document.querySelector("#saveCatalogItemButton"),
   financeSection: document.querySelector("#financeSection"),
   financeDataStatus: document.querySelector("#financeDataStatus"),
   financeCoverageStatus: document.querySelector("#financeCoverageStatus"),
@@ -634,6 +657,17 @@ function seedDatalist() {
     .join("");
   elements.stockOptions.innerHTML = stockOptionMarkup(stockCatalog);
   elements.buyOrderItemOptions.innerHTML = stockOptionMarkup([...ingredientCatalog, ...itemCatalog]);
+  const catalogCategories = new Set([
+    "Products",
+    "Materials",
+    "Resale",
+    ...itemCatalog.map(item => item.category),
+    ...ingredientCatalog.map(item => item.category)
+  ].filter(Boolean));
+  elements.catalogCategoryOptions.innerHTML = [...catalogCategories]
+    .sort((a, b) => a.localeCompare(b))
+    .map(category => `<option value="${escapeHtml(category)}"></option>`)
+    .join("");
   seedSupplyMaterialOptions();
   seedCountDatalist();
 }
@@ -801,6 +835,12 @@ function wireEvents() {
   elements.reviewSearch.addEventListener("input", renderReviewWorkspace);
   elements.refreshReview.addEventListener("click", () => loadBackendSnapshot({ silent: false }));
   elements.reviewCreateProduct.addEventListener("change", renderReviewProductMode);
+  elements.reviewItemType.addEventListener("change", () => {
+    elements.reviewProductCategory.value = elements.reviewItemType.value === "material"
+      ? "Materials"
+      : suggestProductCategory(elements.reviewProductLabel.value || elements.reviewItem.value);
+    renderReviewProductMode();
+  });
   elements.resolveReview.addEventListener("click", resolveReviewException);
   elements.ignoreReview.addEventListener("click", ignoreReviewException);
   elements.clockToggle.addEventListener("click", toggleTimeClock);
@@ -838,6 +878,20 @@ function wireEvents() {
   elements.supplierSearch.addEventListener("input", renderSupplierDirectory);
   elements.storeOverviewSearch.addEventListener("input", renderStoreOverview);
   elements.closeProductCard.addEventListener("click", closeProductCard);
+  elements.openCatalogItemDialog.addEventListener("click", openCatalogItemDialog);
+  elements.closeCatalogItemDialog.addEventListener("click", closeCatalogItemDialog);
+  elements.cancelCatalogItem.addEventListener("click", closeCatalogItemDialog);
+  elements.catalogItemType.addEventListener("change", renderCatalogItemType);
+  elements.catalogItemName.addEventListener("input", () => {
+    if (!elements.catalogItemLabel.dataset.edited) elements.catalogItemLabel.value = elements.catalogItemName.value;
+  });
+  elements.catalogItemLabel.addEventListener("input", () => {
+    elements.catalogItemLabel.dataset.edited = elements.catalogItemLabel.value ? "true" : "";
+  });
+  elements.catalogItemForm.addEventListener("submit", event => {
+    event.preventDefault();
+    saveCatalogItem();
+  });
   elements.financePeriod.addEventListener("change", () => setFinancePeriod(elements.financePeriod.value));
   elements.financeFrom.addEventListener("change", () => {
     elements.financePeriod.value = "custom";
@@ -2202,6 +2256,104 @@ function renderDashboard() {
     }));
 }
 
+function openCatalogItemDialog() {
+  if (!isManagement()) return;
+  elements.catalogItemForm.reset();
+  elements.catalogItemType.value = "product";
+  elements.catalogItemUnit.value = "unit";
+  elements.catalogItemUnitCost.value = 0;
+  elements.catalogItemSalePrice.value = 0;
+  elements.catalogItemTarget.value = 0;
+  elements.catalogItemLabel.dataset.edited = "";
+  elements.catalogItemStatus.textContent = "";
+  renderCatalogItemType();
+  elements.catalogItemDialog.showModal();
+  elements.catalogItemName.focus();
+}
+
+function closeCatalogItemDialog() {
+  if (elements.catalogItemDialog.open) elements.catalogItemDialog.close();
+}
+
+function renderCatalogItemType() {
+  const product = elements.catalogItemType.value === "product";
+  document.querySelectorAll(".catalog-product-field").forEach(field => field.classList.toggle("hidden", !product));
+  const defaultCategories = new Set(["", "Products", "Materials"]);
+  if (defaultCategories.has(elements.catalogItemCategory.value.trim())) {
+    elements.catalogItemCategory.value = product ? "Products" : "Materials";
+  }
+}
+
+async function saveCatalogItem() {
+  if (catalogItemSavePending || !isManagement()) return;
+  if (backendSnapshot?.dataBackend !== "postgresql") {
+    elements.catalogItemStatus.textContent = "Catalog additions require the hosted database version";
+    return;
+  }
+  const item = catalogItemDraft({
+    type: elements.catalogItemType.value,
+    name: elements.catalogItemName.value,
+    label: elements.catalogItemLabel.value,
+    tag: elements.catalogItemTag.value,
+    category: elements.catalogItemCategory.value,
+    unit: elements.catalogItemUnit.value,
+    unitCost: elements.catalogItemUnitCost.value,
+    salePrice: elements.catalogItemSalePrice.value,
+    target: elements.catalogItemTarget.value
+  });
+  const validation = validateCatalogItemDraft(item);
+  if (validation) {
+    elements.catalogItemStatus.textContent = validation;
+    return;
+  }
+  if (findExactStockItem(item.name) || findExactStockItem(item.label) || (item.tag && findExactStockItem(item.tag))) {
+    elements.catalogItemStatus.textContent = "That name, label, or game item tag already belongs to a catalog good";
+    return;
+  }
+
+  catalogItemSavePending = true;
+  elements.saveCatalogItem.disabled = true;
+  elements.catalogItemStatus.textContent = "Adding good...";
+  const result = await syncToBackend("catalog_item", { item });
+  if (!result.ok) {
+    elements.catalogItemStatus.textContent = result.error || "The catalog good could not be added";
+    elements.saveCatalogItem.disabled = false;
+    catalogItemSavePending = false;
+    return;
+  }
+  elements.catalogItemStatus.textContent = "Good added";
+  await loadBackendSnapshot({ silent: true });
+  closeCatalogItemDialog();
+  elements.storeOverviewSearch.value = result.item?.label || item.label;
+  renderStoreOverview();
+  elements.saveCatalogItem.disabled = false;
+  catalogItemSavePending = false;
+}
+
+function catalogItemDraft(input) {
+  const type = input.type === "material" ? "material" : "product";
+  return {
+    type,
+    name: String(input.name || "").trim(),
+    label: String(input.label || input.name || "").trim(),
+    tag: String(input.tag || "").trim(),
+    category: String(input.category || (type === "material" ? "Materials" : "Products")).trim(),
+    unit: String(input.unit || "unit").trim() || "unit",
+    unitCost: input.unitCost === "" ? 0 : Number(input.unitCost),
+    salePrice: type === "product" ? input.salePrice === "" ? 0 : Number(input.salePrice) : 0,
+    target: type === "product" ? input.target === "" ? 0 : Number(input.target) : 0
+  };
+}
+
+function validateCatalogItemDraft(item) {
+  if (!item.name || !item.label) return "Enter a catalog name and display label";
+  if (!item.category) return "Enter a category";
+  if (![item.unitCost, item.salePrice, item.target].every(value => Number.isFinite(value) && value >= 0)) {
+    return "Costs, prices, and targets must be zero or greater";
+  }
+  return "";
+}
+
 function renderStoreOverview() {
   const storefrontCounts = getLatestCounts("Storefront");
   const storageCounts = getLatestCounts("Storage");
@@ -2209,7 +2361,7 @@ function renderStoreOverview() {
   const targetByKey = new Map(stockTargets
     .filter(target => !target.deleting)
     .map(target => [inventoryOverviewKey(target), Number(target.target || 0)]));
-  const storefrontRows = buildInventoryOverviewRows(itemCatalog, storefrontCounts, "Storefront")
+  const storefrontRows = buildInventoryOverviewRows([...itemCatalog, ...ingredientCatalog], storefrontCounts, "Storefront")
     .map(row => ({ ...row, target: targetByKey.get(row.key) || 0 }));
   const storageRows = buildInventoryOverviewRows([...ingredientCatalog, ...itemCatalog], storageCounts, "Storage");
   const visibleStorefront = filterInventoryOverviewRows(storefrontRows, query);
@@ -2973,7 +3125,7 @@ function inventoryOverviewDisplayNames(location) {
   const names = new Map();
   const inventory = backendSnapshot?.sheet?.inventory || {};
   const rows = location === "Storefront"
-    ? inventory.products
+    ? Array.isArray(inventory.storefront) ? inventory.storefront : inventory.products
     : Array.isArray(inventory.storage) ? inventory.storage : inventory.materials;
 
   if (Array.isArray(rows)) {
@@ -3159,10 +3311,14 @@ function renderReviewEditor(entry) {
     elements.reviewQuantity.value = 0;
     elements.reviewUnitPrice.value = 0;
     elements.reviewCreateProduct.checked = false;
+    elements.reviewItemType.value = "product";
     elements.reviewProductLabel.value = "";
     elements.reviewProductTag.value = "";
     elements.reviewProductCategory.value = "Resale";
+    elements.reviewItemUnit.value = "unit";
+    elements.reviewItemUnitCost.value = 0;
     elements.reviewProductPrice.value = 0;
+    elements.reviewProductTarget.value = 0;
     elements.reviewRawText.textContent = "No event selected";
     renderReviewProductMode();
     setReviewEditorDisabled(true);
@@ -3195,12 +3351,16 @@ function renderReviewEditor(entry) {
   elements.reviewNote.value = entry.note || "";
   elements.reviewRememberMapping.checked = !entry.transactionWritten;
   elements.reviewCreateProduct.checked = false;
+  elements.reviewItemType.value = "product";
   elements.reviewProductLabel.value = entry.discordItemLabel || entry.discordItemName || "";
   elements.reviewProductTag.value = entry.discordItemName || "";
   elements.reviewProductCategory.value = suggestProductCategory(
     entry.discordItemLabel || entry.discordItemName
   );
+  elements.reviewItemUnit.value = "unit";
+  elements.reviewItemUnitCost.value = 0;
   elements.reviewProductPrice.value = Number(entry.unitPrice || 0);
+  elements.reviewProductTarget.value = 0;
   elements.reviewRawText.textContent = entry.rawText || "No webhook text was supplied";
   renderReviewProductMode(entry);
   setReviewEditorDisabled(entry.status !== "Open");
@@ -3217,10 +3377,14 @@ function setReviewEditorDisabled(disabled) {
     elements.reviewNote,
     elements.reviewRememberMapping,
     elements.reviewCreateProduct,
+    elements.reviewItemType,
     elements.reviewProductLabel,
     elements.reviewProductTag,
     elements.reviewProductCategory,
+    elements.reviewItemUnit,
+    elements.reviewItemUnitCost,
     elements.reviewProductPrice,
+    elements.reviewProductTarget,
     elements.resolveReview,
     elements.ignoreReview
   ].forEach(element => { element.disabled = disabled; });
@@ -3228,10 +3392,18 @@ function setReviewEditorDisabled(disabled) {
 
 function renderReviewProductMode(entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId)) {
   const creating = elements.reviewCreateProduct.checked;
+  const product = elements.reviewItemType.value === "product";
   elements.reviewNewProductFields.classList.toggle("hidden", !creating);
+  document.querySelectorAll(".review-product-only-field").forEach(field => field.classList.toggle("hidden", !product));
+  if (creating) {
+    const defaults = new Set(["", "Products", "Materials"]);
+    if (defaults.has(elements.reviewProductCategory.value.trim())) {
+      elements.reviewProductCategory.value = product ? "Products" : "Materials";
+    }
+  }
   elements.resolveReview.textContent = entry?.transactionWritten
     ? "Acknowledge Review"
-    : creating ? "Add Ware and Apply" : "Resolve and Apply";
+    : creating ? "Add Good and Apply" : "Resolve and Apply";
   elements.ignoreReview.textContent = entry?.transactionWritten ? "Dismiss Review" : "Ignore Event";
 }
 
@@ -3244,10 +3416,14 @@ function setRecordedReviewMode() {
     elements.reviewUnitPrice,
     elements.reviewRememberMapping,
     elements.reviewCreateProduct,
+    elements.reviewItemType,
     elements.reviewProductLabel,
     elements.reviewProductTag,
     elements.reviewProductCategory,
-    elements.reviewProductPrice
+    elements.reviewItemUnit,
+    elements.reviewItemUnitCost,
+    elements.reviewProductPrice,
+    elements.reviewProductTarget
   ].forEach(element => { element.disabled = true; });
 }
 
@@ -3311,21 +3487,23 @@ async function resolveReviewException() {
     elements.reviewItem.focus();
     return;
   }
-  const newProduct = creating ? {
+  const newItem = creating ? {
     enabled: true,
-    name: elements.reviewItem.value.trim(),
-    label: elements.reviewProductLabel.value.trim(),
-    tag: elements.reviewProductTag.value.trim(),
-    category: elements.reviewProductCategory.value,
-    price: Number(elements.reviewProductPrice.value)
+    ...catalogItemDraft({
+      type: elements.reviewItemType.value,
+      name: elements.reviewItem.value,
+      label: elements.reviewProductLabel.value,
+      tag: elements.reviewProductTag.value,
+      category: elements.reviewProductCategory.value,
+      unit: elements.reviewItemUnit.value,
+      unitCost: elements.reviewItemUnitCost.value,
+      salePrice: elements.reviewProductPrice.value,
+      target: elements.reviewProductTarget.value
+    })
   } : null;
-  if (creating && (!newProduct.name || !newProduct.label || !newProduct.tag)) {
-    elements.reviewDataStatus.textContent = "Enter a product name, display label, and game item tag";
-    return;
-  }
-  if (creating && (!Number.isFinite(newProduct.price) || newProduct.price < 0)) {
-    elements.reviewDataStatus.textContent = "Enter a valid non-negative catalog sale price";
-    elements.reviewProductPrice.focus();
+  const newItemValidation = creating ? validateCatalogItemDraft(newItem) : "";
+  if (newItemValidation) {
+    elements.reviewDataStatus.textContent = newItemValidation;
     return;
   }
   if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -3340,14 +3518,14 @@ async function resolveReviewException() {
     exception: {
       webhookId: entry.webhookId,
       discordItemLabel: entry.discordItemLabel,
-      itemName: creating ? newProduct.name : item.name,
+      itemName: creating ? newItem.name : item.name,
       eventType: elements.reviewEventType.value,
       direction: elements.reviewDirection.value,
       quantity,
       unitPrice: Number(elements.reviewUnitPrice.value || 0),
       rememberMapping: !transactionAlreadyWritten && elements.reviewRememberMapping.checked,
       note: elements.reviewNote.value.trim(),
-      newProduct
+      newItem
     }
   });
   if (!result.ok) {

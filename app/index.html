@@ -204,10 +204,13 @@
               <h2>Store Overview</h2>
               <p id="storeOverviewMeta">Loading the latest shared counts</p>
             </div>
-            <label class="store-overview-search">
-              Search Inventory
-              <input id="storeOverviewSearchInput" type="search" autocomplete="off" placeholder="Item, category, or material">
-            </label>
+            <div class="store-overview-tools">
+              <button class="ghost-button management-only" id="openCatalogItemDialogButton" type="button">Add Good</button>
+              <label class="store-overview-search">
+                Search Inventory
+                <input id="storeOverviewSearchInput" type="search" autocomplete="off" placeholder="Item, category, or material">
+              </label>
+            </div>
           </div>
           <div class="store-overview-stats">
             <div>
@@ -286,6 +289,65 @@
             </table>
           </div>
         </section>
+
+        <dialog class="catalog-item-dialog" id="catalogItemDialog">
+          <form id="catalogItemForm">
+            <div class="catalog-item-dialog-heading">
+              <div>
+                <p class="eyebrow">Catalog Ledger</p>
+                <h2>Add Good</h2>
+                <p>Create a product for sale or a material used by the business</p>
+              </div>
+              <button class="icon-button" id="closeCatalogItemDialogButton" type="button" title="Close" aria-label="Close">&times;</button>
+            </div>
+            <div class="catalog-item-grid">
+              <label>
+                Good Type
+                <select id="catalogItemTypeInput">
+                  <option value="product">Product</option>
+                  <option value="material">Material</option>
+                </select>
+              </label>
+              <label>
+                Catalog Name
+                <input id="catalogItemNameInput" type="text" autocomplete="off" required placeholder="Canonical internal name">
+              </label>
+              <label>
+                Display Label
+                <input id="catalogItemLabelInput" type="text" autocomplete="off" placeholder="Name employees will see">
+              </label>
+              <label>
+                Game Item Tag
+                <input id="catalogItemTagInput" type="text" autocomplete="off" placeholder="Optional until a webhook arrives">
+              </label>
+              <label>
+                Category
+                <input id="catalogItemCategoryInput" list="catalogCategoryOptions" autocomplete="off" placeholder="Products, materials, tools...">
+              </label>
+              <label>
+                Unit
+                <input id="catalogItemUnitInput" type="text" autocomplete="off" value="unit" placeholder="unit, box, bundle...">
+              </label>
+              <label>
+                Unit Cost
+                <input id="catalogItemUnitCostInput" type="number" min="0" step="0.01" value="0">
+              </label>
+              <label class="catalog-product-field">
+                Sale Price
+                <input id="catalogItemSalePriceInput" type="number" min="0" step="0.01" value="0">
+              </label>
+              <label class="catalog-product-field">
+                Storefront Target
+                <input id="catalogItemTargetInput" type="number" min="0" step="1" value="0">
+              </label>
+            </div>
+            <p class="catalog-item-status" id="catalogItemStatus" role="status"></p>
+            <div class="catalog-item-actions">
+              <button class="ghost-button" id="cancelCatalogItemButton" type="button">Cancel</button>
+              <button class="primary-button" id="saveCatalogItemButton" type="submit">Add Good</button>
+            </div>
+          </form>
+        </dialog>
       </main>
 
       <main class="finance workspace-section hidden admin-only" id="financeSection">
@@ -1197,9 +1259,16 @@
               </label>
               <label class="checkbox-line review-new-product-option">
                 <input id="reviewCreateProductInput" type="checkbox">
-                Add as a new sellable ware
+                Add as a new catalog good
               </label>
               <div class="review-new-product-fields hidden" id="reviewNewProductFields">
+                <label>
+                  Good Type
+                  <select id="reviewItemTypeInput">
+                    <option value="product">Product</option>
+                    <option value="material">Material</option>
+                  </select>
+                </label>
                 <label>
                   Display Label
                   <input id="reviewProductLabelInput" type="text" autocomplete="off" placeholder="Name shown in the storefront">
@@ -1210,22 +1279,23 @@
                 </label>
                 <label>
                   Category
-                  <select id="reviewProductCategoryInput">
-                    <option value="Resale">Resale</option>
-                    <option value="Rifles">Rifles</option>
-                    <option value="Shotguns">Shotguns</option>
-                    <option value="Repeaters">Repeaters</option>
-                    <option value="Revolvers">Revolvers</option>
-                    <option value="Pistols">Pistols</option>
-                    <option value="Bows">Bows</option>
-                    <option value="Ammunition">Ammunition</option>
-                    <option value="Tools">Tools</option>
-                    <option value="Misc">Misc</option>
-                  </select>
+                  <input id="reviewProductCategoryInput" list="catalogCategoryOptions" autocomplete="off" placeholder="Resale">
                 </label>
                 <label>
+                  Unit
+                  <input id="reviewItemUnitInput" type="text" autocomplete="off" value="unit">
+                </label>
+                <label>
+                  Unit Cost
+                  <input id="reviewItemUnitCostInput" type="number" min="0" step="0.01" value="0">
+                </label>
+                <label class="review-product-only-field">
                   Catalog Sale Price
                   <input id="reviewProductPriceInput" type="number" min="0" step="0.01" value="0">
+                </label>
+                <label class="review-product-only-field">
+                  Storefront Target
+                  <input id="reviewProductTargetInput" type="number" min="0" step="1" value="0">
                 </label>
               </div>
               <div class="review-actions">
@@ -1610,8 +1680,9 @@
     </datalist>
     <datalist id="countStockOptions"></datalist>
     <datalist id="stockOptions"></datalist>
+    <datalist id="catalogCategoryOptions"></datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260801-first-launch"></script>
+    <script src="app.js?v=20260805-catalog-goods"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

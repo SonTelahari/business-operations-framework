@@ -42,7 +42,7 @@
   function selectLatestCounts({ location, inventory = {}, operations = [], snapshotGeneratedAt = "" }) {
     const backendCounts = new Map();
     const sourceRows = location === "Storefront"
-      ? inventory.products
+      ? Array.isArray(inventory.storefront) ? inventory.storefront : inventory.products
       : Array.isArray(inventory.storage) ? inventory.storage : inventory.materials;
 
     if (Array.isArray(sourceRows)) {

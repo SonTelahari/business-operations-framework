@@ -7,6 +7,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.webmanifes
 const serviceWorker = fs.readFileSync(path.join(root, "service-worker.js"), "utf8");
 const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const setupScript = fs.readFileSync(path.join(root, "setup.js"), "utf8");
+const appHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
 
 assert.equal(manifest.name, "Business Operations Ledger");
 assert.equal(manifest.display, "standalone");
@@ -34,6 +35,9 @@ assert(setupScript.includes('select data-field="ingredientName" required'), "rec
 assert(setupScript.includes("data-add-ingredient-row"), "recipe cards must support additional ingredient rows");
 assert(setupScript.includes("collectRecipeIngredients"), "recipe dropdown rows must serialize as structured ingredients");
 assert(!setupScript.includes("parseIngredients("), "first-launch recipes must not require free-form ingredient parsing");
+assert(appHtml.includes('id="openCatalogItemDialogButton"'), "the Store tab must expose manager catalog creation");
+assert(appHtml.includes('id="catalogItemTypeInput"'), "manual catalog creation must distinguish products and materials");
+assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
 
 function pngSize(fileName) {
   const data = fs.readFileSync(path.join(root, "assets", fileName));

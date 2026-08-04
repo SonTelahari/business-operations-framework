@@ -218,6 +218,27 @@ async function run() {
     assert.equal(firstSnapshot.body.inventory.products[0].currentStock, 4);
     assert.equal(secondSnapshot.body.inventory.products[0].currentStock, 9);
 
+    const employeeCatalogAttempt = await request("/api/sync", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: {
+        action: "catalog_item",
+        item: { type: "material", name: "Hosted Iron", label: "Hosted Iron", category: "Materials" }
+      }
+    });
+    assert.equal(employeeCatalogAttempt.status, 403);
+    const ownerCatalogAddition = await request("/api/sync", {
+      method: "POST",
+      cookie: first.cookie,
+      body: {
+        action: "catalog_item",
+        item: { type: "material", name: "Hosted Iron", label: "Hosted Iron", category: "Materials", unitCost: 2 }
+      }
+    });
+    assert.equal(ownerCatalogAddition.body.ok, true, JSON.stringify(ownerCatalogAddition.body));
+    const catalogBootstrap = await request("/api/bootstrap", { cookie: first.cookie });
+    assert.equal(catalogBootstrap.body.materials.find(item => item.name === "Hosted Iron").price, 2);
+
     const unknownChannel = await bridgeRequest("/api/integrations/discord/events", {
       method: "POST",
       body: depositPayload("unknown-deposit", "223456789012345679", 1)
