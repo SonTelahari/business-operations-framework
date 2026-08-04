@@ -22,6 +22,9 @@ async function run() {
         }, {
           id: "unpriced-widget", name: "Unpriced Widget", label: "Unpriced Widget", tag: "ITEM_UNPRICED_WIDGET",
           category: "Goods", salePrice: 0, target: 0
+        }, {
+          id: "rifle-ammo-express", name: "Rifle Ammo Express", label: "Rifle Ammo Express", tag: "ammorifleexpress",
+          category: "Ammunition", salePrice: 2.25, target: 50
         }],
         recipes: [{
           id: "widget-recipe", productName: "Iron Widget", yield: 1,
@@ -48,6 +51,13 @@ async function run() {
     await store.handleGuiPayload({
       action: "manual_operation",
       entry: {
+        id: "rifle-ammo-count", kind: "Stock Count", location: "Storefront", itemName: "Rifle Ammo Express",
+        quantity: 48, createdAt: "2026-08-01T08:00:00.000Z"
+      }
+    });
+    await store.handleGuiPayload({
+      action: "manual_operation",
+      entry: {
         id: "ledger-count", kind: "Ledger Count", location: "Ledger", amount: 100,
         createdAt: "2026-08-01T08:00:00.000Z"
       }
@@ -69,7 +79,9 @@ async function run() {
       shop_ledger: 125,
       occurred_at: "2026-08-01T10:00:00.000Z"
     };
-    assert.equal((await store.ingestWebhook(sale)).stockControlWritten, true);
+    const saleResult = await store.ingestWebhook(sale);
+    assert.equal(saleResult.stockControlWritten, false);
+    assert.equal(saleResult.listingTotalObserved, true);
     assert.equal((await store.ingestWebhook(sale)).duplicate, true);
 
     const labelOnlySale = await store.ingestWebhook({
@@ -97,6 +109,37 @@ async function run() {
       unit_price: 12,
       current_item_total: 1,
       occurred_at: "2026-08-01T10:45:00.000Z"
+    });
+
+    await store.ingestWebhook({
+      webhook_id: "discord-rifle-wrong-price",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      item_name: "Rifle Ammo Express",
+      quantity: 2,
+      unit_price: 2,
+      occurred_at: "2026-08-01T10:46:00.000Z"
+    });
+    const rifleWithdrawal = await store.ingestWebhook({
+      webhook_id: "discord-rifle-withdrawal",
+      event_type: "Stocking Movement",
+      direction: "Stock Out",
+      item_name: "Rifle Ammo Express",
+      quantity: 2,
+      unit_price: 2,
+      current_item_total: 0,
+      occurred_at: "2026-08-01T10:47:00.000Z"
+    });
+    assert.equal(rifleWithdrawal.stockControlWritten, false);
+    assert.equal(rifleWithdrawal.listingTotalObserved, true);
+    await store.ingestWebhook({
+      webhook_id: "discord-rifle-correct-price",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      item_name: "Rifle Ammo Express",
+      quantity: 2,
+      unit_price: 2.25,
+      occurred_at: "2026-08-01T10:48:00.000Z"
     });
 
     await store.handleGuiPayload({
@@ -156,9 +199,20 @@ async function run() {
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 3);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Native Clock").currentStock, 2);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Unpriced Widget").salePrice, 12);
+    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").currentStock, 50);
+    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").salePrice, 2.25);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Iron").storageCount, 25);
     assert.equal(snapshot.inventory.ledger.balance, 140);
     assert.equal(snapshot.reviewExceptions[0].status, "Resolved");
+
+    const listingWithdrawal = await database.query(`
+      SELECT quantity_delta, absolute_quantity, metadata
+      FROM inventory_events
+      WHERE event_id = 'discord-rifle-withdrawal:stock'
+    `);
+    assert.equal(Number(listingWithdrawal.rows[0].quantity_delta), -2);
+    assert.equal(listingWithdrawal.rows[0].absolute_quantity, null);
+    assert.equal(listingWithdrawal.rows[0].metadata.listingItemTotal, 0);
 
     const finance = await store.finance({ from: "2026-08-01", to: "2026-08-31" });
     assert.deepEqual(finance.totals, { revenue: 50, expenses: 10, profit: 40 });
@@ -235,7 +289,7 @@ async function run() {
     assert.equal(imported.duplicate, false);
     assert.equal((await store.importLegacySnapshot(legacyPayload)).duplicate, true);
     const importedSnapshot = await store.snapshot();
-    assert.equal(importedSnapshot.inventory.products[0].currentStock, 8);
+    assert.equal(importedSnapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 8);
     assert.equal(importedSnapshot.inventory.materials[0].storageCount, 30);
     assert.equal(importedSnapshot.inventory.ledger.balance, 200);
 
@@ -264,7 +318,10 @@ async function run() {
     });
     assert.equal(resolvedLegacy.historyPreserved, true);
     assert.equal(resolvedLegacy.transactionWritten, false);
-    assert.equal((await store.snapshot()).inventory.products[0].currentStock, 8);
+    assert.equal(
+      (await store.snapshot()).inventory.products.find(item => item.itemName === "Iron Widget").currentStock,
+      8
+    );
     assert.deepEqual((await store.finance()).totals, beforeResolution.totals);
     assert.deepEqual((await store.reconcileImportedExceptions()).repaired, ["legacy-auto-match"]);
     const autoResolved = (await store.snapshot()).reviewExceptions.find(entry => entry.webhookId === "legacy-auto-match");

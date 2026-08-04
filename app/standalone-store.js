@@ -957,16 +957,21 @@ async function insertException(client, businessId, event, payload) {
 }
 
 async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
-  const metadata = { webhookId: event.webhookId, orderId: event.orderId };
+  const metadata = {
+    webhookId: event.webhookId,
+    orderId: event.orderId,
+    listingItemTotal: event.currentItemTotal
+  };
   const quantityDelta = event.type === "Sale" || event.direction === "Stock Out"
     ? -event.quantity
     : event.quantity;
   if (event.item && event.quantity > 0) {
+    // Discord reports a price-listing total, while the app aggregates stock by product.
     await insertInventory(client, businessId, {
       eventId: `${event.webhookId}:stock`, occurredAt: event.occurredAt, source: "Discord", kind: event.type,
       location: "sales", item: event.item,
-      quantityDelta: event.currentItemTotal === null ? quantityDelta : 0,
-      absoluteQuantity: event.currentItemTotal,
+      quantityDelta,
+      absoluteQuantity: null,
       unitPrice: event.unitPrice, actor: event.actor, metadata
     });
     if (event.type === "Stocking Movement" && event.direction === "Stock In" && event.unitPrice > 0) {
@@ -1001,7 +1006,8 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
     });
   }
   return {
-    stockControlWritten: event.currentItemTotal !== null,
+    stockControlWritten: false,
+    listingTotalObserved: event.currentItemTotal !== null,
     ledgerControlWritten: applyLedger && event.ledgerBalance !== null
   };
 }

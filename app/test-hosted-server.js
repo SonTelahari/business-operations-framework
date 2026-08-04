@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { once } = require("node:events");
 const http = require("node:http");
 const { newDb } = require("pg-mem");
+const { version: packageVersion } = require("../package.json");
 const { defaultSetupConfiguration } = require("./setup-config");
 
 const memory = newDb({ autoCreateForeignKeyIndices: true, noAstCoverageCheck: true });
@@ -42,7 +43,7 @@ async function run() {
     const health = await request("/health");
     assert.equal(health.body.hostedMode, true);
     assert.equal(health.body.tenantScoped, true);
-    assert.equal(health.body.version, "0.3.0-beta.1");
+    assert.equal(health.body.version, packageVersion);
     assert.equal(health.body.release, "hosted-test-release");
     const serviceWorker = await fetch(`${baseUrl}/service-worker.js`).then(response => response.text());
     assert.match(serviceWorker, /\/\/ release:hosted-test-release\s*$/);
