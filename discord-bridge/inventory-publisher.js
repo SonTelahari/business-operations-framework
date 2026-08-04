@@ -1,5 +1,7 @@
-const INVENTORY_MARKER = 'Frontier Firearms inventory';
-const ALERT_MARKER = 'Frontier Firearms stock alerts';
+const INVENTORY_MARKER = 'Business Operations inventory';
+const ALERT_MARKER = 'Business Operations stock alerts';
+const LEGACY_INVENTORY_MARKER = 'Frontier Firearms inventory';
+const LEGACY_ALERT_MARKER = 'Frontier Firearms stock alerts';
 const INVENTORY_PREVIOUS_ID = 'frontier_inventory_previous';
 const INVENTORY_NEXT_ID = 'frontier_inventory_next';
 const DEFAULT_REFRESH_MS = 5 * 60 * 1000;
@@ -97,6 +99,7 @@ function createInventoryPublisher(options) {
           configuredMessageId: configuredInventoryMessageId,
           currentMessage: state.inventoryMessage,
           marker: INVENTORY_MARKER,
+          markerAliases: [LEGACY_INVENTORY_MARKER],
           payload: inventoryMessagePayload(state.pages, state.pageIndex),
           logger
         });
@@ -108,6 +111,7 @@ function createInventoryPublisher(options) {
           configuredMessageId: configuredAlertMessageId,
           currentMessage: state.alertMessage,
           marker: ALERT_MARKER,
+          markerAliases: [LEGACY_ALERT_MARKER],
           payload: stockAlertMessagePayload(snapshot),
           logger
         });
@@ -197,6 +201,7 @@ function normalizeInventorySnapshot(payload) {
       || a.name.localeCompare(b.name)
     );
   return {
+    businessName: String(payload.workspace?.name || payload.business?.name || 'Business'),
     schemaVersion: numberOrZero(payload.schemaVersion),
     generatedAt: validDateText(payload.generatedAt) || new Date().toISOString(),
     products
@@ -227,7 +232,7 @@ function buildInventoryPages(snapshot, pageSize = DEFAULT_PAGE_SIZE) {
     });
     return {
       color: targetShortages.length ? 0x9b722e : 0x3f704f,
-      title: 'Frontier Firearms - Storefront Stock',
+      title: `${escapeDiscordText(snapshot.businessName)} - Storefront Stock`,
       description: 'Live stock for configured storefront targets.',
       fields,
       footer: {
@@ -267,6 +272,7 @@ function stockAlertMessagePayload(snapshot) {
       || a.label.localeCompare(b.label)
     );
   const missingUnits = shortages.reduce((sum, product) => sum + product.missing, 0);
+  const hasTargets = snapshot.products.length > 0;
   const visibleShortages = [];
   let renderedCharacters = 0;
   shortages.forEach(product => {
@@ -277,7 +283,13 @@ function stockAlertMessagePayload(snapshot) {
   });
   const fields = shortages.length
     ? groupedProductFields(visibleShortages, alertProductLine)
-    : [{ name: 'Status', value: '\u2705 All storefront targets are currently met.', inline: false }];
+    : [{
+        name: 'Status',
+        value: hasTargets
+          ? '\u2705 All storefront targets are currently met.'
+          : 'No storefront targets are configured.',
+        inline: false
+      }];
   const hiddenShortages = shortages.length - visibleShortages.length;
   if (hiddenShortages > 0) {
     fields.push({
@@ -290,10 +302,12 @@ function stockAlertMessagePayload(snapshot) {
   return {
     embeds: [{
       color: shortages.length ? 0xa33b31 : 0x3f704f,
-      title: 'Frontier Firearms - Stock Alerts',
+      title: `${escapeDiscordText(snapshot.businessName)} - Stock Alerts`,
       description: shortages.length
         ? `${shortages.length} ${shortages.length === 1 ? 'ware is' : 'wares are'} below target by ${formatNumber(missingUnits)} total units.`
-        : 'No storefront restock action is currently required.',
+        : hasTargets
+          ? 'No storefront restock action is currently required.'
+          : 'Set storefront targets in the app to begin stock monitoring.',
       fields,
       footer: { text: `${ALERT_MARKER} | Updated ${formatDateTime(generatedAt)}` },
       timestamp: generatedAt
@@ -364,7 +378,13 @@ async function publishManagedMessage(options) {
   if (!message && options.configuredMessageId) {
     message = await channel.messages.fetch(options.configuredMessageId).catch(() => null);
   }
-  if (!message) message = await findManagedMessage(channel, options.client.user?.id, options.marker);
+  if (!message) {
+    message = await findManagedMessage(
+      channel,
+      options.client.user?.id,
+      [options.marker, ...(options.markerAliases || [])]
+    );
+  }
 
   if (message) {
     try {
@@ -380,12 +400,15 @@ async function publishManagedMessage(options) {
   return created;
 }
 
-async function findManagedMessage(channel, botUserId, marker) {
+async function findManagedMessage(channel, botUserId, markers) {
   try {
+    const acceptedMarkers = Array.isArray(markers) ? markers : [markers];
     const messages = await channel.messages.fetch({ limit: 50 });
     return messages.find(message =>
       message.author?.id === botUserId
-      && message.embeds?.some(embed => String(embed.footer?.text || '').includes(marker))
+      && message.embeds?.some(embed => acceptedMarkers.some(marker =>
+        String(embed.footer?.text || '').includes(marker)
+      ))
     ) || null;
   } catch {
     return null;

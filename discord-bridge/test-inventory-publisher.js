@@ -39,11 +39,14 @@ rawProducts.push({
 
 const snapshot = normalizeInventorySnapshot({
   ok: true,
+  workspace: { name: 'Test Outfit' },
   schemaVersion: 8,
   generatedAt: '2026-07-29T08:00:00.000Z',
   inventory: { products: rawProducts }
 });
 assert.equal(snapshot.products.length, 21);
+assert.equal(snapshot.businessName, 'Test Outfit');
+assert.equal(buildInventoryPages(snapshot)[0].title, 'Test Outfit - Storefront Stock');
 assert.equal(snapshot.products.find(product => product.name === 'Product 1').missing, 5);
 assert.equal(snapshot.products.some(product => product.name === 'No Target Product'), false);
 assert.equal(snapshot.products.some(product => product.name === 'Missing Target Product'), false);
@@ -60,6 +63,7 @@ const noTargets = normalizeInventorySnapshot({
 });
 assert.equal(noTargets.products.length, 0);
 assert.match(buildInventoryPages(noTargets)[0].fields[0].value, /No storefront targets/);
+assert.match(stockAlertMessagePayload(noTargets).embeds[0].description, /Set storefront targets/);
 
 const pages = buildInventoryPages(snapshot, 8);
 assert.equal(pages.length, 3);
@@ -73,6 +77,7 @@ assert(
 
 const alerts = stockAlertMessagePayload(snapshot);
 assert(alerts.embeds[0].footer.text.includes(ALERT_MARKER));
+assert.equal(alerts.embeds[0].title, 'Test Outfit - Stock Alerts');
 assert.match(alerts.embeds[0].description, /below target/);
 assert.equal(alerts.allowedMentions.parse.length, 0);
 

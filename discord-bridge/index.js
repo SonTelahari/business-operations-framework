@@ -3,6 +3,7 @@ const http = require('http');
 const path = require('path');
 const { appendCaptureRecord, createCaptureRecord, serializeCaptureRecord } = require('./capture');
 const { createInventoryPublisher } = require('./inventory-publisher');
+const { createSharedInventoryPublisher } = require('./shared-inventory-publisher');
 const { parseStillWaterEmbed } = require('./parser');
 const { embedToText, loadEnvFile, normalizeSnowflake, prepareSheetPayload } = require('./runtime-utils');
 
@@ -15,7 +16,7 @@ const BUSINESS_API_URL = String(process.env.BUSINESS_API_URL || '').trim().repla
 const BRIDGE_API_TOKEN = String(process.env.BRIDGE_API_TOKEN || '').trim();
 const EVENT_API_URL = BUSINESS_API_URL ? `${BUSINESS_API_URL}/api/integrations/discord/events` : '';
 const SNAPSHOT_API_URL = BUSINESS_API_URL
-  ? `${BUSINESS_API_URL}/api/integrations/discord/snapshot${DISCORD_CHANNEL_ID ? `?discord_channel_id=${encodeURIComponent(DISCORD_CHANNEL_ID)}` : ''}`
+  ? `${BUSINESS_API_URL}/api/integrations/discord/snapshot${!SHARED_BUSINESS_MODE && DISCORD_CHANNEL_ID ? `?discord_channel_id=${encodeURIComponent(DISCORD_CHANNEL_ID)}` : ''}`
   : '';
 const CAPTURE_ONLY = process.env.CAPTURE_ONLY !== '0';
 const DEBUG_DISCORD = process.env.DEBUG_DISCORD !== '0';
@@ -40,17 +41,27 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   partials: [Partials.Channel]
 });
-const inventoryPublisher = createInventoryPublisher({
-  client,
-  snapshotUrl: SNAPSHOT_API_URL,
-  requestHeaders: { authorization: `Bearer ${BRIDGE_API_TOKEN}` },
-  inventoryChannelId: INVENTORY_CHANNEL_ID,
-  alertChannelId: STOCK_ALERT_CHANNEL_ID,
-  inventoryMessageId: INVENTORY_MESSAGE_ID,
-  alertMessageId: STOCK_ALERT_MESSAGE_ID,
-  refreshMs: INVENTORY_REFRESH_SECONDS * 1000,
-  logger: { info: logInfo, warn: logWarn, error: logError }
-});
+const publisherLogger = { info: logInfo, warn: logWarn, error: logError };
+const inventoryPublisher = SHARED_BUSINESS_MODE
+  ? createSharedInventoryPublisher({
+      client,
+      apiBaseUrl: BUSINESS_API_URL,
+      apiToken: BRIDGE_API_TOKEN,
+      refreshMs: INVENTORY_REFRESH_SECONDS * 1000,
+      directoryRefreshMs: Math.min(INVENTORY_REFRESH_SECONDS, 60) * 1000,
+      logger: publisherLogger
+    })
+  : createInventoryPublisher({
+      client,
+      snapshotUrl: SNAPSHOT_API_URL,
+      requestHeaders: { authorization: `Bearer ${BRIDGE_API_TOKEN}` },
+      inventoryChannelId: INVENTORY_CHANNEL_ID,
+      alertChannelId: STOCK_ALERT_CHANNEL_ID,
+      inventoryMessageId: INVENTORY_MESSAGE_ID,
+      alertMessageId: STOCK_ALERT_MESSAGE_ID,
+      refreshMs: INVENTORY_REFRESH_SECONDS * 1000,
+      logger: publisherLogger
+    });
 
 client.once('clientReady', () => {
   logInfo(`Frontier Firearms - Still Water bridge logged in as ${client.user.tag}`);
@@ -110,7 +121,11 @@ client.on('messageCreate', async (message) => {
         timestamp: message.createdAt.toISOString()
       });
       await forwardToBusinessApi(outboundPayload);
-      inventoryPublisher.requestRefresh('storefront event');
+      if (SHARED_BUSINESS_MODE) {
+        inventoryPublisher.requestRefresh('storefront event', message.channelId);
+      } else {
+        inventoryPublisher.requestRefresh('storefront event');
+      }
       if (payload.review_required) {
         logWarn(`Sent Discord message ${message.id} to review: ${payload.review_reason || 'parser review required'}`);
       }

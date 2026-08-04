@@ -1198,6 +1198,7 @@ async function handleDiscordIntegrationRoute(request, response, url, tokenVerifi
       const snapshot = await standaloneStore.snapshot();
       sendJson(response, {
         ok: true,
+        workspace: publicWorkspace(),
         schemaVersion: snapshot.schemaVersion,
         generatedAt: snapshot.generatedAt,
         inventory: { products: snapshot.inventory?.products || [] }

@@ -1,6 +1,6 @@
 {
   "name": "frontier-firearms-still-water-discord-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "commonjs",
   "engines": {
@@ -9,10 +9,10 @@
   "scripts": {
     "start": "node index.js",
     "check:channel": "node check-channel.js",
-    "test": "node test-runtime-utils.js && node test-parser.js && node test-inventory-publisher.js",
+    "test": "node test-runtime-utils.js && node test-parser.js && node test-inventory-publisher.js && node test-shared-inventory-publisher.js",
     "test:utils": "node test-runtime-utils.js",
     "test:parser": "node test-parser.js",
-    "test:inventory": "node test-inventory-publisher.js",
+    "test:inventory": "node test-inventory-publisher.js && node test-shared-inventory-publisher.js",
     "test:forward": "node test-forward.js",
     "replay:captures": "node replay-captures.js"
   },
