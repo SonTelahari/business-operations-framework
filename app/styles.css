@@ -618,7 +618,7 @@ h2 {
 }
 
 .restock-summary-panel .dashboard-stats {
-  grid-template-columns: repeat(3, minmax(0, 220px));
+  grid-template-columns: repeat(4, minmax(0, 220px));
 }
 
 .dashboard-stats div {
@@ -654,6 +654,17 @@ h2 {
 
 .replenishment-panel {
   grid-column: 1 / -1;
+}
+
+.inventory-alerts-panel {
+  grid-column: 1 / -1;
+}
+
+.alert-location-grid .dashboard-list {
+  align-content: start;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .priority-panel {
@@ -1391,6 +1402,20 @@ tr:last-child td {
   margin-top: 14px;
 }
 
+.target-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.target-groups h3 {
+  margin: 0;
+  color: var(--gold-strong);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
 .employee-view .admin-only {
   display: none;
 }
@@ -2065,6 +2090,7 @@ tr:last-child td {
 
   .clock-controls,
   .time-entry,
+  .target-groups,
   .replenishment-grid,
   .compact-replenishment,
   .compact-replenishment #replenishmentMaterialsList {

@@ -677,7 +677,7 @@ function cleanSalesOrder(input, actor, { id, now, existing }) {
     deliveryDate: cleanDate(input.deliveryDate),
     deposit: Math.max(0, finiteNumber(input.deposit, 0)),
     lines,
-    label: cleanText(input.label || "The Frontier's Finest Firearms", 250),
+    label: cleanText(input.label, 250),
     notes: cleanText(input.notes, 2500),
     revision: Number(existing?.revision || 0) + 1,
     createdAt: existing?.createdAt || cleanDateTime(input.createdAt) || now,
@@ -804,7 +804,7 @@ function cleanProductionBatch(input, actor, { id, now }) {
     : "Manual";
   const lines = (Array.isArray(input.lines) ? input.lines : []).slice(0, 50)
     .map(cleanProductionLine);
-  if (!lines.length) throw businessError("Add at least one craftable item to the production batch", 400, "production_lines_required");
+  if (!lines.length) throw businessError("Add at least one producible item to the production batch", 400, "production_lines_required");
   const lineKeys = lines.map(line => normalizeKey(line.itemName));
   if (new Set(lineKeys).size !== lineKeys.length) {
     throw businessError("Each product can only appear once in a production batch", 400, "duplicate_production_line");
@@ -899,7 +899,7 @@ function cleanPendingProductionProgress(progress, batch) {
     if (!line) throw businessError("Production progress refers to an unknown line", 400, "production_line_not_found");
     const completedCrafts = finiteNumber(target.completedCrafts, -1);
     if (completedCrafts <= line.completedCrafts || completedCrafts > line.plannedCrafts) {
-      throw businessError("Completed craft cycles must increase without exceeding the plan", 400, "invalid_production_progress");
+      throw businessError("Completed production cycles must increase without exceeding the plan", 400, "invalid_production_progress");
     }
     return {
       lineId,
@@ -907,7 +907,7 @@ function cleanPendingProductionProgress(progress, batch) {
       completedCrafts
     };
   });
-  if (!targets.length) throw businessError("Enter at least one completed craft cycle", 400, "production_progress_required");
+  if (!targets.length) throw businessError("Enter at least one completed production cycle", 400, "production_progress_required");
   const operations = (Array.isArray(progress.operations) ? progress.operations : []).slice(0, 500).map(operation => {
     const originalKind = cleanText(operation.kind, 40);
     if (batch.sourceType === "Storefront Restock" && (originalKind === "Correction In" || originalKind === "Production Output")) {

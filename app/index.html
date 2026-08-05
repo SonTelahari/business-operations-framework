@@ -11,7 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/operations-ledger-32.png">
     <link rel="apple-touch-icon" href="/assets/operations-ledger-192.png">
-    <link rel="stylesheet" href="styles.css?v=20260805-recipe-order-store-headers">
+    <link rel="stylesheet" href="styles.css?v=20260805-storage-alerts-sales-desk">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -39,7 +39,7 @@
 
       <nav class="section-tabs" aria-label="Main sections">
         <button class="section-button active" data-section="dashboard" type="button">Dashboard</button>
-        <button class="section-button" data-section="workbench" type="button">Workbench</button>
+        <button class="section-button" data-section="workbench" type="button"><span id="salesDeskNavLabel">Sales</span></button>
         <button class="section-button production-tab-button" data-section="production" type="button">
           Production <span class="nav-count hidden" id="productionNavCount">0</span>
         </button>
@@ -111,6 +111,10 @@
             <div class="management-only">
               <span>Expected Today</span>
               <strong id="expectedDeliveryTodayCount">0</strong>
+            </div>
+            <div class="management-only priority-stat">
+              <span>Storage Alerts</span>
+              <strong id="storageAlertCount">0</strong>
             </div>
           </div>
         </section>
@@ -283,10 +287,11 @@
                   <th>Item</th>
                   <th>Type</th>
                   <th>In Storage</th>
+                  <th>Target</th>
                 </tr>
               </thead>
               <tbody id="storageOverviewBody">
-                <tr><td colspan="3" class="empty-line">Loading storage counts</td></tr>
+                <tr><td colspan="4" class="empty-line">Loading storage counts</td></tr>
               </tbody>
             </table>
           </div>
@@ -349,6 +354,10 @@
               <label class="catalog-product-field">
                 Storefront Target
                 <input id="catalogItemTargetInput" type="number" min="0" step="1" value="0">
+              </label>
+              <label>
+                Storage Target
+                <input id="catalogItemStorageTargetInput" type="number" min="0" step="1" value="0">
               </label>
             </div>
             <p class="catalog-item-status" id="catalogItemStatus" role="status"></p>
@@ -413,7 +422,7 @@
                 <select id="recipeProductInput" required></select>
               </label>
               <label>
-                Units Per Craft
+                Units Per Production Cycle
                 <input id="recipeYieldInput" type="number" min="0.001" step="0.001" value="1" required>
               </label>
             </div>
@@ -648,15 +657,26 @@
           </div>
         </section>
 
-        <section class="panel dashboard-list-panel">
+        <section class="panel dashboard-list-panel inventory-alerts-panel">
           <div class="panel-header">
             <div>
-              <h2>Stock Alerts</h2>
+              <h2>Inventory Alerts</h2>
               <p id="dataStatusText">Ready for shared database updates</p>
             </div>
           </div>
-          <div class="dashboard-list" id="stockAlertList">
-            <div class="empty-card">Loading stock levels</div>
+          <div class="replenishment-grid alert-location-grid">
+            <div>
+              <h3>Storefront</h3>
+              <div class="dashboard-list" id="stockAlertList">
+                <div class="empty-card">Loading storefront levels</div>
+              </div>
+            </div>
+            <div>
+              <h3>Storage</h3>
+              <div class="dashboard-list" id="storageAlertList">
+                <div class="empty-card">Loading storage levels</div>
+              </div>
+            </div>
           </div>
         </section>
       </main>
@@ -665,7 +685,7 @@
         <section class="panel active-order" aria-label="Active work order">
           <div class="panel-header">
             <div>
-              <h2>Fast Quote</h2>
+              <h2 id="activeSalesOrderTitle">Sales Order</h2>
               <p id="orderMeta">Draft</p>
             </div>
             <select id="statusSelect" aria-label="Status">
@@ -728,10 +748,10 @@
             </div>
 
             <div class="quick-custom">
-              <button class="chip-button" data-custom="Custom engraving" data-price="25" type="button">Engraving</button>
-              <button class="chip-button" data-custom="Gunsmith fitting" data-price="40" type="button">Fitting</button>
+              <button class="chip-button" data-custom="Custom work" data-price="25" type="button">Custom Work</button>
+              <button class="chip-button" data-custom="Service charge" data-price="40" type="button">Service</button>
               <button class="chip-button" data-custom="Rush work" data-price="50" type="button">Rush</button>
-              <button class="chip-button" data-custom="Custom label and description" data-price="0" type="button">Label</button>
+              <button class="chip-button" data-custom="Special request" data-price="0" type="button">Special Request</button>
             </div>
 
             <div class="line-table-wrap">
@@ -751,8 +771,8 @@
 
             <div class="notes-grid">
               <label>
-                Custom Label / Details
-                <textarea id="labelInput" rows="3" placeholder="Real-life label, cosmetic work, serial details"></textarea>
+                Order Label / Details
+                <textarea id="labelInput" rows="3" placeholder="Custom work, preparation, packaging, or other details"></textarea>
               </label>
               <label>
                 Notes
@@ -765,7 +785,7 @@
             <div class="production-header">
               <div>
                 <h3>Production</h3>
-                <p id="productionMeta">No craftable lines yet</p>
+                <p id="productionMeta">No producible lines yet</p>
               </div>
               <div class="production-header-actions">
                 <button class="ghost-button" id="copyProductionButton" type="button">Copy Materials</button>
@@ -815,7 +835,7 @@
         <section class="panel saved-panel" aria-label="Saved work orders">
           <div class="panel-header">
             <div>
-              <h2>Work Orders</h2>
+              <h2 id="savedSalesOrderTitle">Sales Orders</h2>
               <p id="savedCount">0 active</p>
             </div>
             <select id="filterSelect" aria-label="Filter orders">
@@ -837,7 +857,7 @@
         <section class="panel production-overview-panel">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">Workshop Ledger</p>
+              <p class="eyebrow">Production Ledger</p>
               <h2>Production Queue</h2>
               <p id="productionDataStatus">Loading shared batches</p>
             </div>
@@ -889,8 +909,8 @@
           <div class="production-detail-grid">
             <section>
               <div class="subsection-heading">
-                <h3>Craft Lines</h3>
-                <span>Enter total craft cycles completed</span>
+                <h3>Production Lines</h3>
+                <span>Enter total production cycles completed</span>
               </div>
               <div class="production-progress-lines" id="productionProgressLines"></div>
             </section>
@@ -1560,22 +1580,39 @@
         <section class="panel operations-panel management-only">
           <div class="panel-header">
             <div>
-              <h2>Storefront Targets</h2>
-              <p>Manager target counts used to generate continuous restock orders</p>
+              <h2>Inventory Targets</h2>
+              <p>Set storefront restock levels or storage alert thresholds</p>
             </div>
           </div>
           <div class="operation-form">
+            <label>
+              Location
+              <select id="targetLocationInput">
+                <option value="Storefront">Storefront</option>
+                <option value="Storage">Storage</option>
+              </select>
+            </label>
             <label class="search-box">
               Item
-              <input id="targetItemInput" list="itemOptions" autocomplete="off" placeholder="Sellable item">
+              <input id="targetItemInput" list="targetOptions" autocomplete="off" placeholder="Select a catalog good">
+              <datalist id="targetOptions"></datalist>
             </label>
             <label>
-              Store Target
+              Target Quantity
               <input id="targetQuantityInput" type="number" min="0" step="1" value="0">
             </label>
             <button class="primary-button" id="saveTargetButton" type="button">Save Target</button>
           </div>
-          <div class="target-list" id="targetList"></div>
+          <div class="target-groups">
+            <section>
+              <h3>Storefront Restock</h3>
+              <div class="target-list" id="targetList"></div>
+            </section>
+            <section>
+              <h3>Storage Alerts</h3>
+              <div class="target-list" id="storageTargetList"></div>
+            </section>
+          </div>
         </section>
 
         <section class="panel operations-panel management-only">
@@ -1902,7 +1939,7 @@
       <option value="Australia/Sydney"></option>
     </datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260805-catalog-recipes"></script>
+    <script src="app.js?v=20260805-storage-alerts-sales-desk"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

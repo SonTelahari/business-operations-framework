@@ -90,7 +90,7 @@ function createInventoryPublisher(options) {
       state.pages = buildInventoryPages(snapshot);
       state.pageIndex = Math.min(state.pageIndex, Math.max(0, state.pages.length - 1));
       state.productCount = snapshot.products.length;
-      state.shortageCount = snapshot.products.filter(product => product.missing > 0).length;
+      state.shortageCount = [...snapshot.products, ...snapshot.storage].filter(item => item.missing > 0).length;
 
       if (inventoryChannelId) {
         state.inventoryMessage = await publishManagedMessage({
@@ -200,11 +200,39 @@ function normalizeInventorySnapshot(payload) {
       || a.label.localeCompare(b.label)
       || a.name.localeCompare(b.name)
     );
+  const storage = (Array.isArray(payload.inventory.storage) ? payload.inventory.storage : [])
+    .filter(item =>
+      item
+      && (item.itemName || item.ingredient || item.name)
+      && item.active !== false
+      && numberOrZero(item.storageTarget) > 0
+    )
+    .map(item => {
+      const name = String(item.itemName || item.ingredient || item.name);
+      const currentStock = Math.max(0, numberOrZero(item.storageCount ?? item.currentStock));
+      const target = Math.max(0, numberOrZero(item.storageTarget));
+      return {
+        name,
+        label: String(item.itemLabel || item.ingredient || item.name || name),
+        category: String(item.category || 'Other'),
+        location: 'Storage',
+        currentStock,
+        target,
+        missing: Math.max(0, target - currentStock),
+        salePrice: 0
+      };
+    })
+    .sort((a, b) =>
+      a.category.localeCompare(b.category)
+      || a.label.localeCompare(b.label)
+      || a.name.localeCompare(b.name)
+    );
   return {
     businessName: String(payload.workspace?.name || payload.business?.name || 'Business'),
     schemaVersion: numberOrZero(payload.schemaVersion),
     generatedAt: validDateText(payload.generatedAt) || new Date().toISOString(),
-    products
+    products,
+    storage
   };
 }
 
@@ -264,37 +292,41 @@ function inventoryMessagePayload(pages, pageIndex) {
 }
 
 function stockAlertMessagePayload(snapshot) {
-  const shortages = snapshot.products
-    .filter(product => product.target > 0 && product.missing > 0)
+  const monitored = [
+    ...snapshot.products.map(product => ({ ...product, location: 'Storefront' })),
+    ...snapshot.storage
+  ];
+  const shortages = monitored
+    .filter(item => item.target > 0 && item.missing > 0)
     .sort((a, b) =>
       Number(a.currentStock > 0) - Number(b.currentStock > 0)
       || b.missing - a.missing
       || a.label.localeCompare(b.label)
     );
-  const missingUnits = shortages.reduce((sum, product) => sum + product.missing, 0);
-  const hasTargets = snapshot.products.length > 0;
+  const missingUnits = shortages.reduce((sum, item) => sum + item.missing, 0);
+  const hasTargets = monitored.length > 0;
   const visibleShortages = [];
   let renderedCharacters = 0;
-  shortages.forEach(product => {
-    const lineLength = alertProductLine(product).length + 1;
+  shortages.forEach(item => {
+    const lineLength = alertProductLine(item).length + 1;
     if (renderedCharacters + lineLength > 4200) return;
-    visibleShortages.push(product);
+    visibleShortages.push(item);
     renderedCharacters += lineLength;
   });
   const fields = shortages.length
-    ? groupedProductFields(visibleShortages, alertProductLine)
+    ? groupedAlertFields(visibleShortages)
     : [{
         name: 'Status',
         value: hasTargets
-          ? '\u2705 All storefront targets are currently met.'
-          : 'No storefront targets are configured.',
+          ? '\u2705 All storefront and storage targets are currently met.'
+          : 'No inventory targets are configured.',
         inline: false
       }];
   const hiddenShortages = shortages.length - visibleShortages.length;
   if (hiddenShortages > 0) {
     fields.push({
       name: 'Additional shortages',
-      value: `${hiddenShortages} more ${hiddenShortages === 1 ? 'ware is' : 'wares are'} below target. Open the Restock tab for the complete list.`,
+      value: `${hiddenShortages} more inventory ${hiddenShortages === 1 ? 'line is' : 'lines are'} below target. Open the Restock tab for the complete list.`,
       inline: false
     });
   }
@@ -302,12 +334,12 @@ function stockAlertMessagePayload(snapshot) {
   return {
     embeds: [{
       color: shortages.length ? 0xa33b31 : 0x3f704f,
-      title: `${escapeDiscordText(snapshot.businessName)} - Stock Alerts`,
+      title: `${escapeDiscordText(snapshot.businessName)} - Inventory Alerts`,
       description: shortages.length
-        ? `${shortages.length} ${shortages.length === 1 ? 'ware is' : 'wares are'} below target by ${formatNumber(missingUnits)} total units.`
+        ? `${shortages.length} inventory ${shortages.length === 1 ? 'line is' : 'lines are'} below target by ${formatNumber(missingUnits)} total units.`
         : hasTargets
-          ? 'No storefront restock action is currently required.'
-          : 'Set storefront targets in the app to begin stock monitoring.',
+          ? 'No storefront restock or storage action is currently required.'
+          : 'Set storefront or storage targets in the app to begin inventory monitoring.',
       fields,
       footer: { text: `${ALERT_MARKER} | Updated ${formatDateTime(generatedAt)}` },
       timestamp: generatedAt
@@ -315,6 +347,26 @@ function stockAlertMessagePayload(snapshot) {
     components: [],
     allowedMentions: { parse: [] }
   };
+}
+
+function groupedAlertFields(items) {
+  const groups = new Map();
+  items.forEach(item => {
+    const group = `${item.location || 'Storefront'} / ${item.category || 'Other'}`;
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(alertProductLine(item));
+  });
+  const fields = [];
+  groups.forEach((lines, group) => {
+    splitLines(lines, 960).forEach((value, index) => {
+      fields.push({
+        name: index ? `${escapeDiscordText(group)} (continued)` : escapeDiscordText(group),
+        value,
+        inline: false
+      });
+    });
+  });
+  return fields.slice(0, 24);
 }
 
 function alertProductLine(product) {

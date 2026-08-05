@@ -15,7 +15,7 @@ async function run() {
     const configuration = normalizeSetupPayload({
       business: { name: "Copper & Pine", currency: "USD", locale: "en-US", timezone: "UTC" },
       catalog: {
-        materials: [{ id: "iron", name: "Iron", category: "Metals", unit: "bar", unitCost: 2 }],
+        materials: [{ id: "iron", name: "Iron", category: "Metals", unit: "bar", unitCost: 2, storageTarget: 12 }],
         products: [{
           id: "widget", name: "Iron Widget", label: "Iron Widget", tag: "ITEM_IRON_WIDGET",
           category: "Goods", salePrice: 25, target: 4
@@ -122,6 +122,10 @@ async function run() {
     await store.handleGuiPayload({
       action: "stock_target",
       target: { itemName: "Raw Tobacco", target: 10 }
+    });
+    await store.handleGuiPayload({
+      action: "storage_target",
+      target: { itemName: "Raw Tobacco", target: 20 }
     });
     await store.handleGuiPayload({
       action: "manual_operation",
@@ -420,14 +424,17 @@ async function run() {
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Raw Tobacco").itemType, "both");
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Raw Tobacco").currentStock, 5);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Raw Tobacco").target, 10);
+    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Raw Tobacco").storageTarget, 20);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Unpriced Widget").salePrice, 12);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").currentStock, 50);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").salePrice, 2.25);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Iron").storageCount, 25);
+    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Iron").storageTarget, 12);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Glass Bottle").unitCost, 0.5);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Native Ore").category, "Metals");
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").itemType, "both");
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").storageCount, 12);
+    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").storageTarget, 20);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").unitCost, 1.75);
     assert.equal(snapshot.recipes.find(recipe => recipe.productName === "Imported Knife").yield, 2);
     assert.equal(snapshot.recipes.find(recipe => recipe.productName === "Imported Knife").ingredients[0].sourceLocation, "Storefront");

@@ -226,6 +226,10 @@ function legacyConfiguration({ bootstrap, suppliers, business, materialCosts, pr
     inventoryKey(row.itemName || row.itemLabel),
     row
   ]));
+  const sheetStorage = new Map((bootstrap.sheet?.inventory?.storage || []).map(row => [
+    inventoryKey(row.ingredient || row.itemName || row.itemLabel || row.name),
+    row
+  ]));
   const sourceItems = Array.isArray(bootstrap.items) ? bootstrap.items : [];
   const products = sourceItems.map(item => {
     const name = cleanText(item.name || item.label, 100);
@@ -245,6 +249,7 @@ function legacyConfiguration({ bootstrap, suppliers, business, materialCosts, pr
         0
       ),
       target: firstFinite(sheetProduct.target, item.target, 0),
+      storageTarget: firstFinite(sheetStorage.get(inventoryKey(name))?.storageTarget, item.storageTarget, 0),
       active: item.active !== false && sheetProduct.active !== false,
       aliases: Array.isArray(item.aliases) ? item.aliases : []
     };
@@ -272,7 +277,8 @@ function legacyConfiguration({ bootstrap, suppliers, business, materialCosts, pr
       materialCosts[name],
       supplierCosts.get(inventoryKey(name)),
       0
-    )
+    ),
+    storageTarget: firstFinite(sheetStorage.get(inventoryKey(name))?.storageTarget, 0)
   }));
   const canonicalOutputs = new Map([
     ...materials.map(material => [inventoryKey(material.name), material.name]),

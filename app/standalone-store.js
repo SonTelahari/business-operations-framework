@@ -21,6 +21,7 @@ class StandaloneStore {
           unitCost: material.unitCost,
           salePrice: 0,
           target: 0,
+          storageTarget: material.storageTarget,
           active: true,
           aliases: []
         });
@@ -30,7 +31,8 @@ class StandaloneStore {
           ...product,
           type: "product",
           unit: "unit",
-          unitCost: 0
+          unitCost: 0,
+          storageTarget: product.storageTarget
         });
       }
 
@@ -103,6 +105,7 @@ class StandaloneStore {
           unitCost: number(material?.unitCost),
           salePrice: number(product.salePrice),
           target: number(product.target),
+          storageTarget: number(product.storageTarget ?? material?.storageTarget),
           active: product.active !== false,
           aliases: []
         });
@@ -134,6 +137,7 @@ class StandaloneStore {
             unitCost: 0,
             salePrice: 0,
             target: 0,
+            storageTarget: number(material.storageTarget),
             active: true,
             aliases: []
           });
@@ -384,6 +388,7 @@ class StandaloneStore {
         unitCost: item.unitCost,
         salePrice: item.salePrice,
         target: item.stockTarget,
+        storageTarget: item.storageTarget,
         currentStock: Math.max(0, count.quantity),
         countedAt: count.countedAt,
         active: item.active,
@@ -405,6 +410,7 @@ class StandaloneStore {
         category: item.category,
         unit: item.unitName,
         unitCost: item.unitCost,
+        storageTarget: item.storageTarget,
         storageCount: Math.max(0, count.quantity),
         countedAt: count.countedAt,
         active: item.active,
@@ -421,6 +427,7 @@ class StandaloneStore {
         category: item.category,
         salePrice: item.salePrice,
         target: isSellableCatalogItem(item) ? item.stockTarget : 0,
+        storageTarget: item.storageTarget,
         currentStock: Math.max(0, count.quantity),
         countedAt: count.countedAt,
         active: item.active,
@@ -438,6 +445,7 @@ class StandaloneStore {
         itemTag: item.itemTag,
         itemType: item.itemType,
         category: item.category,
+        storageTarget: item.storageTarget,
         storageCount: Math.max(0, count.quantity),
         countedAt: count.countedAt
       });
@@ -664,6 +672,7 @@ class StandaloneStore {
     if (action === "recipe_delete") return this.deleteRecipe(payload.recipe || {});
     if (action === "manual_operation") return this.recordManualOperation(payload.entry || {});
     if (action === "stock_target") return this.updateStockTarget(payload.target || {});
+    if (action === "storage_target") return this.updateStorageTarget(payload.target || {});
     if (action === "time_clock") return this.recordTimeEntry(payload.entry || {});
     if (action === "resolve_exception") return this.resolveException(payload.exception || {});
     if (action === "ignore_exception") return this.ignoreException(payload.exception || {});
@@ -705,13 +714,13 @@ class StandaloneStore {
       const result = await client.query(`
         UPDATE catalog_items SET
           item_type = $3, label = $4, item_tag = $5, category = $6, unit_name = $7,
-          unit_cost = $8, sale_price = $9, stock_target = $10, active = $11,
-          metadata = $12::jsonb, updated_at = now()
+          unit_cost = $8, sale_price = $9, stock_target = $10, storage_target = $11, active = $12,
+          metadata = $13::jsonb, updated_at = now()
         WHERE business_id = $1 AND id = $2
         RETURNING *
       `, [
         this.businessId, id, item.type, item.label, item.tag, item.category, item.unit,
-        item.unitCost, item.salePrice, item.target, input.active !== false, JSON.stringify(metadata)
+        item.unitCost, item.salePrice, item.target, item.storageTarget, input.active !== false, JSON.stringify(metadata)
       ]);
       return { ok: true, action: "catalog_item_update", item: catalogRow(result.rows[0]) };
     });
@@ -906,6 +915,19 @@ class StandaloneStore {
     `, [this.businessId, inventoryKey(itemName), Math.max(0, number(target.target))]);
     if (!result.rowCount) throw storeError(`Product not found: ${itemName}`, 404, "product_not_found");
     return { ok: true, action: "stock_target", itemName: result.rows[0].name };
+  }
+
+  async updateStorageTarget(target) {
+    const itemName = cleanText(target.itemName || target.itemLabel, 150);
+    requireItem(itemName);
+    const result = await this.database.query(`
+      UPDATE catalog_items SET storage_target = $3, updated_at = now()
+      WHERE business_id = $1 AND active = true
+        AND (normalized_name = $2 OR lower(label) = $2 OR lower(item_tag) = $2)
+      RETURNING name
+    `, [this.businessId, inventoryKey(itemName), Math.max(0, number(target.target))]);
+    if (!result.rowCount) throw storeError(`Catalog good not found: ${itemName}`, 404, "catalog_item_not_found");
+    return { ok: true, action: "storage_target", itemName: result.rows[0].name };
   }
 
   async recordTimeEntry(entry) {
@@ -1113,8 +1135,8 @@ async function upsertCatalogItem(client, businessId, item) {
   await client.query(`
     INSERT INTO catalog_items (
       business_id, id, item_type, name, normalized_name, label, item_tag, category,
-      unit_name, unit_cost, sale_price, stock_target, active, aliases, metadata, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, now())
+      unit_name, unit_cost, sale_price, stock_target, storage_target, active, aliases, metadata, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, now())
     ON CONFLICT (business_id, normalized_name) DO UPDATE SET
       item_type = EXCLUDED.item_type,
       name = EXCLUDED.name,
@@ -1127,6 +1149,14 @@ async function upsertCatalogItem(client, businessId, item) {
         WHEN catalog_items.sale_price > 0 THEN catalog_items.sale_price
         ELSE EXCLUDED.sale_price
       END,
+      stock_target = CASE
+        WHEN catalog_items.stock_target > 0 THEN catalog_items.stock_target
+        ELSE EXCLUDED.stock_target
+      END,
+      storage_target = CASE
+        WHEN catalog_items.storage_target > 0 THEN catalog_items.storage_target
+        ELSE EXCLUDED.storage_target
+      END,
       active = EXCLUDED.active,
       aliases = EXCLUDED.aliases,
       metadata = EXCLUDED.metadata,
@@ -1134,7 +1164,7 @@ async function upsertCatalogItem(client, businessId, item) {
   `, [
     businessId, item.id || crypto.randomUUID(), item.type, item.name, inventoryKey(item.name),
     item.label || item.name, item.tag || "", item.category || (item.type === "material" ? "Materials" : "Products"),
-    item.unit || "unit", number(item.unitCost), number(item.salePrice), number(item.target), item.active !== false,
+    item.unit || "unit", number(item.unitCost), number(item.salePrice), number(item.target), number(item.storageTarget), item.active !== false,
     JSON.stringify(item.aliases || []), JSON.stringify({ source: "Business setup" })
   ]);
 }
@@ -1397,8 +1427,8 @@ async function createCatalogItemRecord(client, businessId, input, { source, crea
     const result = await client.query(`
       INSERT INTO catalog_items (
         business_id, id, item_type, name, normalized_name, label, item_tag, category,
-        unit_name, unit_cost, sale_price, stock_target, active, aliases, metadata
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, '[]'::jsonb, $13::jsonb)
+        unit_name, unit_cost, sale_price, stock_target, storage_target, active, aliases, metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, '[]'::jsonb, $14::jsonb)
       RETURNING *
     `, [
       businessId,
@@ -1413,6 +1443,7 @@ async function createCatalogItemRecord(client, businessId, input, { source, crea
       input.unitCost,
       input.salePrice,
       input.target,
+      input.storageTarget,
       JSON.stringify(metadata)
     ]);
     return catalogRow(result.rows[0]);
@@ -1511,7 +1542,8 @@ function normalizeCatalogItem(input) {
     unit: cleanText(input?.unit || input?.unitName, 50) || "unit",
     unitCost: catalogNumber(input?.unitCost, "Unit cost"),
     salePrice: sellable ? catalogNumber(input?.salePrice ?? input?.price, "Sale price") : 0,
-    target: sellable ? catalogNumber(input?.target ?? input?.stockTarget, "Stock target") : 0
+    target: sellable ? catalogNumber(input?.target ?? input?.stockTarget, "Stock target") : 0,
+    storageTarget: catalogNumber(input?.storageTarget, "Storage target")
   };
 }
 
@@ -1632,6 +1664,7 @@ function catalogRow(row) {
     unitCost: number(row.unit_cost),
     salePrice: number(row.sale_price),
     stockTarget: number(row.stock_target),
+    storageTarget: number(row.storage_target),
     active: row.active !== false,
     aliases: json(row.aliases, []),
     metadata: json(row.metadata, {})

@@ -138,6 +138,7 @@ function configurationToCatalogData(configuration) {
       category: product.category,
       price: product.salePrice,
       target: product.target,
+      storageTarget: product.storageTarget,
       active: product.active,
       aliases: [...product.aliases]
     })),
@@ -146,7 +147,8 @@ function configurationToCatalogData(configuration) {
       label: material.name,
       category: material.category,
       unit: material.unit,
-      price: material.unitCost
+      price: material.unitCost,
+      storageTarget: material.storageTarget
     })),
     recipes,
     recipeYields,
@@ -204,7 +206,8 @@ function normalizeMaterials(input) {
       name,
       category: cleanText(material?.category, 60) || "Materials",
       unit: cleanText(material?.unit, 30) || "unit",
-      unitCost: nonnegativeNumber(material?.unitCost, `Material cost for ${name}`)
+      unitCost: nonnegativeNumber(material?.unitCost, `Material cost for ${name}`),
+      storageTarget: nonnegativeNumber(material?.storageTarget, `Storage target for ${name}`)
     };
   });
 }
@@ -229,6 +232,7 @@ function normalizeProducts(input) {
       category: cleanText(product?.category, 60) || "Products",
       salePrice: nonnegativeNumber(product?.salePrice, `Sale price for ${name}`),
       target: nonnegativeNumber(product?.target, `Stock target for ${name}`),
+      storageTarget: nonnegativeNumber(product?.storageTarget, `Storage target for ${name}`),
       active: product?.active !== false,
       aliases: uniqueTexts(Array.isArray(product?.aliases) ? product.aliases : [], 100).slice(0, 20)
     };

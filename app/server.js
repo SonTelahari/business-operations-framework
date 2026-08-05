@@ -2499,6 +2499,7 @@ function requiresManagement(payload) {
     || payload.action === "recipe_upsert"
     || payload.action === "recipe_delete"
     || payload.action === "stock_target"
+    || payload.action === "storage_target"
     || payload.action === "manual_operation"
     || payload.action === "resolve_exception"
     || payload.action === "ignore_exception";
@@ -2645,16 +2646,19 @@ async function auditGuiPayload(payload, user, syncResult) {
     });
     return;
   }
-  if (payload.action === "stock_target" && payload.target) {
+  if ((payload.action === "stock_target" || payload.action === "storage_target") && payload.target) {
+    const storageTarget = payload.action === "storage_target";
     const removed = Boolean(payload.target.deleting) || Number(payload.target.target) === 0;
     await accountStore.recordAudit({
       category: "operations",
-      action: removed ? "target.removed" : "target.updated",
+      action: storageTarget
+        ? (removed ? "storage_target.removed" : "storage_target.updated")
+        : (removed ? "target.removed" : "target.updated"),
       actorId: user.id,
       actorName: user.fullName,
       subjectId: user.id,
       subjectName: user.fullName,
-      fingerprint: `target:${payload.target.itemTag || payload.target.itemName || payload.target.itemLabel}:${payload.target.updatedAt || ""}:${removed}`,
+      fingerprint: `${storageTarget ? "storage-target" : "target"}:${payload.target.itemTag || payload.target.itemName || payload.target.itemLabel}:${payload.target.updatedAt || ""}:${removed}`,
       details: {
         item: payload.target.itemLabel || payload.target.itemName,
         target: payload.target.target,
@@ -2991,6 +2995,7 @@ async function getBootstrapData(user) {
       manualMovements: "/api/sync",
       ledgerAdjustments: "/api/sync",
       stockTargets: "/api/sync",
+      storageTargets: "/api/sync",
       timeClock: "/api/sync",
       supplyOrders: "/api/supply-orders",
       storefrontBuyOrders: "/api/storefront-buy-orders",

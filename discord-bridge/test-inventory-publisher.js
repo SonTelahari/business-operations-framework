@@ -42,9 +42,18 @@ const snapshot = normalizeInventorySnapshot({
   workspace: { name: 'Test Outfit' },
   schemaVersion: 8,
   generatedAt: '2026-07-29T08:00:00.000Z',
-  inventory: { products: rawProducts }
+  inventory: {
+    products: rawProducts,
+    storage: [
+      { itemName: 'Iron', itemLabel: 'Iron', category: 'Materials', storageCount: 4, storageTarget: 20, active: true },
+      { itemName: 'Wood', itemLabel: 'Softwood', category: 'Materials', storageCount: 50, storageTarget: 50, active: true },
+      { itemName: 'Untargeted', storageCount: 100, storageTarget: 0, active: true }
+    ]
+  }
 });
 assert.equal(snapshot.products.length, 21);
+assert.equal(snapshot.storage.length, 2);
+assert.equal(snapshot.storage.find(item => item.name === 'Iron').missing, 16);
 assert.equal(snapshot.businessName, 'Test Outfit');
 assert.equal(buildInventoryPages(snapshot)[0].title, 'Test Outfit - Storefront Stock');
 assert.equal(snapshot.products.find(product => product.name === 'Product 1').missing, 5);
@@ -63,7 +72,7 @@ const noTargets = normalizeInventorySnapshot({
 });
 assert.equal(noTargets.products.length, 0);
 assert.match(buildInventoryPages(noTargets)[0].fields[0].value, /No storefront targets/);
-assert.match(stockAlertMessagePayload(noTargets).embeds[0].description, /Set storefront targets/);
+assert.match(stockAlertMessagePayload(noTargets).embeds[0].description, /Set storefront or storage targets/);
 
 const pages = buildInventoryPages(snapshot, 8);
 assert.equal(pages.length, 3);
@@ -77,8 +86,9 @@ assert(
 
 const alerts = stockAlertMessagePayload(snapshot);
 assert(alerts.embeds[0].footer.text.includes(ALERT_MARKER));
-assert.equal(alerts.embeds[0].title, 'Test Outfit - Stock Alerts');
+assert.equal(alerts.embeds[0].title, 'Test Outfit - Inventory Alerts');
 assert.match(alerts.embeds[0].description, /below target/);
+assert(alerts.embeds[0].fields.some(field => field.name.startsWith('Storage / Materials')));
 assert.equal(alerts.allowedMentions.parse.length, 0);
 
 const allClear = stockAlertMessagePayload(normalizeInventorySnapshot({
@@ -87,7 +97,7 @@ const allClear = stockAlertMessagePayload(normalizeInventorySnapshot({
     products: [{ itemName: 'Ready', currentStock: 5, target: 5, active: true }]
   }
 }));
-assert.match(allClear.embeds[0].description, /No storefront restock action/);
+assert.match(allClear.embeds[0].description, /No storefront restock or storage action/);
 
 const largeAlert = stockAlertMessagePayload(normalizeInventorySnapshot({
   ok: true,

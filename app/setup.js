@@ -192,7 +192,8 @@ function collectPayload() {
     name: value(row, "name"),
     category: value(row, "category"),
     unit: value(row, "unit"),
-    unitCost: numberValue(row, "unitCost")
+    unitCost: numberValue(row, "unitCost"),
+    storageTarget: numberValue(row, "storageTarget")
   }));
   const products = collectRows(elements.products).map(row => ({
     name: value(row, "name"),
@@ -201,6 +202,7 @@ function collectPayload() {
     category: value(row, "category"),
     salePrice: numberValue(row, "salePrice"),
     target: numberValue(row, "target"),
+    storageTarget: numberValue(row, "storageTarget"),
     active: true
   }));
   return {
@@ -274,6 +276,7 @@ function addMaterialRow(material = {}) {
       <label>Category<input data-field="category" maxlength="60" value="${escapeHtml(material.category || "Materials")}"></label>
       <label>Unit<input data-field="unit" maxlength="30" value="${escapeHtml(material.unit || "unit")}"></label>
       <label>Unit cost<input data-field="unitCost" type="number" min="0" step="0.01" value="${numericValue(material.unitCost)}"></label>
+      <label>Storage target<input data-field="storageTarget" type="number" min="0" step="1" value="${numericValue(material.storageTarget)}"></label>
       <button class="remove-row-button" data-remove-row type="button" aria-label="Remove material">Remove</button>
     </div>
   `);
@@ -290,6 +293,7 @@ function addProductRow(product = {}) {
       <label>Item tag<input data-field="tag" maxlength="150" value="${escapeHtml(product.tag || "")}"></label>
       <label>Sale price<input data-field="salePrice" type="number" min="0" step="0.01" value="${numericValue(product.salePrice)}"></label>
       <label>Stock target<input data-field="target" type="number" min="0" step="1" value="${numericValue(product.target)}"></label>
+      <label>Storage target<input data-field="storageTarget" type="number" min="0" step="1" value="${numericValue(product.storageTarget)}"></label>
       <button class="remove-row-button" data-remove-row type="button" aria-label="Remove product">Remove</button>
     </div>
   `);

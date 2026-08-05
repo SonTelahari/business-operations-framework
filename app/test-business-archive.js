@@ -41,6 +41,7 @@ async function run() {
   assert.equal(archive.business.configuration.business.name, "Frontier Firearms");
   assert.equal(archive.business.configuration.catalog.products.length, 1);
   assert.equal(archive.business.configuration.catalog.materials.find(item => item.name === "Softwood").unitCost, 1.5);
+  assert.equal(archive.business.configuration.catalog.materials.find(item => item.name === "Iron").storageTarget, 25);
   assert.deepEqual(
     archive.business.configuration.catalog.recipes[0].ingredients,
     [{ name: "Iron", quantity: 2 }, { name: "Softwood", quantity: 2 }]
@@ -86,6 +87,7 @@ async function run() {
     const snapshot = await result.context.standaloneStore.snapshot();
     assert.equal(snapshot.inventory.products[0].currentStock, 5);
     assert.equal(snapshot.inventory.materials.find(row => row.ingredient === "Iron").storageCount, 40);
+    assert.equal(snapshot.inventory.materials.find(row => row.ingredient === "Iron").storageTarget, 25);
     assert.equal(snapshot.inventory.ledger.balance, 1094.25);
     assert.equal(snapshot.reviewExceptions[0].webhookId, "review-1");
     const finance = await result.context.standaloneStore.finance();
@@ -194,13 +196,13 @@ function legacyFixture() {
       inventory: {
         products: [{ itemName: "Navy Revolver", itemLabel: "Revolver Navy", currentStock: 5, target: 10, salePrice: 105 }],
         materials: [
-          { ingredient: "Iron", storageCount: 40 },
+          { ingredient: "Iron", storageCount: 40, storageTarget: 25 },
           { ingredient: "Softwood", storageCount: 20 },
           { ingredient: "Flax", storageCount: 20 },
           { ingredient: "Fabric", storageCount: 5 }
         ],
         storage: [
-          { ingredient: "Iron", storageCount: 40 },
+          { ingredient: "Iron", storageCount: 40, storageTarget: 25 },
           { ingredient: "Softwood", storageCount: 20 },
           { ingredient: "Flax", storageCount: 20 },
           { ingredient: "Fabric", storageCount: 5 }

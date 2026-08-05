@@ -2,6 +2,7 @@ const STORAGE_KEY = "business_operations_work_orders_v1";
 const TIME_CLOCK_KEY = "business_operations_time_clock_v1";
 const OPERATIONS_KEY = "business_operations_manual_operations_v1";
 const TARGETS_KEY = "business_operations_sales_targets_v1";
+const STORAGE_TARGETS_KEY = "business_operations_storage_targets_v1";
 const SUPPLY_ACTIVE_STATUSES = new Set(["Active", "Ordered", "Partially Received"]);
 const SUPPLY_DELIVERY_STATUSES = new Set(["Ordered", "Partially Received"]);
 const BUY_ORDER_OPEN_STATUSES = new Set(["Active", "Paused"]);
@@ -71,6 +72,8 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "finance.funds_recorded": "Owner funds recorded",
   "target.updated": "Storefront target updated",
   "target.removed": "Storefront target removed",
+  "storage_target.updated": "Storage target updated",
+  "storage_target.removed": "Storage target removed",
   "catalog.item_created": "Catalog good added",
   "catalog.item_updated": "Catalog good updated",
   "catalog.recipe_saved": "Recipe saved",
@@ -113,6 +116,7 @@ let orders = [];
 let timeClock = { current: null, entries: [] };
 let operations = loadOperations();
 let stockTargets = loadStockTargets();
+let storageTargets = loadStorageTargets();
 let supplyOrders = [];
 let storefrontBuyOrders = [];
 let suppliers = [];
@@ -381,6 +385,7 @@ const elements = {
   catalogItemUnitCost: document.querySelector("#catalogItemUnitCostInput"),
   catalogItemSalePrice: document.querySelector("#catalogItemSalePriceInput"),
   catalogItemTarget: document.querySelector("#catalogItemTargetInput"),
+  catalogItemStorageTarget: document.querySelector("#catalogItemStorageTargetInput"),
   catalogItemActive: document.querySelector("#catalogItemActiveInput"),
   catalogItemStatus: document.querySelector("#catalogItemStatus"),
   saveCatalogItem: document.querySelector("#saveCatalogItemButton"),
@@ -466,6 +471,8 @@ const elements = {
   saveFinanceFunds: document.querySelector("#saveFinanceFundsButton"),
   financeFundsStatus: document.querySelector("#financeFundsStatus"),
   stockAlertList: document.querySelector("#stockAlertList"),
+  storageAlertList: document.querySelector("#storageAlertList"),
+  storageAlertCount: document.querySelector("#storageAlertCount"),
   missingStockCount: document.querySelector("#missingStockCount"),
   materialShortageCount: document.querySelector("#materialShortageCount"),
   expectedDeliveryTodayCount: document.querySelector("#expectedDeliveryTodayCount"),
@@ -533,9 +540,12 @@ const elements = {
   payrollNote: document.querySelector("#payrollNoteInput"),
   payrollEnteredBy: document.querySelector("#payrollEnteredByInput"),
   targetItem: document.querySelector("#targetItemInput"),
+  targetLocation: document.querySelector("#targetLocationInput"),
+  targetOptions: document.querySelector("#targetOptions"),
   targetQuantity: document.querySelector("#targetQuantityInput"),
   saveTarget: document.querySelector("#saveTargetButton"),
   targetList: document.querySelector("#targetList"),
+  storageTargetList: document.querySelector("#storageTargetList"),
   saveCount: document.querySelector("#saveCountButton"),
   saveMovement: document.querySelector("#saveMovementButton"),
   saveLedger: document.querySelector("#saveLedgerButton"),
@@ -562,7 +572,7 @@ function newOrder() {
     deliveryDate: "",
     deposit: 0,
     lines: [],
-    label: "The Frontier's Finest Firearms",
+    label: "",
     notes: "",
     revision: 0,
     createdAt: now,
@@ -699,6 +709,14 @@ function loadStockTargets() {
   }
 }
 
+function loadStorageTargets() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_TARGETS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
 function persistTimeClock() {
   localStorage.setItem(timeClockStorageKey(), JSON.stringify(timeClock));
 }
@@ -715,11 +733,16 @@ function persistStockTargets() {
   localStorage.setItem(TARGETS_KEY, JSON.stringify(stockTargets));
 }
 
+function persistStorageTargets() {
+  localStorage.setItem(STORAGE_TARGETS_KEY, JSON.stringify(storageTargets));
+}
+
 function seedDatalist() {
   elements.itemOptions.innerHTML = itemCatalog
     .map(item => `<option value="${escapeHtml(item.label)}">${escapeHtml(item.name)} - ${formatCurrency(item.price)}</option>`)
     .join("");
   elements.stockOptions.innerHTML = stockOptionMarkup(stockCatalog);
+  seedTargetDatalist();
   elements.buyOrderItemOptions.innerHTML = stockOptionMarkup([...ingredientCatalog, ...itemCatalog]);
   const catalogCategories = new Set([
     "Products",
@@ -734,6 +757,13 @@ function seedDatalist() {
     .join("");
   seedSupplyMaterialOptions();
   seedCountDatalist();
+}
+
+function seedTargetDatalist() {
+  const catalog = elements.targetLocation?.value === "Storage"
+    ? [...ingredientCatalog, ...itemCatalog]
+    : itemCatalog;
+  if (elements.targetOptions) elements.targetOptions.innerHTML = stockOptionMarkup(catalog);
 }
 
 function rebuildCatalogIndexes() {
@@ -806,6 +836,13 @@ function applyBusinessConfiguration(snapshot) {
   document.title = `${name} - ${ledgerName}`;
   document.querySelector("#businessName").textContent = name;
   document.querySelector("#businessLedgerName").textContent = ledgerName;
+  const salesOrderLabel = businessTerminology.salesOrder || "Sales Order";
+  const salesDeskNavLabel = document.querySelector("#salesDeskNavLabel");
+  const activeSalesOrderTitle = document.querySelector("#activeSalesOrderTitle");
+  const savedSalesOrderTitle = document.querySelector("#savedSalesOrderTitle");
+  if (salesDeskNavLabel) salesDeskNavLabel.textContent = "Sales";
+  if (activeSalesOrderTitle) activeSalesOrderTitle.textContent = salesOrderLabel;
+  if (savedSalesOrderTitle) savedSalesOrderTitle.textContent = pluralizeLabel(salesOrderLabel);
   const ownerCapitalLabel = document.querySelector("#financeOwnerCapitalLabel");
   if (ownerCapitalLabel) ownerCapitalLabel.textContent = `${currentUser?.fullName || "Owner"}'s capital currently in the business`;
   const logo = document.querySelector("#businessLogo");
@@ -839,6 +876,13 @@ function applyBusinessConfiguration(snapshot) {
     });
   });
   if (isAdmin() && !businessSettingsDirty) populateBusinessSettings();
+}
+
+function pluralizeLabel(value) {
+  const label = String(value || "Sales Order").trim();
+  if (/s$/i.test(label)) return label;
+  if (/y$/i.test(label) && !/[aeiou]y$/i.test(label)) return `${label.slice(0, -1)}ies`;
+  return `${label}s`;
 }
 
 function businessInitials(value) {
@@ -1022,6 +1066,12 @@ function wireEvents() {
   elements.saveLedger.addEventListener("click", saveLedgerAdjustment);
   elements.savePayroll.addEventListener("click", savePayrollPayment);
   elements.saveTarget.addEventListener("click", saveStockTarget);
+  elements.targetLocation.addEventListener("change", () => {
+    elements.targetItem.value = "";
+    elements.targetQuantity.value = "0";
+    elements.saveTarget.textContent = "Save Target";
+    seedTargetDatalist();
+  });
   document.querySelector("#pauseButton").addEventListener("click", () => setStatus("Paused"));
   document.querySelector("#expediteButton").addEventListener("click", () => {
     activeOrder.priority = "Expedite";
@@ -2505,6 +2555,7 @@ function openCatalogItemDialog(itemId = "") {
   elements.catalogItemUnitCost.value = Number(existing?.unitCost ?? existing?.price ?? 0);
   elements.catalogItemSalePrice.value = Number(existing?.salePrice ?? existing?.price ?? 0);
   elements.catalogItemTarget.value = Number(existing?.stockTarget ?? existing?.target ?? 0);
+  elements.catalogItemStorageTarget.value = Number(existing?.storageTarget ?? 0);
   elements.catalogItemActive.value = existing?.active === false ? "false" : "true";
   elements.catalogItemLabel.dataset.edited = "";
   elements.catalogItemStatus.textContent = "";
@@ -2550,6 +2601,7 @@ async function saveCatalogItem() {
     unitCost: elements.catalogItemUnitCost.value,
     salePrice: elements.catalogItemSalePrice.value,
     target: elements.catalogItemTarget.value,
+    storageTarget: elements.catalogItemStorageTarget.value,
     active: elements.catalogItemActive.value === "true"
   });
   const validation = validateCatalogItemDraft(item);
@@ -2596,6 +2648,7 @@ function catalogItemDraft(input) {
     unitCost: input.unitCost === "" ? 0 : Number(input.unitCost),
     salePrice: sellable ? input.salePrice === "" ? 0 : Number(input.salePrice) : 0,
     target: sellable ? input.target === "" ? 0 : Number(input.target) : 0,
+    storageTarget: input.storageTarget === "" ? 0 : Number(input.storageTarget),
     active: input.active !== false
   };
 }
@@ -2603,7 +2656,7 @@ function catalogItemDraft(input) {
 function validateCatalogItemDraft(item) {
   if (!item.name || !item.label) return "Enter a catalog name and display label";
   if (!item.category) return "Enter a category";
-  if (![item.unitCost, item.salePrice, item.target].every(value => Number.isFinite(value) && value >= 0)) {
+  if (![item.unitCost, item.salePrice, item.target, item.storageTarget].every(value => Number.isFinite(value) && value >= 0)) {
     return "Costs, prices, and targets must be zero or greater";
   }
   return "";
@@ -2650,7 +2703,7 @@ function renderCatalogLedger() {
     ? Object.keys(recipeCatalog).sort((a, b) => a.localeCompare(b)).map(productName => `
         <button class="recipe-list-row ${normalize(activeRecipeProductName) === normalize(productName) ? "active" : ""}" type="button" data-recipe-product="${escapeHtml(productName)}">
           <strong>${escapeHtml(productLabel(productName))}</strong>
-          <span>${formatNumber(recipeYieldCatalog[productName] || 1)} per craft / ${recipeCatalog[productName].length} ingredients</span>
+          <span>${formatNumber(recipeYieldCatalog[productName] || 1)} per production cycle / ${recipeCatalog[productName].length} ingredients</span>
         </button>
       `).join("")
     : '<div class="empty-card">No recipes have been entered</div>';
@@ -2812,9 +2865,13 @@ function renderStoreOverview() {
   const targetByKey = new Map(stockTargets
     .filter(target => !target.deleting)
     .map(target => [inventoryOverviewKey(target), Number(target.target || 0)]));
+  const storageTargetByKey = new Map(storageTargets
+    .filter(target => !target.deleting)
+    .map(target => [inventoryOverviewKey(target), Number(target.target || 0)]));
   const storefrontRows = buildInventoryOverviewRows([...itemCatalog, ...ingredientCatalog], storefrontCounts, "Storefront")
     .map(row => ({ ...row, target: targetByKey.get(row.key) || 0 }));
-  const storageRows = buildInventoryOverviewRows([...ingredientCatalog, ...itemCatalog], storageCounts, "Storage");
+  const storageRows = buildInventoryOverviewRows([...ingredientCatalog, ...itemCatalog], storageCounts, "Storage")
+    .map(row => ({ ...row, target: storageTargetByKey.get(row.key) || 0 }));
   const visibleStorefront = filterInventoryOverviewRows(storefrontRows, query);
   const visibleStorage = filterInventoryOverviewRows(storageRows, query);
 
@@ -2823,7 +2880,7 @@ function renderStoreOverview() {
   elements.storefrontOverviewCount.textContent = inventoryLineCountText(visibleStorefront.length, storefrontRows.length, query);
   elements.storageOverviewCount.textContent = inventoryLineCountText(visibleStorage.length, storageRows.length, query);
   elements.storefrontOverviewBody.innerHTML = renderInventoryOverviewRows(visibleStorefront, true);
-  elements.storageOverviewBody.innerHTML = renderInventoryOverviewRows(visibleStorage, false);
+  elements.storageOverviewBody.innerHTML = renderInventoryOverviewRows(visibleStorage, true);
   wireProductCardRows();
   if (activeProductCardKey) renderProductCard();
 
@@ -2905,6 +2962,7 @@ function renderProductCard() {
   const storageCounts = getLatestCounts("Storage");
   const storage = Number(storageCounts.get(inventoryOverviewKey(item)) || 0);
   const target = stockTargets.find(entry => !entry.deleting && inventoryOverviewKey(entry) === inventoryOverviewKey(item));
+  const storageTarget = storageTargets.find(entry => !entry.deleting && inventoryOverviewKey(entry) === inventoryOverviewKey(item));
   const retailPrice = Number(item.price || 0);
   const productPricing = pricingCatalog.products?.[item.name];
   const ingredients = recipe.map(([ingredient, quantity, source]) => {
@@ -2958,7 +3016,8 @@ function renderProductCard() {
     <dl class="product-card-stock">
       <div><dt>Storefront</dt><dd>${formatNumber(storefront)}</dd></div>
       <div><dt>Storage</dt><dd>${formatNumber(storage)}</dd></div>
-      <div><dt>Target</dt><dd>${target ? formatNumber(target.target) : "-"}</dd></div>
+      <div><dt>Store Target</dt><dd>${target ? formatNumber(target.target) : "-"}</dd></div>
+      <div><dt>Storage Target</dt><dd>${storageTarget ? formatNumber(storageTarget.target) : "-"}</dd></div>
     </dl>
     <section class="product-card-section">
       <h3>Price and Cost</h3>
@@ -4017,6 +4076,7 @@ async function ignoreReviewException() {
 
 function renderReplenishment() {
   const plan = getReplenishmentPlan();
+  const storagePlan = getStorageAlertPlan();
   const materialShortages = plan.materials.filter(line => line.shortage > 0);
   const unqueuedCraftable = plan.missing.reduce((sum, line) => {
     if (!recipeCatalog[line.itemName]) return sum;
@@ -4024,6 +4084,7 @@ function renderReplenishment() {
   }, 0);
   elements.missingStockCount.textContent = plan.missing.length;
   elements.materialShortageCount.textContent = materialShortages.length;
+  elements.storageAlertCount.textContent = storagePlan.length;
   elements.replenishmentMeta.textContent = stockTargets.length
     ? `${plan.missing.length} storefront lines missing / ${materialShortages.length} material shortages${plan.missingRecipes.length ? ` / ${plan.missingRecipes.length} missing recipes` : ""}`
     : "Set admin stock targets to generate a standing order";
@@ -4064,6 +4125,14 @@ function renderReplenishment() {
       </div>
     `).join("")
     : `<div class="empty-card">${stockTargets.length ? "All storefront targets are filled" : "No storefront targets set yet"}</div>`;
+  elements.storageAlertList.innerHTML = storagePlan.length
+    ? storagePlan.map(line => `
+      <div class="replenishment-row short">
+        <strong>${escapeHtml(line.label)}</strong>
+        <span>${formatNumber(line.current)} in storage / ${formatNumber(line.missing)} needed</span>
+      </div>
+    `).join("")
+    : `<div class="empty-card">${storageTargets.length ? "All storage targets are filled" : "No storage targets set yet"}</div>`;
   elements.queueRestock.disabled = productionActionPending || !isManagement() || unqueuedCraftable <= 0;
   elements.queueRestock.textContent = unqueuedCraftable > 0
     ? `Queue ${formatNumber(unqueuedCraftable)} Units`
@@ -4121,10 +4190,10 @@ function renderSupplyDeliveryCards(items) {
 
 function renderProduction() {
   const production = getProductionPlan(activeOrder);
-  elements.productionMeta.textContent = `${production.buildLines.length} craftable lines / ${production.materials.length} materials / est. ${formatCurrency(production.materialCost)}`;
+  elements.productionMeta.textContent = `${production.buildLines.length} producible lines / ${production.materials.length} materials / est. ${formatCurrency(production.materialCost)}`;
 
   if (!production.buildLines.length) {
-    elements.productionBuildList.innerHTML = `<div class="empty-card">No craftable quote lines yet</div>`;
+    elements.productionBuildList.innerHTML = `<div class="empty-card">No producible order lines yet</div>`;
   } else {
     elements.productionBuildList.innerHTML = production.buildLines.map(line => `
       <div class="production-row">
@@ -4237,7 +4306,7 @@ function buildProductionSummary(order) {
   const production = getProductionPlan(order);
   const buildLines = production.buildLines.length
     ? production.buildLines.map(line => `${formatNumber(line.quantity)}x ${line.name}${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""} / ${formatCurrency(line.unitCost)} each`).join("\n")
-    : "No craftable lines";
+    : "No producible lines";
   const materials = production.materials.length
     ? production.materials.map(material => `${formatNumber(material.qty)}x ${material.ingredient} - ${formatCurrency(material.cost)}`).join("\n")
     : "No materials needed";
@@ -4293,7 +4362,7 @@ async function queueRestockProduction() {
     requestedQuantity: Math.max(0, Number(line.missing || 0) - queuedProductionQuantity(line.itemName))
   })).filter(line => line.requestedQuantity > 0 && recipeCatalog[line.itemName]);
   if (!lines.length) {
-    elements.replenishmentMeta.textContent = "All craftable storefront shortages are already covered by active batches";
+    elements.replenishmentMeta.textContent = "All producible storefront shortages are already covered by active batches";
     return;
   }
   openProductionSourceDialog({
@@ -4446,7 +4515,7 @@ function renderProductionQueue() {
         <button class="production-batch-row ${batch.id === activeProductionBatchId ? "active" : ""}" type="button" data-production-batch="${escapeHtml(batch.id)}">
           <span class="status-pill ${statusClass(batch.status)}">${escapeHtml(batch.status)}</span>
           <strong>${escapeHtml(batch.reference || batch.sourceType)}</strong>
-          <span>${escapeHtml(batch.sourceType)} / ${formatNumber(completed)} of ${formatNumber(planned)} craft cycles</span>
+          <span>${escapeHtml(batch.sourceType)} / ${formatNumber(completed)} of ${formatNumber(planned)} production cycles</span>
           <small>${batch.dueDate ? formatDelivery(batch.dueDate) : "No due date"}${materialPlan.shortageCount ? ` / ${formatNumber(materialPlan.shortageCount)} material shorts` : " / Materials ready"}</small>
         </button>
       `;
@@ -4472,7 +4541,7 @@ function renderProductionDetail(batch) {
     elements.productionDetailAssigned.textContent = "-";
     elements.productionDetailCreatedBy.textContent = "-";
     elements.productionDetailUpdated.textContent = "-";
-    elements.productionProgressLines.innerHTML = `<div class="empty-card">No craft lines selected</div>`;
+    elements.productionProgressLines.innerHTML = `<div class="empty-card">No production lines selected</div>`;
     elements.productionMaterialStatus.innerHTML = `<div class="empty-card">No material plan selected</div>`;
     elements.productionActionStatus.textContent = "Select a batch to begin";
     elements.startProduction.disabled = true;
@@ -4504,7 +4573,7 @@ function renderProductionDetail(batch) {
         </div>
         <div class="production-cycle-control">
           <span>${formatNumber(completedCrafts)} / ${formatNumber(plannedCrafts)}</span>
-          <input data-production-progress-line="${escapeHtml(line.id)}" type="number" min="${completedCrafts}" max="${plannedCrafts}" step="1" value="${inputValue}" aria-label="Completed craft cycles for ${escapeHtml(line.itemLabel || line.itemName)}" ${closed ? "disabled" : ""}>
+          <input data-production-progress-line="${escapeHtml(line.id)}" type="number" min="${completedCrafts}" max="${plannedCrafts}" step="1" value="${inputValue}" aria-label="Completed production cycles for ${escapeHtml(line.itemLabel || line.itemName)}" ${closed ? "disabled" : ""}>
         </div>
       </div>
     `;
@@ -4810,7 +4879,11 @@ function savePayrollPayment() {
 }
 
 function saveStockTarget() {
-  const item = resolveItem(elements.targetItem.value);
+  const location = elements.targetLocation.value === "Storage" ? "Storage" : "Storefront";
+  const targets = location === "Storage" ? storageTargets : stockTargets;
+  const item = location === "Storage"
+    ? resolveStockItem(elements.targetItem.value)
+    : resolveItem(elements.targetItem.value);
   const target = Number(elements.targetQuantity.value || 0);
   if (!item.label && !item.name) {
     elements.targetItem.focus();
@@ -4822,31 +4895,33 @@ function saveStockTarget() {
     itemLabel: item.label,
     itemTag: item.tag,
     target,
+    location,
     updatedAt: new Date().toISOString(),
     syncStatus: "Pending data sync"
   };
-  const existingIndex = stockTargets.findIndex(saved => stockKey(saved) === stockKey(nextTarget));
+  const existingIndex = targets.findIndex(saved => stockKey(saved) === stockKey(nextTarget));
   if (existingIndex >= 0 && target === 0) {
-    removeStockTarget(stockKey(nextTarget));
+    removeInventoryTarget(location, stockKey(nextTarget));
     elements.targetItem.value = "";
     elements.targetQuantity.value = "0";
     elements.saveTarget.textContent = "Save Target";
     return;
   }
+  if (existingIndex < 0 && target === 0) return;
   if (existingIndex >= 0) {
-    stockTargets[existingIndex] = nextTarget;
+    targets[existingIndex] = nextTarget;
   } else {
-    stockTargets.unshift(nextTarget);
+    targets.unshift(nextTarget);
   }
 
-  persistStockTargets();
+  persistInventoryTargets(location);
   elements.targetItem.value = "";
   elements.targetQuantity.value = "0";
   elements.saveTarget.textContent = "Save Target";
   renderOperations();
   renderReplenishment();
   renderStoreOverview();
-  syncStockTarget(stockKey(nextTarget));
+  syncInventoryTarget(location, stockKey(nextTarget));
 }
 
 function addOperation(entry) {
@@ -4896,13 +4971,17 @@ function renderOperations() {
 }
 
 function renderTargets() {
-  if (!stockTargets.length) {
-    elements.targetList.innerHTML = `<div class="empty-card">No storefront targets set yet</div>`;
+  renderTargetCollection("Storefront", stockTargets, elements.targetList);
+  renderTargetCollection("Storage", storageTargets, elements.storageTargetList);
+}
+
+function renderTargetCollection(location, targets, listElement) {
+  if (!targets.length) {
+    listElement.innerHTML = `<div class="empty-card">No ${location.toLowerCase()} targets set yet</div>`;
     return;
   }
-
-  const counts = getLatestCounts("Storefront");
-  elements.targetList.innerHTML = stockTargets.map(target => {
+  const counts = getLatestCounts(location);
+  listElement.innerHTML = targets.map(target => {
     const current = counts.get(stockKey(target)) || 0;
     const key = escapeHtml(stockKey(target));
     return `
@@ -4919,17 +4998,20 @@ function renderTargets() {
     `;
   }).join("");
 
-  elements.targetList.querySelectorAll("[data-target-edit]").forEach(button => {
-    button.addEventListener("click", () => editStockTarget(button.dataset.targetEdit));
+  listElement.querySelectorAll("[data-target-edit]").forEach(button => {
+    button.addEventListener("click", () => editInventoryTarget(location, button.dataset.targetEdit));
   });
-  elements.targetList.querySelectorAll("[data-target-remove]").forEach(button => {
-    button.addEventListener("click", () => removeStockTarget(button.dataset.targetRemove));
+  listElement.querySelectorAll("[data-target-remove]").forEach(button => {
+    button.addEventListener("click", () => removeInventoryTarget(location, button.dataset.targetRemove));
   });
 }
 
-function editStockTarget(targetKey) {
-  const target = stockTargets.find(item => stockKey(item) === targetKey);
+function editInventoryTarget(location, targetKey) {
+  const targets = location === "Storage" ? storageTargets : stockTargets;
+  const target = targets.find(item => stockKey(item) === targetKey);
   if (!target || target.deleting) return;
+  elements.targetLocation.value = location;
+  seedTargetDatalist();
   elements.targetItem.value = target.itemLabel || target.itemName;
   elements.targetQuantity.value = target.target;
   elements.saveTarget.textContent = "Update Target";
@@ -4937,20 +5019,27 @@ function editStockTarget(targetKey) {
   elements.targetQuantity.select();
 }
 
-function removeStockTarget(targetKey) {
-  const target = stockTargets.find(item => stockKey(item) === targetKey);
+function removeInventoryTarget(location, targetKey) {
+  const targets = location === "Storage" ? storageTargets : stockTargets;
+  const target = targets.find(item => stockKey(item) === targetKey);
   if (!target || target.deleting) return;
-  if (!window.confirm(`Remove the storefront target for ${target.itemLabel || target.itemName}?`)) return;
+  if (!window.confirm(`Remove the ${location.toLowerCase()} target for ${target.itemLabel || target.itemName}?`)) return;
 
   target.target = 0;
+  target.location = location;
   target.updatedAt = new Date().toISOString();
   target.deleting = true;
   target.syncStatus = "Removal pending";
-  persistStockTargets();
+  persistInventoryTargets(location);
   renderOperations();
   renderReplenishment();
   renderStoreOverview();
-  syncStockTarget(targetKey);
+  syncInventoryTarget(location, targetKey);
+}
+
+function persistInventoryTargets(location) {
+  if (location === "Storage") persistStorageTargets();
+  else persistStockTargets();
 }
 
 function resolveItem(value) {
@@ -5217,8 +5306,9 @@ function formatAuditDetails(event) {
   return [details.kind, details.item, details.location, details.quantity !== "" ? `Qty ${details.quantity}` : "", details.amount !== "" ? formatCurrency(details.amount) : "", details.note]
       .filter(Boolean).join(" / ");
   }
-  if (event.action === "target.updated" || event.action === "target.removed") {
-    return [details.item, event.action === "target.updated" ? `Target ${details.target}` : "Removed"].filter(Boolean).join(" / ");
+  if (["target.updated", "target.removed", "storage_target.updated", "storage_target.removed"].includes(event.action)) {
+    const updated = event.action.endsWith(".updated");
+    return [details.item, updated ? `Target ${details.target}` : "Removed"].filter(Boolean).join(" / ");
   }
   if (String(event.action || "").startsWith("storefront_buy_order.")) {
   return [details.status, details.quantity !== undefined ? `Ordered ${details.quantity}` : "", details.filledQuantity !== undefined ? `Filled ${details.filledQuantity}` : "", details.unitPrice !== undefined ? `${formatCurrency(details.unitPrice)} each` : ""]
@@ -5242,15 +5332,21 @@ async function syncOperation(entryId) {
 }
 
 async function syncStockTarget(targetKey) {
-  const target = stockTargets.find(item => stockKey(item) === targetKey);
+  return syncInventoryTarget("Storefront", targetKey);
+}
+
+async function syncInventoryTarget(location, targetKey) {
+  const targets = location === "Storage" ? storageTargets : stockTargets;
+  const target = targets.find(item => stockKey(item) === targetKey);
   if (!target) return;
-  const result = await syncToBackend("stock_target", { target });
+  const result = await syncToBackend(location === "Storage" ? "storage_target" : "stock_target", { target });
   if (result.ok && target.deleting) {
-    stockTargets = stockTargets.filter(item => stockKey(item) !== targetKey);
+    if (location === "Storage") storageTargets = storageTargets.filter(item => stockKey(item) !== targetKey);
+    else stockTargets = stockTargets.filter(item => stockKey(item) !== targetKey);
   } else {
-  target.syncStatus = result.ok ? "Synced" : (target.deleting ? "Removal pending" : "Pending data sync");
+    target.syncStatus = result.ok ? "Synced" : (target.deleting ? "Removal pending" : "Pending data sync");
   }
-  persistStockTargets();
+  persistInventoryTargets(location);
   renderOperations();
   renderReplenishment();
   renderStoreOverview();
@@ -5427,29 +5523,39 @@ function hydrateDailyCloses(snapshot) {
 
 function hydrateSheetInventory() {
   const products = backendSnapshot?.sheet?.inventory?.products;
-  if (!Array.isArray(products)) return;
+  const storage = backendSnapshot?.sheet?.inventory?.storage;
+  const generatedAt = backendSnapshot?.sheet?.generatedAt || backendSnapshot?.generatedAt;
+  if (Array.isArray(products)) {
+    stockTargets = mergeSharedTargets(products, stockTargets, "target", "Storefront", generatedAt);
+  }
+  if (Array.isArray(storage)) {
+    storageTargets = mergeSharedTargets(storage, storageTargets, "storageTarget", "Storage", generatedAt);
+  }
+  persistStockTargets();
+  persistStorageTargets();
+}
 
+function mergeSharedTargets(rows, localTargets, field, location, generatedAt) {
   const mergedTargets = new Map();
-  products
-    .filter(product => Number(product.target || 0) > 0)
-    .forEach(product => {
+  rows
+    .filter(row => Number(row[field] || 0) > 0)
+    .forEach(row => {
       const target = {
-        itemName: product.itemName,
-        itemLabel: product.itemLabel || product.itemName,
-        target: Number(product.target || 0),
-        updatedAt: backendSnapshot.sheet.generatedAt || backendSnapshot.generatedAt,
+        itemName: row.itemName || row.ingredient || row.name,
+        itemLabel: row.itemLabel || row.ingredient || row.name || row.itemName,
+        itemTag: row.itemTag || "",
+        target: Number(row[field] || 0),
+        location,
+        updatedAt: generatedAt,
         syncStatus: "Synced"
       };
       mergedTargets.set(stockKey(target), target);
     });
-
-  stockTargets
+  localTargets
     .filter(target => target.syncStatus !== "Synced" || target.deleting)
     .forEach(target => mergedTargets.set(stockKey(target), target));
-
-  stockTargets = [...mergedTargets.values()]
+  return [...mergedTargets.values()]
     .sort((a, b) => (a.itemLabel || a.itemName).localeCompare(b.itemLabel || b.itemName));
-  persistStockTargets();
 }
 
 async function retryPendingSyncs() {
@@ -5462,6 +5568,11 @@ async function retryPendingSyncs() {
     .filter(target => target.syncStatus !== "Synced")
     .map(stockKey);
   for (const targetKey of targetKeys) await syncStockTarget(targetKey);
+
+  const storageTargetKeys = storageTargets
+    .filter(target => target.syncStatus !== "Synced")
+    .map(stockKey);
+  for (const targetKey of storageTargetKeys) await syncInventoryTarget("Storage", targetKey);
 
   const shiftIds = timeClock.entries
     .filter(entry => entry.syncStatus !== "Synced")
@@ -5518,6 +5629,24 @@ function getReplenishmentPlan() {
     .sort((a, b) => b.shortage - a.shortage || a.ingredient.localeCompare(b.ingredient));
 
   return { missing, materials, missingRecipes };
+}
+
+function getStorageAlertPlan() {
+  const storageCounts = getLatestCounts("Storage");
+  return storageTargets
+    .filter(target => !target.deleting && Number(target.target || 0) > 0)
+    .map(target => {
+      const current = Number(storageCounts.get(stockKey(target)) || 0);
+      const targetQuantity = Number(target.target || 0);
+      return {
+        ...target,
+        label: target.itemLabel || target.itemName,
+        current,
+        missing: Math.max(0, targetQuantity - current)
+      };
+    })
+    .filter(line => line.missing > 0)
+    .sort((a, b) => Number(a.current > 0) - Number(b.current > 0) || b.missing - a.missing || a.label.localeCompare(b.label));
 }
 
 function getMaterialPurchasePlan(excludeSupplyOrderId = "") {

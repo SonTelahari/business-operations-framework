@@ -497,6 +497,11 @@ async function run() {
     target: { itemName: "Navy Revolver", target: 2 }
   }, employeeCookie);
   assert.equal(protectedSync.response.status, 403);
+  const protectedStorageTarget = await post(`${baseUrl}/api/sync`, {
+    action: "storage_target",
+    target: { itemName: "Iron", target: 20 }
+  }, employeeCookie);
+  assert.equal(protectedStorageTarget.response.status, 403);
 
   const employeeOperationAttempt = await post(`${baseUrl}/api/sync`, {
     action: "manual_operation",
@@ -883,6 +888,11 @@ async function run() {
     target: { itemName: "Navy Revolver", itemLabel: "Navy Revolver", target: 2, updatedAt: "2026-07-13T10:00:00.000Z" }
   }, managerCookie);
   assert.equal(managerTarget.response.status, 200);
+  const managerStorageTarget = await post(`${baseUrl}/api/sync`, {
+    action: "storage_target",
+    target: { itemName: "Iron", itemLabel: "Iron", target: 20, updatedAt: "2026-07-13T10:01:00.000Z" }
+  }, managerCookie);
+  assert.equal(managerStorageTarget.response.status, 200);
 
   const managerAdjustment = await post(`${baseUrl}/api/sync`, {
     action: "manual_operation",
