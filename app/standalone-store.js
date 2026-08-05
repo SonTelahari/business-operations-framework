@@ -79,19 +79,25 @@ class StandaloneStore {
       const products = Array.isArray(snapshot.inventory.products) ? snapshot.inventory.products : [];
       const materials = Array.isArray(snapshot.inventory.materials) ? snapshot.inventory.materials : [];
       const storage = Array.isArray(snapshot.inventory.storage) ? snapshot.inventory.storage : materials;
+      const materialsByKey = new Map(materials.map(material => [
+        inventoryKey(material.ingredient || material.itemName || material.name),
+        material
+      ]));
 
       for (const product of products) {
         const name = cleanText(product.itemName || product.itemLabel, 150);
         if (!name) continue;
+        const material = materialsByKey.get(inventoryKey(name));
+        const type = product.itemType === "both" || material ? "both" : "product";
         await upsertCatalogItem(client, this.businessId, {
           id: legacyCatalogId("product", name),
-          type: "product",
+          type,
           name,
           label: cleanText(product.itemLabel, 150) || name,
           tag: cleanText(product.itemTag, 150),
           category: cleanText(product.category, 100) || "Imported products",
-          unit: "unit",
-          unitCost: 0,
+          unit: cleanText(material?.unit || material?.unitName, 50) || "unit",
+          unitCost: number(material?.unitCost),
           salePrice: number(product.salePrice),
           target: number(product.target),
           active: product.active !== false,
@@ -303,7 +309,7 @@ class StandaloneStore {
 
     const inventory = reduceInventory(inventoryResult.rows);
     const catalog = catalogResult.rows.map(catalogRow);
-    const products = catalog.filter(item => item.itemType === "product").map(item => {
+    const products = catalog.filter(isSellableCatalogItem).map(item => {
       const count = inventory.get(`sales:${item.normalizedName}`) || emptyCount(item.name);
       return {
         itemName: item.name,
@@ -324,7 +330,7 @@ class StandaloneStore {
         pricingSource: String(item.metadata?.pricingSource || "")
       };
     });
-    const materials = catalog.filter(item => item.itemType === "material").map(item => {
+    const materials = catalog.filter(isMaterialCatalogItem).map(item => {
       const count = inventory.get(`storage:${item.normalizedName}`) || emptyCount(item.name);
       return {
         ingredient: item.name,
@@ -350,7 +356,7 @@ class StandaloneStore {
         itemType: item.itemType,
         category: item.category,
         salePrice: item.salePrice,
-        target: item.itemType === "product" ? item.stockTarget : 0,
+        target: isSellableCatalogItem(item) ? item.stockTarget : 0,
         currentStock: Math.max(0, count.quantity),
         countedAt: count.countedAt,
         active: item.active,
@@ -738,7 +744,7 @@ class StandaloneStore {
     requireItem(itemName);
     const result = await this.database.query(`
       UPDATE catalog_items SET stock_target = $3, updated_at = now()
-      WHERE business_id = $1 AND item_type = 'product'
+      WHERE business_id = $1 AND item_type IN ('product', 'both')
         AND (normalized_name = $2 OR lower(label) = $2 OR lower(item_tag) = $2)
       RETURNING name
     `, [this.businessId, inventoryKey(itemName), Math.max(0, number(target.target))]);
@@ -913,7 +919,7 @@ class StandaloneStore {
         ok: true, action: "resolve_exception", webhookId, status: "Resolved", itemName,
         catalogItemCreated,
         catalogItem: createdCatalogItem,
-        productCreated: catalogItemCreated && createdCatalogItem?.itemType === "product",
+        productCreated: catalogItemCreated && isSellableCatalogItem(createdCatalogItem),
         transactionWritten: transactionAlreadyWritten || !historyPreserved,
         transactionAlreadyWritten,
         historyPreserved,
@@ -1226,7 +1232,7 @@ async function createCatalogItemRecord(client, businessId, input, { source, crea
     source,
     createdBy
   };
-  if (input.type === "product" && input.salePrice > 0) {
+  if (isSellableCatalogItem({ itemType: input.type }) && input.salePrice > 0) {
     metadata.msrpLow = input.salePrice;
     metadata.msrpHigh = input.salePrice;
     metadata.pricingSource = source;
@@ -1331,7 +1337,9 @@ function fundBalanceDescriptor(balanceKey) {
 }
 
 function normalizeCatalogItem(input) {
-  const type = inventoryKey(input?.type || input?.itemType) === "material" ? "material" : "product";
+  const requestedType = inventoryKey(input?.type || input?.itemType);
+  const type = requestedType === "material" ? "material" : requestedType === "both" ? "both" : "product";
+  const sellable = isSellableCatalogItem({ itemType: type });
   const name = cleanText(input?.name, 120);
   const label = cleanText(input?.label, 120) || name;
   if (!name || !label) {
@@ -1342,12 +1350,21 @@ function normalizeCatalogItem(input) {
     name,
     label,
     tag: cleanText(input?.tag || input?.itemTag, 150),
-    category: cleanText(input?.category, 120) || (type === "material" ? "Materials" : "Products"),
+    category: cleanText(input?.category, 120)
+      || (type === "material" ? "Materials" : type === "both" ? "Products and Materials" : "Products"),
     unit: cleanText(input?.unit || input?.unitName, 50) || "unit",
     unitCost: catalogNumber(input?.unitCost, "Unit cost"),
-    salePrice: catalogNumber(input?.salePrice ?? input?.price, "Sale price"),
-    target: type === "product" ? catalogNumber(input?.target ?? input?.stockTarget, "Stock target") : 0
+    salePrice: sellable ? catalogNumber(input?.salePrice ?? input?.price, "Sale price") : 0,
+    target: sellable ? catalogNumber(input?.target ?? input?.stockTarget, "Stock target") : 0
   };
+}
+
+function isSellableCatalogItem(item) {
+  return item?.itemType === "product" || item?.itemType === "both";
+}
+
+function isMaterialCatalogItem(item) {
+  return item?.itemType === "material" || item?.itemType === "both";
 }
 
 function catalogNumber(value, label) {

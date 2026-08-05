@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS app_documents (
 CREATE TABLE IF NOT EXISTS catalog_items (
   business_id text NOT NULL DEFAULT 'primary',
   id text NOT NULL,
-  item_type text NOT NULL CHECK (item_type IN ('product', 'material')),
+  item_type text NOT NULL CONSTRAINT catalog_items_item_type_check
+    CHECK (item_type IN ('product', 'material')),
   name text NOT NULL,
   normalized_name text NOT NULL,
   label text NOT NULL,

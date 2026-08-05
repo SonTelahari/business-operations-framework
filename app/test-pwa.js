@@ -37,6 +37,7 @@ assert(setupScript.includes("collectRecipeIngredients"), "recipe dropdown rows m
 assert(!setupScript.includes("parseIngredients("), "first-launch recipes must not require free-form ingredient parsing");
 assert(appHtml.includes('id="openCatalogItemDialogButton"'), "the Store tab must expose manager catalog creation");
 assert(appHtml.includes('id="catalogItemTypeInput"'), "manual catalog creation must distinguish products and materials");
+assert(appHtml.includes('<option value="both">Product and material</option>'), "manual catalog creation must support dual-purpose goods");
 assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
 assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");

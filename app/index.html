@@ -297,16 +297,17 @@
               <div>
                 <p class="eyebrow">Catalog Ledger</p>
                 <h2>Add Good</h2>
-                <p>Create a product for sale or a material used by the business</p>
+                <p>Create a sellable product, a recipe material, or one good that serves both roles</p>
               </div>
               <button class="icon-button" id="closeCatalogItemDialogButton" type="button" title="Close" aria-label="Close">&times;</button>
             </div>
             <div class="catalog-item-grid">
-              <label>
-                Good Type
-                <select id="catalogItemTypeInput">
-                  <option value="product">Product</option>
-                  <option value="material">Material</option>
+              <label class="catalog-role-field">
+                Catalog Role
+                <select id="catalogItemTypeInput" required>
+                  <option value="product">Product - sold by the business</option>
+                  <option value="material">Material - used in recipes</option>
+                  <option value="both">Product and material</option>
                 </select>
               </label>
               <label>
@@ -1268,6 +1269,7 @@
                   <select id="reviewItemTypeInput">
                     <option value="product">Product</option>
                     <option value="material">Material</option>
+                    <option value="both">Product and material</option>
                   </select>
                 </label>
                 <label>
@@ -1802,7 +1804,7 @@
       <option value="Australia/Sydney"></option>
     </datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260805-business-settings"></script>
+    <script src="app.js?v=20260805-dual-catalog-role"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

@@ -2446,11 +2446,14 @@ function closeCatalogItemDialog() {
 }
 
 function renderCatalogItemType() {
-  const product = elements.catalogItemType.value === "product";
-  document.querySelectorAll(".catalog-product-field").forEach(field => field.classList.toggle("hidden", !product));
-  const defaultCategories = new Set(["", "Products", "Materials"]);
+  const type = elements.catalogItemType.value;
+  const sellable = type === "product" || type === "both";
+  document.querySelectorAll(".catalog-product-field").forEach(field => field.classList.toggle("hidden", !sellable));
+  const defaultCategories = new Set(["", "Products", "Materials", "Products and Materials"]);
   if (defaultCategories.has(elements.catalogItemCategory.value.trim())) {
-    elements.catalogItemCategory.value = product ? "Products" : "Materials";
+    elements.catalogItemCategory.value = type === "material"
+      ? "Materials"
+      : type === "both" ? "Products and Materials" : "Products";
   }
 }
 
@@ -2501,17 +2504,18 @@ async function saveCatalogItem() {
 }
 
 function catalogItemDraft(input) {
-  const type = input.type === "material" ? "material" : "product";
+  const type = input.type === "material" ? "material" : input.type === "both" ? "both" : "product";
+  const sellable = type === "product" || type === "both";
   return {
     type,
     name: String(input.name || "").trim(),
     label: String(input.label || input.name || "").trim(),
     tag: String(input.tag || "").trim(),
-    category: String(input.category || (type === "material" ? "Materials" : "Products")).trim(),
+    category: String(input.category || (type === "material" ? "Materials" : type === "both" ? "Products and Materials" : "Products")).trim(),
     unit: String(input.unit || "unit").trim() || "unit",
     unitCost: input.unitCost === "" ? 0 : Number(input.unitCost),
-    salePrice: type === "product" ? input.salePrice === "" ? 0 : Number(input.salePrice) : 0,
-    target: type === "product" ? input.target === "" ? 0 : Number(input.target) : 0
+    salePrice: sellable ? input.salePrice === "" ? 0 : Number(input.salePrice) : 0,
+    target: sellable ? input.target === "" ? 0 : Number(input.target) : 0
   };
 }
 
@@ -3562,13 +3566,16 @@ function setReviewEditorDisabled(disabled) {
 
 function renderReviewProductMode(entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId)) {
   const creating = elements.reviewCreateProduct.checked;
-  const product = elements.reviewItemType.value === "product";
+  const type = elements.reviewItemType.value;
+  const product = type === "product" || type === "both";
   elements.reviewNewProductFields.classList.toggle("hidden", !creating);
   document.querySelectorAll(".review-product-only-field").forEach(field => field.classList.toggle("hidden", !product));
   if (creating) {
-    const defaults = new Set(["", "Products", "Materials"]);
+    const defaults = new Set(["", "Products", "Materials", "Products and Materials"]);
     if (defaults.has(elements.reviewProductCategory.value.trim())) {
-      elements.reviewProductCategory.value = product ? "Products" : "Materials";
+      elements.reviewProductCategory.value = type === "material"
+        ? "Materials"
+        : type === "both" ? "Products and Materials" : "Products";
     }
   }
   elements.resolveReview.textContent = entry?.transactionWritten

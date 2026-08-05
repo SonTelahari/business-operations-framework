@@ -50,6 +50,14 @@ async function run() {
       }
     });
     assert.equal(addedProduct.item.itemTag, "", "manual catalog goods may learn their game tag later");
+    const addedDualPurposeGood = await store.handleGuiPayload({
+      action: "catalog_item",
+      item: {
+        type: "both", name: "Raw Tobacco", label: "Raw Tobacco", category: "Tobacco",
+        unit: "bundle", unitCost: 1.5, salePrice: 3, target: 8, createdBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(addedDualPurposeGood.item.itemType, "both");
     await assert.rejects(
       () => store.handleGuiPayload({
         action: "catalog_item",
@@ -71,6 +79,24 @@ async function run() {
         id: "storage-count", kind: "Stock Count", location: "Storage", itemName: "Iron",
         quantity: 20, createdAt: "2026-08-01T08:00:00.000Z"
       }
+    });
+    await store.handleGuiPayload({
+      action: "manual_operation",
+      entry: {
+        id: "raw-tobacco-storefront-count", kind: "Stock Count", location: "Storefront", itemName: "Raw Tobacco",
+        quantity: 5, createdAt: "2026-08-01T08:00:00.000Z"
+      }
+    });
+    await store.handleGuiPayload({
+      action: "manual_operation",
+      entry: {
+        id: "raw-tobacco-storage-count", kind: "Stock Count", location: "Storage", itemName: "Raw Tobacco",
+        quantity: 12, createdAt: "2026-08-01T08:00:00.000Z"
+      }
+    });
+    await store.handleGuiPayload({
+      action: "stock_target",
+      target: { itemName: "Raw Tobacco", target: 10 }
     });
     await store.handleGuiPayload({
       action: "manual_operation",
@@ -366,12 +392,18 @@ async function run() {
     assert.equal(snapshot.inventory.products.some(item => item.itemName === "Native Ore"), false);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Imported Knife").target, 2);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Imported Knife").currentStock, 2);
+    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Raw Tobacco").itemType, "both");
+    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Raw Tobacco").currentStock, 5);
+    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Raw Tobacco").target, 10);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Unpriced Widget").salePrice, 12);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").currentStock, 50);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").salePrice, 2.25);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Iron").storageCount, 25);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Glass Bottle").unitCost, 0.5);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Native Ore").category, "Metals");
+    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").itemType, "both");
+    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").storageCount, 12);
+    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").unitCost, 1.5);
     assert.equal(snapshot.inventory.storefront.find(item => item.itemName === "Native Ore").currentStock, 5);
     assert.equal(snapshot.inventory.ledger.balance, 140);
     assert.equal(snapshot.reviewExceptions.find(entry => entry.webhookId === "discord-unknown-1").status, "Resolved");
@@ -455,9 +487,18 @@ async function run() {
           products: [{
             itemName: "Iron Widget", itemLabel: "Iron Widget", itemTag: "ITEM_IRON_WIDGET",
             category: "Goods", salePrice: 25, target: 4, currentStock: 8, active: true
+          }, {
+            itemName: "Rolling Paper", itemLabel: "Rolling Paper", itemType: "both",
+            category: "Tobacco", salePrice: 1, target: 20, currentStock: 10, active: true
           }],
-          materials: [{ ingredient: "Iron", storageCount: 30 }],
-          storage: [{ ingredient: "Iron", storageCount: 30 }],
+          materials: [
+            { ingredient: "Iron", storageCount: 30 },
+            { ingredient: "Rolling Paper", itemType: "both", unit: "pack", unitCost: 0.25, storageCount: 40 }
+          ],
+          storage: [
+            { ingredient: "Iron", storageCount: 30 },
+            { ingredient: "Rolling Paper", storageCount: 40 }
+          ],
           ledger: { balance: 200 }
         },
         reviewExceptions: [{
@@ -507,6 +548,10 @@ async function run() {
     const importedSnapshot = await store.snapshot();
     assert.equal(importedSnapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 8);
     assert.equal(importedSnapshot.inventory.materials.find(item => item.ingredient === "Iron").storageCount, 30);
+    assert.equal(importedSnapshot.inventory.products.find(item => item.itemName === "Rolling Paper").itemType, "both");
+    assert.equal(importedSnapshot.inventory.products.find(item => item.itemName === "Rolling Paper").currentStock, 10);
+    assert.equal(importedSnapshot.inventory.materials.find(item => item.ingredient === "Rolling Paper").itemType, "both");
+    assert.equal(importedSnapshot.inventory.materials.find(item => item.ingredient === "Rolling Paper").storageCount, 40);
     assert.equal(importedSnapshot.inventory.ledger.balance, 200);
 
     const importedFinance = await store.finance();

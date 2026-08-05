@@ -2892,6 +2892,13 @@ body.auth-page {
   margin-top: 20px;
 }
 
+.catalog-role-field {
+  grid-column: 1 / -1;
+  padding: 10px;
+  border: 1px solid rgba(127, 86, 37, 0.48);
+  background: rgba(173, 130, 61, 0.08);
+}
+
 .catalog-item-status {
   min-height: 1.3em;
   margin: 14px 0 0;
