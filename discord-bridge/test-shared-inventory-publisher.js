@@ -73,13 +73,20 @@ async function runSharedPublisherChecks() {
         startCount: 0,
         stopCount: 0,
         refreshes: [],
-        interactions: 0
+        interactions: 0,
+        lastSuccessAt: new Date().toISOString(),
+        lastError: ''
       };
       created.push(record);
       return {
         enabled: true,
         start: async () => { record.startCount += 1; },
         stop: () => { record.stopCount += 1; },
+        refresh: async reason => {
+          record.refreshes.push(reason);
+          record.lastSuccessAt = new Date().toISOString();
+          record.lastError = '';
+        },
         requestRefresh: reason => record.refreshes.push(reason),
         handleInteraction: async interaction => {
           record.interactions += 1;
@@ -90,7 +97,8 @@ async function runSharedPublisherChecks() {
           alert_channel_configured: Boolean(options.alertChannelId),
           product_count: options.inventoryChannelId === 'inventory-a' ? 2 : 0,
           shortage_count: 1,
-          last_error: ''
+          last_success_at: record.lastSuccessAt,
+          last_error: record.lastError
         })
       };
     },
@@ -137,6 +145,15 @@ async function runSharedPublisherChecks() {
   assert.equal(created[2].options.inventoryChannelId, 'inventory-b-new');
   assert.equal(publisher.health().integration_count, 1);
   assert(logs.some(message => message.includes('1 active businesses')));
+
+  created[2].lastError = 'simulated stopped child timer';
+  await publisher.refreshDirectory('watchdog check');
+  assert(
+    created[2].refreshes.includes('shared publisher watchdog: watchdog check'),
+    'directory refresh should revive a child publisher reporting an error'
+  );
+  assert.equal(publisher.health().publisher_error_count, 0);
+  assert(publisher.health().newest_publisher_success_at);
 
   publisher.stop();
   assert.equal(created[2].stopCount, 1);

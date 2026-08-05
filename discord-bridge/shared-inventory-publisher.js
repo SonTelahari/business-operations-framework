@@ -65,7 +65,8 @@ function createSharedInventoryPublisher(options) {
         fetchImpl,
         requestHeaders
       );
-      await reconcilePublishers(integrations);
+      const createdKeys = await reconcilePublishers(integrations);
+      await refreshStalePublishers(reason, createdKeys);
       state.lastDirectorySuccessAt = new Date().toISOString();
       state.lastDirectoryError = '';
       logger.info(
@@ -81,6 +82,7 @@ function createSharedInventoryPublisher(options) {
 
   async function reconcilePublishers(integrations) {
     const desired = new Map(integrations.map(integration => [integration.key, integration]));
+    const createdKeys = new Set();
 
     for (const [key, entry] of publishers) {
       const integration = desired.get(key);
@@ -105,10 +107,29 @@ function createSharedInventoryPublisher(options) {
         logger
       });
       publishers.set(key, { integration, publisher, signature: integration.signature });
+      createdKeys.add(key);
       if (state.started) {
         await publisher.start();
       }
     }
+    return createdKeys;
+  }
+
+  async function refreshStalePublishers(reason, createdKeys = new Set()) {
+    const staleAfterMs = Math.max(refreshMs + directoryRefreshMs, Math.round(refreshMs * 1.5));
+    const now = Date.now();
+    const refreshes = [];
+    for (const [key, entry] of publishers) {
+      if (createdKeys.has(key)) continue;
+      const publisherHealth = entry.publisher.health();
+      const lastSuccess = Date.parse(publisherHealth.last_success_at || '');
+      const stale = !Number.isFinite(lastSuccess) || now - lastSuccess > staleAfterMs;
+      if (!stale && !publisherHealth.last_error) continue;
+      refreshes.push(
+        entry.publisher.refresh(`shared publisher watchdog: ${reason}`).catch(() => null)
+      );
+    }
+    await Promise.all(refreshes);
   }
 
   function requestRefresh(reason = 'storefront event', eventChannelId = '') {
@@ -128,6 +149,10 @@ function createSharedInventoryPublisher(options) {
 
   function health() {
     const childHealth = [...publishers.values()].map(entry => entry.publisher.health());
+    const successfulRefreshes = childHealth
+      .map(item => String(item.last_success_at || ''))
+      .filter(value => Number.isFinite(Date.parse(value)))
+      .sort();
     return {
       enabled,
       mode: 'shared',
@@ -141,7 +166,9 @@ function createSharedInventoryPublisher(options) {
       last_directory_attempt_at: state.lastDirectoryAttemptAt,
       last_directory_success_at: state.lastDirectorySuccessAt,
       last_directory_error: state.lastDirectoryError,
-      publisher_error_count: childHealth.filter(item => item.last_error).length
+      publisher_error_count: childHealth.filter(item => item.last_error).length,
+      oldest_publisher_success_at: successfulRefreshes[0] || '',
+      newest_publisher_success_at: successfulRefreshes.at(-1) || ''
     };
   }
 
