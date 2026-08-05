@@ -8,6 +8,7 @@ const serviceWorker = fs.readFileSync(path.join(root, "service-worker.js"), "utf
 const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const setupScript = fs.readFileSync(path.join(root, "setup.js"), "utf8");
 const appHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
+const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
 assert.equal(manifest.name, "Business Operations Ledger");
 assert.equal(manifest.display, "standalone");
@@ -34,7 +35,10 @@ assert(setupScript.includes('select data-field="productName" required'), "recipe
 assert(setupScript.includes('select data-field="ingredientName" required'), "recipe ingredients must use catalog dropdowns");
 assert(setupScript.includes("data-add-ingredient-row"), "recipe cards must support additional ingredient rows");
 assert(setupScript.includes("collectRecipeIngredients"), "recipe dropdown rows must serialize as structured ingredients");
+assert(setupScript.includes('addRecipeRow({}, { prepend: true, focus: true })'), "new first-launch recipes must be inserted at the top and focused");
 assert(!setupScript.includes("parseIngredients("), "first-launch recipes must not require free-form ingredient parsing");
+assert(styles.includes(".inventory-overview-table thead th"), "store inventory headers must stick by cell inside their scroll panes");
+assert(styles.includes("background: var(--paper)"), "sticky store inventory headers must hide scrolling row text");
 assert(appHtml.includes('id="openCatalogItemDialogButton"'), "the Store tab must expose manager catalog creation");
 assert(appHtml.includes('id="catalogItemTypeInput"'), "manual catalog creation must distinguish products and materials");
 assert(appHtml.includes('<option value="both">Product and material</option>'), "manual catalog creation must support dual-purpose goods");

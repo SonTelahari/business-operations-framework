@@ -57,7 +57,7 @@ function wireEvents() {
   document.querySelector("#addLocationButton").addEventListener("click", () => addLocationRow());
   document.querySelector("#addMaterialButton").addEventListener("click", () => addMaterialRow());
   document.querySelector("#addProductButton").addEventListener("click", () => addProductRow());
-  elements.addRecipe.addEventListener("click", () => addRecipeRow());
+  elements.addRecipe.addEventListener("click", () => addRecipeRow({}, { prepend: true, focus: true }));
   document.querySelectorAll("[data-setup-nav]").forEach(button => {
     button.addEventListener("click", () => {
       const target = Number(button.dataset.setupNav);
@@ -296,9 +296,10 @@ function addProductRow(product = {}) {
   updateDerivedViews();
 }
 
-function addRecipeRow(recipe = {}) {
+function addRecipeRow(recipe = {}, options = {}) {
   removeEmpty(elements.recipes);
-  elements.recipes.insertAdjacentHTML("beforeend", `
+  const position = options.prepend ? "afterbegin" : "beforeend";
+  elements.recipes.insertAdjacentHTML(position, `
     <article class="setup-recipe-row" data-setup-row>
       <div class="recipe-row-heading">
         <label>Output<select data-field="productName" required>${recipeOutputOptionMarkup(recipe.productName)}</select></label>
@@ -311,12 +312,19 @@ function addRecipeRow(recipe = {}) {
       </div>
     </article>
   `);
-  const row = collectRows(elements.recipes).at(-1);
+  const rows = collectRows(elements.recipes);
+  const row = options.prepend ? rows[0] : rows.at(-1);
   const ingredients = Array.isArray(recipe.ingredients) && recipe.ingredients.length
     ? recipe.ingredients
     : parseIngredientDraft(recipe.ingredientText);
   (ingredients.length ? ingredients : [{}]).forEach(ingredient => addRecipeIngredientRow(row, ingredient));
   updateDerivedViews();
+  if (options.focus) {
+    requestAnimationFrame(() => {
+      row.scrollIntoView({ behavior: "smooth", block: "start" });
+      row.querySelector('[data-field="productName"]')?.focus({ preventScroll: true });
+    });
+  }
 }
 
 function addRecipeIngredientRow(recipeRow, ingredient = {}) {
@@ -421,7 +429,7 @@ function restoreDraft(defaults) {
   locations.forEach(addLocationRow);
   (draft.materials || []).forEach(addMaterialRow);
   (draft.products || []).forEach(addProductRow);
-  (draft.recipes || []).forEach(addRecipeRow);
+  (draft.recipes || []).forEach(recipe => addRecipeRow(recipe));
   document.querySelectorAll("input[name='module']").forEach(input => {
     const configured = draft.modules?.[input.value];
     if (configured !== undefined) input.checked = configured;

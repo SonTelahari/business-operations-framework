@@ -3174,12 +3174,20 @@ body.auth-page {
 
 .inventory-overview-table {
   min-width: 520px;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 .inventory-overview-table thead {
+  position: static;
+}
+
+.inventory-overview-table thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(77, 113, 128, 0.45);
 }
 
 .inventory-overview-table th:nth-last-child(-n + 2),
