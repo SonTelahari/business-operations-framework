@@ -124,6 +124,53 @@ async function run() {
     assert.equal(labelOnlySale.reviewRequired, undefined);
     assert.equal(labelOnlySale.transactionWritten, true);
 
+    const implicitCatalogMatch = await store.ingestWebhook({
+      webhook_id: "discord-beta-widget-1",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      discord_item_name: "ITEM_BETA_WIDGET",
+      discord_item_label: "Iron Widget",
+      item_name: "Iron Widget",
+      quantity: 4,
+      review_required: true,
+      review_reason: "unknown_item",
+      occurred_at: "2026-08-01T10:35:00.000Z"
+    });
+    assert.equal(implicitCatalogMatch.reviewRequired, true);
+    assert.equal(implicitCatalogMatch.reviewReason, "unknown_item");
+    assert.equal(implicitCatalogMatch.transactionWritten, false);
+    assert.equal(
+      (await store.snapshot()).inventory.products.find(item => item.itemName === "Iron Widget").currentStock,
+      3,
+      "an exact label must not silently connect a parser-unknown game item"
+    );
+    await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-beta-widget-1",
+        itemName: "Iron Widget",
+        quantity: 4,
+        eventType: "Stocking Movement",
+        direction: "Stock In",
+        rememberMapping: true,
+        resolvedBy: "Ada Lovelace"
+      }
+    });
+    const mappedCatalogMatch = await store.ingestWebhook({
+      webhook_id: "discord-beta-widget-2",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      discord_item_name: "ITEM_BETA_WIDGET",
+      discord_item_label: "Iron Widget",
+      item_name: "Iron Widget",
+      quantity: 1,
+      review_required: true,
+      review_reason: "unknown_item",
+      occurred_at: "2026-08-01T10:36:00.000Z"
+    });
+    assert.equal(mappedCatalogMatch.reviewRequired, undefined);
+    assert.equal(mappedCatalogMatch.transactionWritten, true);
+
     await store.ingestWebhook({
       webhook_id: "discord-priced-stock-1",
       event_type: "Stocking Movement",
@@ -314,7 +361,7 @@ async function run() {
 
     const snapshot = await store.snapshot();
     assert.equal(snapshot.dataBackend, "postgresql");
-    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 3);
+    assert.equal(snapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 8);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Native Clock").currentStock, 2);
     assert.equal(snapshot.inventory.products.some(item => item.itemName === "Native Ore"), false);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Imported Knife").target, 2);

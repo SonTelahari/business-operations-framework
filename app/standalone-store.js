@@ -774,8 +774,8 @@ class StandaloneStore {
   async ingestWebhook(payload) {
     return this.database.transaction(async client => {
       let event = normalizeWebhook(payload);
-      event = await resolveAgainstCatalog(client, this.businessId, event);
       event = await applyStoredMapping(client, this.businessId, event);
+      event = await resolveAgainstCatalog(client, this.businessId, event);
       const existing = await client.query(`
         SELECT status FROM webhook_events WHERE business_id = $1 AND webhook_id = $2
       `, [this.businessId, event.webhookId]);
@@ -1155,8 +1155,9 @@ async function resolveAgainstCatalog(client, businessId, event) {
     FROM catalog_items
     WHERE business_id = $1 AND active = true
   `, [businessId]);
-  const rawWanted = [event.discordItemName, event.discordItemLabel].map(inventoryKey).filter(Boolean);
-  const wanted = new Set((rawWanted.length ? rawWanted : [event.item]).map(inventoryKey).filter(Boolean));
+  const wanted = new Set(
+    [event.item, event.discordItemName, event.discordItemLabel].map(inventoryKey).filter(Boolean)
+  );
   const match = result.rows.find(row => [
     row.name,
     row.normalized_name,
@@ -1164,7 +1165,7 @@ async function resolveAgainstCatalog(client, businessId, event) {
     row.item_tag,
     ...json(row.aliases, [])
   ].some(value => wanted.has(inventoryKey(value))));
-  let reasons = event.reviewReason.split(",").filter(Boolean).filter(reason => reason !== "unknown_item");
+  let reasons = event.reviewReason.split(",").filter(Boolean);
   if (match) {
     reasons = reasons.filter(reason => reason !== "missing_item");
     return {
