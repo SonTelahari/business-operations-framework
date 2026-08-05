@@ -2369,6 +2369,11 @@ h2 {
   --tab-edge: #34432e;
 }
 
+.section-button[data-section="catalog"] {
+  --tab-color: #6b5941;
+  --tab-edge: #443724;
+}
+
 .section-button[data-section="finance"] {
   --tab-color: #7a6339;
   --tab-edge: #4f3f23;
@@ -2909,6 +2914,215 @@ body.auth-page {
 .catalog-item-actions {
   justify-content: flex-end;
   margin-top: 8px;
+}
+
+.catalog-ledger {
+  display: grid;
+  gap: 16px;
+}
+
+.catalog-ledger-panel,
+.recipe-ledger-panel {
+  min-width: 0;
+  padding: 18px;
+}
+
+.catalog-ledger-heading,
+.catalog-ledger-actions,
+.recipe-ingredient-heading,
+.recipe-editor-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.catalog-ledger-actions {
+  flex-wrap: wrap;
+}
+
+.catalog-ledger-actions label {
+  min-width: min(280px, 100%);
+}
+
+.catalog-table-wrap {
+  max-height: 520px;
+  margin-top: 14px;
+  overflow: auto;
+}
+
+.catalog-table {
+  min-width: 760px;
+}
+
+.catalog-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.catalog-table td:first-child strong,
+.catalog-table td:first-child small {
+  display: block;
+}
+
+.catalog-table td:first-child small {
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+}
+
+.catalog-table .catalog-inactive {
+  opacity: 0.58;
+}
+
+.recipe-ledger-panel {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(460px, 1.6fr);
+  gap: 22px;
+}
+
+.recipe-directory {
+  min-width: 0;
+  padding-right: 20px;
+  border-right: 1px solid rgba(86, 65, 43, 0.36);
+}
+
+.recipe-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  max-height: 620px;
+  margin-top: 14px;
+  overflow-y: auto;
+}
+
+.recipe-list-row {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 11px;
+  color: inherit;
+  text-align: left;
+  background: rgba(255, 250, 232, 0.42);
+  border: 1px solid rgba(119, 99, 70, 0.4);
+  border-radius: 2px;
+}
+
+.recipe-list-row:hover,
+.recipe-list-row.active {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.recipe-list-row span {
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+}
+
+.recipe-editor {
+  min-width: 0;
+}
+
+.recipe-editor-header {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(140px, 1fr);
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.recipe-ingredient-heading {
+  margin: 20px 0 8px;
+}
+
+.recipe-ingredient-list {
+  display: grid;
+  gap: 7px;
+}
+
+.recipe-ingredient-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(96px, 0.7fr) minmax(150px, 1fr) 38px;
+  align-items: end;
+  gap: 8px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(86, 65, 43, 0.28);
+}
+
+.recipe-ingredient-row .icon-button {
+  width: 38px;
+  height: 38px;
+}
+
+.recipe-editor-actions {
+  margin-top: 16px;
+}
+
+.production-source-dialog {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.production-source-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 18px;
+}
+
+.production-source-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 1fr);
+  align-items: end;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(86, 65, 43, 0.3);
+}
+
+.production-source-row strong,
+.production-source-row span {
+  display: block;
+}
+
+.production-source-row span {
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.74rem;
+}
+
+@media (max-width: 900px) {
+  .recipe-ledger-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .recipe-directory {
+    padding-right: 0;
+    padding-bottom: 16px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(86, 65, 43, 0.36);
+  }
+
+  .recipe-list {
+    max-height: 280px;
+  }
+}
+
+@media (max-width: 680px) {
+  .catalog-ledger-heading,
+  .catalog-ledger-actions,
+  .recipe-editor-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .recipe-editor-header,
+  .recipe-ingredient-row,
+  .production-source-row {
+    grid-template-columns: 1fr;
+  }
+
+  .recipe-ingredient-row .icon-button {
+    justify-self: end;
+  }
 }
 
 .store-overview-stats {

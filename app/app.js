@@ -15,6 +15,7 @@ const SECTION_MIN_ROLE = Object.freeze({
   workbench: "employee",
   production: "employee",
   store: "employee",
+  catalog: "manager",
   restock: "manager",
   supplies: "manager",
   "buy-orders": "manager",
@@ -71,6 +72,9 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "target.updated": "Storefront target updated",
   "target.removed": "Storefront target removed",
   "catalog.item_created": "Catalog good added",
+  "catalog.item_updated": "Catalog good updated",
+  "catalog.recipe_saved": "Recipe saved",
+  "catalog.recipe_removed": "Recipe removed",
   "business.profile_updated": "Business profile updated",
   "supplier.saved": "Supplier record saved",
   "supplier.removed": "Supplier record removed",
@@ -144,6 +148,10 @@ let financeLoading = false;
 let activeProductCardKey = "";
 let productInsightRequestId = 0;
 let catalogItemSavePending = false;
+let activeCatalogItemId = "";
+let activeRecipeProductName = "";
+let recipeSavePending = false;
+let pendingProductionQueue = null;
 let businessSettingsSavePending = false;
 let businessSettingsDirty = false;
 const productInsightCache = new Map();
@@ -282,6 +290,7 @@ const elements = {
   saveDocument: document.querySelector("#saveOrderButton"),
   dashboardSection: document.querySelector("#dashboardSection"),
   storeSection: document.querySelector("#storeSection"),
+  catalogSection: document.querySelector("#catalogSection"),
   restockSection: document.querySelector("#restockSection"),
   workbenchSection: document.querySelector("#workbenchSection"),
   operationsSection: document.querySelector("#operationsSection"),
@@ -362,6 +371,8 @@ const elements = {
   closeCatalogItemDialog: document.querySelector("#closeCatalogItemDialogButton"),
   cancelCatalogItem: document.querySelector("#cancelCatalogItemButton"),
   catalogItemType: document.querySelector("#catalogItemTypeInput"),
+  catalogItemDialogTitle: document.querySelector("#catalogItemDialogTitle"),
+  catalogItemDialogDescription: document.querySelector("#catalogItemDialogDescription"),
   catalogItemName: document.querySelector("#catalogItemNameInput"),
   catalogItemLabel: document.querySelector("#catalogItemLabelInput"),
   catalogItemTag: document.querySelector("#catalogItemTagInput"),
@@ -370,8 +381,31 @@ const elements = {
   catalogItemUnitCost: document.querySelector("#catalogItemUnitCostInput"),
   catalogItemSalePrice: document.querySelector("#catalogItemSalePriceInput"),
   catalogItemTarget: document.querySelector("#catalogItemTargetInput"),
+  catalogItemActive: document.querySelector("#catalogItemActiveInput"),
   catalogItemStatus: document.querySelector("#catalogItemStatus"),
   saveCatalogItem: document.querySelector("#saveCatalogItemButton"),
+  catalogDataStatus: document.querySelector("#catalogDataStatus"),
+  catalogSearch: document.querySelector("#catalogSearchInput"),
+  catalogGoodsBody: document.querySelector("#catalogGoodsBody"),
+  newCatalogGood: document.querySelector("#newCatalogGoodButton"),
+  recipeList: document.querySelector("#recipeList"),
+  recipeEditorForm: document.querySelector("#recipeEditorForm"),
+  recipeEditorTitle: document.querySelector("#recipeEditorTitle"),
+  recipeEditorMeta: document.querySelector("#recipeEditorMeta"),
+  recipeProduct: document.querySelector("#recipeProductInput"),
+  recipeYield: document.querySelector("#recipeYieldInput"),
+  recipeIngredientList: document.querySelector("#recipeIngredientList"),
+  recipeEditorStatus: document.querySelector("#recipeEditorStatus"),
+  newRecipe: document.querySelector("#newRecipeButton"),
+  addRecipeIngredient: document.querySelector("#addRecipeIngredientButton"),
+  deleteRecipe: document.querySelector("#deleteRecipeButton"),
+  saveRecipe: document.querySelector("#saveRecipeButton"),
+  productionSourceDialog: document.querySelector("#productionSourceDialog"),
+  productionSourceForm: document.querySelector("#productionSourceForm"),
+  productionSourceList: document.querySelector("#productionSourceList"),
+  productionSourceStatus: document.querySelector("#productionSourceStatus"),
+  closeProductionSource: document.querySelector("#closeProductionSourceButton"),
+  cancelProductionSource: document.querySelector("#cancelProductionSourceButton"),
   businessSettingsForm: document.querySelector("#businessSettingsForm"),
   businessSettingsMeta: document.querySelector("#businessSettingsMeta"),
   businessSettingsStatus: document.querySelector("#businessSettingsStatus"),
@@ -510,6 +544,7 @@ const elements = {
   operationCount: document.querySelector("#operationCountText")
 };
 
+document.body.append(elements.catalogItemDialog);
 seedDatalist();
 wireEvents();
 setFinancePeriod("month", false);
@@ -1015,7 +1050,34 @@ function wireEvents() {
   elements.supplierSearch.addEventListener("input", renderSupplierDirectory);
   elements.storeOverviewSearch.addEventListener("input", renderStoreOverview);
   elements.closeProductCard.addEventListener("click", closeProductCard);
-  elements.openCatalogItemDialog.addEventListener("click", openCatalogItemDialog);
+  elements.openCatalogItemDialog.addEventListener("click", () => openCatalogItemDialog());
+  elements.newCatalogGood.addEventListener("click", () => openCatalogItemDialog());
+  elements.catalogSearch.addEventListener("input", renderCatalogLedger);
+  elements.catalogGoodsBody.addEventListener("click", event => {
+    const button = event.target.closest("[data-edit-catalog-good]");
+    if (button) openCatalogItemDialog(button.dataset.editCatalogGood);
+  });
+  elements.recipeList.addEventListener("click", event => {
+    const button = event.target.closest("[data-recipe-product]");
+    if (button) editRecipe(button.dataset.recipeProduct);
+  });
+  elements.newRecipe.addEventListener("click", startNewRecipe);
+  elements.addRecipeIngredient.addEventListener("click", () => addRecipeIngredientRow());
+  elements.recipeIngredientList.addEventListener("click", event => {
+    const button = event.target.closest("[data-remove-recipe-ingredient]");
+    if (button) button.closest(".recipe-ingredient-row")?.remove();
+  });
+  elements.recipeEditorForm.addEventListener("submit", event => {
+    event.preventDefault();
+    saveRecipe();
+  });
+  elements.deleteRecipe.addEventListener("click", deleteActiveRecipe);
+  elements.closeProductionSource.addEventListener("click", closeProductionSourceDialog);
+  elements.cancelProductionSource.addEventListener("click", closeProductionSourceDialog);
+  elements.productionSourceForm.addEventListener("submit", event => {
+    event.preventDefault();
+    confirmProductionSourceSelection();
+  });
   elements.closeCatalogItemDialog.addEventListener("click", closeCatalogItemDialog);
   elements.cancelCatalogItem.addEventListener("click", closeCatalogItemDialog);
   elements.catalogItemType.addEventListener("change", renderCatalogItemType);
@@ -1121,6 +1183,7 @@ function wireEvents() {
       }
       if (activeSection === "buy-orders" && isManagement()) loadStorefrontBuyOrders({ silent: true });
       if (activeSection === "review" && isManagement()) loadBackendSnapshot({ silent: true });
+      if (activeSection === "catalog" && isManagement()) renderCatalogLedger();
       if (activeSection === "finance" && isAdmin()) loadFinance();
       if (activeSection === "business-settings" && isAdmin() && !businessSettingsDirty) populateBusinessSettings();
       if (activeSection === "production") loadProductionBatches({ silent: true });
@@ -2357,6 +2420,7 @@ function renderSection() {
   });
   elements.dashboardSection.classList.toggle("hidden", activeSection !== "dashboard");
   elements.storeSection.classList.toggle("hidden", activeSection !== "store");
+  elements.catalogSection.classList.toggle("hidden", activeSection !== "catalog");
   elements.financeSection.classList.toggle("hidden", activeSection !== "finance");
   elements.restockSection.classList.toggle("hidden", activeSection !== "restock");
   elements.buyOrdersSection.classList.toggle("hidden", activeSection !== "buy-orders");
@@ -2426,16 +2490,29 @@ function renderDashboard() {
     }));
 }
 
-function openCatalogItemDialog() {
+function openCatalogItemDialog(itemId = "") {
   if (!isManagement()) return;
+  const existing = itemId ? catalogGoods().find(item => item.id === itemId || normalize(item.name) === normalize(itemId)) : null;
+  activeCatalogItemId = existing?.id || "";
   elements.catalogItemForm.reset();
-  elements.catalogItemType.value = "product";
-  elements.catalogItemUnit.value = "unit";
-  elements.catalogItemUnitCost.value = 0;
-  elements.catalogItemSalePrice.value = 0;
-  elements.catalogItemTarget.value = 0;
+  elements.catalogItemType.value = existing?.itemType || "product";
+  elements.catalogItemName.value = existing?.name || "";
+  elements.catalogItemName.disabled = Boolean(existing);
+  elements.catalogItemLabel.value = existing?.label || "";
+  elements.catalogItemTag.value = existing?.tag || existing?.itemTag || "";
+  elements.catalogItemCategory.value = existing?.category || "";
+  elements.catalogItemUnit.value = existing?.unit || existing?.unitName || "unit";
+  elements.catalogItemUnitCost.value = Number(existing?.unitCost ?? existing?.price ?? 0);
+  elements.catalogItemSalePrice.value = Number(existing?.salePrice ?? existing?.price ?? 0);
+  elements.catalogItemTarget.value = Number(existing?.stockTarget ?? existing?.target ?? 0);
+  elements.catalogItemActive.value = existing?.active === false ? "false" : "true";
   elements.catalogItemLabel.dataset.edited = "";
   elements.catalogItemStatus.textContent = "";
+  elements.catalogItemDialogTitle.textContent = existing ? "Edit Good" : "Add Good";
+  elements.catalogItemDialogDescription.textContent = existing
+    ? "Update its role, display details, prices, and availability"
+    : "Create a sellable product, a recipe material, or one good that serves both roles";
+  elements.saveCatalogItem.textContent = existing ? "Save Changes" : "Add Good";
   renderCatalogItemType();
   elements.catalogItemDialog.showModal();
   elements.catalogItemName.focus();
@@ -2472,33 +2549,36 @@ async function saveCatalogItem() {
     unit: elements.catalogItemUnit.value,
     unitCost: elements.catalogItemUnitCost.value,
     salePrice: elements.catalogItemSalePrice.value,
-    target: elements.catalogItemTarget.value
+    target: elements.catalogItemTarget.value,
+    active: elements.catalogItemActive.value === "true"
   });
   const validation = validateCatalogItemDraft(item);
   if (validation) {
     elements.catalogItemStatus.textContent = validation;
     return;
   }
-  if (findExactStockItem(item.name) || findExactStockItem(item.label) || (item.tag && findExactStockItem(item.tag))) {
+  if (!activeCatalogItemId && (findExactStockItem(item.name) || findExactStockItem(item.label) || (item.tag && findExactStockItem(item.tag)))) {
     elements.catalogItemStatus.textContent = "That name, label, or game item tag already belongs to a catalog good";
     return;
   }
 
   catalogItemSavePending = true;
   elements.saveCatalogItem.disabled = true;
-  elements.catalogItemStatus.textContent = "Adding good...";
-  const result = await syncToBackend("catalog_item", { item });
+  elements.catalogItemStatus.textContent = activeCatalogItemId ? "Saving changes..." : "Adding good...";
+  const action = activeCatalogItemId ? "catalog_item_update" : "catalog_item";
+  const result = await syncToBackend(action, { item: { ...item, id: activeCatalogItemId } });
   if (!result.ok) {
-    elements.catalogItemStatus.textContent = result.error || "The catalog good could not be added";
+    elements.catalogItemStatus.textContent = result.error || "The catalog good could not be saved";
     elements.saveCatalogItem.disabled = false;
     catalogItemSavePending = false;
     return;
   }
-  elements.catalogItemStatus.textContent = "Good added";
+  elements.catalogItemStatus.textContent = activeCatalogItemId ? "Good updated" : "Good added";
   await loadBackendSnapshot({ silent: true });
   closeCatalogItemDialog();
   elements.storeOverviewSearch.value = result.item?.label || item.label;
   renderStoreOverview();
+  renderCatalogLedger();
   elements.saveCatalogItem.disabled = false;
   catalogItemSavePending = false;
 }
@@ -2515,7 +2595,8 @@ function catalogItemDraft(input) {
     unit: String(input.unit || "unit").trim() || "unit",
     unitCost: input.unitCost === "" ? 0 : Number(input.unitCost),
     salePrice: sellable ? input.salePrice === "" ? 0 : Number(input.salePrice) : 0,
-    target: sellable ? input.target === "" ? 0 : Number(input.target) : 0
+    target: sellable ? input.target === "" ? 0 : Number(input.target) : 0,
+    active: input.active !== false
   };
 }
 
@@ -2526,6 +2607,202 @@ function validateCatalogItemDraft(item) {
     return "Costs, prices, and targets must be zero or greater";
   }
   return "";
+}
+
+function catalogGoods() {
+  const shared = Array.isArray(backendSnapshot?.sheet?.catalog) ? backendSnapshot.sheet.catalog : [];
+  if (shared.length) return shared.map(item => ({ ...item }));
+  const goods = new Map();
+  const addGoods = (items, fallbackType) => items.forEach(item => {
+    const key = normalize(item.name || item.label);
+    if (!key) return;
+    const existing = goods.get(key) || {};
+    const incomingType = item.itemType || fallbackType;
+    const itemType = existing.itemType && existing.itemType !== incomingType
+      ? "both"
+      : incomingType || existing.itemType;
+    goods.set(key, { ...existing, ...item, itemType });
+  });
+  addGoods(itemCatalog, "product");
+  addGoods(ingredientCatalog, "material");
+  return [...goods.values()];
+}
+
+function renderCatalogLedger() {
+  const query = normalize(elements.catalogSearch.value);
+  const goods = catalogGoods().sort((a, b) => String(a.label || a.name).localeCompare(String(b.label || b.name)));
+  const visible = goods.filter(item => !query || [item.name, item.label, item.itemType, item.category, item.itemTag]
+    .some(value => normalize(value).includes(query)));
+  elements.catalogGoodsBody.innerHTML = visible.length ? visible.map(item => `
+    <tr class="${item.active === false ? "catalog-inactive" : ""}">
+      <td><strong>${escapeHtml(item.label || item.name)}</strong><small>${escapeHtml(item.name)}${item.itemTag ? ` / ${escapeHtml(item.itemTag)}` : ""}</small></td>
+      <td>${escapeHtml(catalogRoleLabel(item.itemType))}</td>
+      <td>${escapeHtml(item.category || "Uncategorized")}</td>
+      <td>${formatCurrency(item.unitCost || 0)}</td>
+      <td>${item.itemType === "material" ? "-" : formatCurrency(item.salePrice ?? item.price ?? 0)}</td>
+      <td><button class="ghost-button" type="button" data-edit-catalog-good="${escapeHtml(item.id || item.name)}">Edit</button></td>
+    </tr>
+  `).join("") : '<tr><td colspan="6" class="empty-line">No goods match this search</td></tr>';
+  elements.catalogDataStatus.textContent = backendSnapshot?.dataBackend === "postgresql"
+    ? `${goods.length} goods / ${Object.keys(recipeCatalog).length} recipes in the shared catalog`
+    : "Catalog editing requires the hosted database version";
+  elements.recipeList.innerHTML = Object.keys(recipeCatalog).length
+    ? Object.keys(recipeCatalog).sort((a, b) => a.localeCompare(b)).map(productName => `
+        <button class="recipe-list-row ${normalize(activeRecipeProductName) === normalize(productName) ? "active" : ""}" type="button" data-recipe-product="${escapeHtml(productName)}">
+          <strong>${escapeHtml(productLabel(productName))}</strong>
+          <span>${formatNumber(recipeYieldCatalog[productName] || 1)} per craft / ${recipeCatalog[productName].length} ingredients</span>
+        </button>
+      `).join("")
+    : '<div class="empty-card">No recipes have been entered</div>';
+  renderRecipeProductOptions(elements.recipeProduct.value || activeRecipeProductName);
+  if (!elements.recipeIngredientList.children.length) startNewRecipe();
+}
+
+function catalogRoleLabel(value) {
+  return value === "both" ? "Product and material" : value === "product" ? "Product" : "Material";
+}
+
+function productLabel(productName) {
+  const item = itemCatalog.find(candidate => normalize(candidate.name) === normalize(productName));
+  return item?.label || productName;
+}
+
+function renderRecipeProductOptions(selected = "") {
+  const products = itemCatalog.filter(item => item.active !== false).sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name));
+  elements.recipeProduct.innerHTML = '<option value="">Choose product</option>' + products.map(item => `
+    <option value="${escapeHtml(item.name)}" ${normalize(item.name) === normalize(selected) ? "selected" : ""}>${escapeHtml(item.label || item.name)}</option>
+  `).join("");
+}
+
+function startNewRecipe() {
+  activeRecipeProductName = "";
+  elements.recipeEditorForm.reset();
+  elements.recipeProduct.disabled = false;
+  elements.recipeYield.value = 1;
+  elements.recipeIngredientList.innerHTML = "";
+  renderRecipeProductOptions("");
+  addRecipeIngredientRow();
+  elements.recipeEditorTitle.textContent = "New Recipe";
+  elements.recipeEditorMeta.textContent = "Select an output and add its ingredients";
+  elements.recipeEditorStatus.textContent = "";
+  elements.deleteRecipe.classList.add("hidden");
+  renderCatalogLedgerListOnly();
+}
+
+function editRecipe(productName) {
+  const key = Object.keys(recipeCatalog).find(name => normalize(name) === normalize(productName));
+  if (!key) return;
+  activeRecipeProductName = key;
+  elements.recipeProduct.disabled = true;
+  renderRecipeProductOptions(key);
+  elements.recipeYield.value = Number(recipeYieldCatalog[key] || 1);
+  elements.recipeIngredientList.innerHTML = "";
+  recipeCatalog[key].forEach(([ingredient, quantity, sourceLocation]) => addRecipeIngredientRow({
+    name: ingredient,
+    quantity,
+    sourceLocation
+  }));
+  elements.recipeEditorTitle.textContent = `Edit ${productLabel(key)}`;
+  elements.recipeEditorMeta.textContent = `${recipeCatalog[key].length} ingredients / default sources saved with the recipe`;
+  elements.recipeEditorStatus.textContent = "";
+  elements.deleteRecipe.classList.remove("hidden");
+  renderCatalogLedgerListOnly();
+}
+
+function renderCatalogLedgerListOnly() {
+  elements.recipeList.querySelectorAll("[data-recipe-product]").forEach(button => {
+    button.classList.toggle("active", normalize(button.dataset.recipeProduct) === normalize(activeRecipeProductName));
+  });
+}
+
+function addRecipeIngredientRow(ingredient = {}) {
+  const goods = catalogGoods().filter(item => item.active !== false).sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name));
+  const row = document.createElement("div");
+  row.className = "recipe-ingredient-row";
+  row.innerHTML = `
+    <label>
+      Good
+      <select data-recipe-ingredient required>
+        <option value="">Choose good</option>
+        ${goods.map(item => `<option value="${escapeHtml(item.name)}" ${normalize(item.name) === normalize(ingredient.name) ? "selected" : ""}>${escapeHtml(item.label || item.name)} / ${escapeHtml(catalogRoleLabel(item.itemType))}</option>`).join("")}
+      </select>
+    </label>
+    <label>
+      Quantity
+      <input data-recipe-quantity type="number" min="0.001" step="0.001" value="${escapeHtml(ingredient.quantity || 1)}" required>
+    </label>
+    <label>
+      Take From
+      <select data-recipe-source>
+        <option value="Storage" ${normalizeProductionSourceClient(ingredient.sourceLocation) === "Storage" ? "selected" : ""}>Storage</option>
+        <option value="Storefront" ${normalizeProductionSourceClient(ingredient.sourceLocation) === "Storefront" ? "selected" : ""}>Storefront</option>
+      </select>
+    </label>
+    <button class="icon-button" type="button" data-remove-recipe-ingredient title="Remove ingredient" aria-label="Remove ingredient">&times;</button>
+  `;
+  elements.recipeIngredientList.append(row);
+}
+
+async function saveRecipe() {
+  if (recipeSavePending || !isManagement()) return;
+  if (backendSnapshot?.dataBackend !== "postgresql") {
+    elements.recipeEditorStatus.textContent = "Recipe editing requires the hosted database version";
+    return;
+  }
+  const ingredients = [...elements.recipeIngredientList.querySelectorAll(".recipe-ingredient-row")].map(row => ({
+    name: row.querySelector("[data-recipe-ingredient]").value,
+    quantity: Number(row.querySelector("[data-recipe-quantity]").value),
+    sourceLocation: row.querySelector("[data-recipe-source]").value
+  }));
+  const recipe = {
+    productName: elements.recipeProduct.value,
+    yield: Number(elements.recipeYield.value),
+    ingredients
+  };
+  if (!recipe.productName || !Number.isFinite(recipe.yield) || recipe.yield <= 0 || !ingredients.length
+    || ingredients.some(ingredient => !ingredient.name || !Number.isFinite(ingredient.quantity) || ingredient.quantity <= 0)) {
+    elements.recipeEditorStatus.textContent = "Choose a product and complete every ingredient line";
+    return;
+  }
+  if (new Set(ingredients.map(ingredient => normalize(ingredient.name))).size !== ingredients.length) {
+    elements.recipeEditorStatus.textContent = "Each good can only appear once in a recipe";
+    return;
+  }
+  recipeSavePending = true;
+  elements.saveRecipe.disabled = true;
+  elements.recipeEditorStatus.textContent = "Saving recipe...";
+  const result = await syncToBackend("recipe_upsert", { recipe });
+  if (!result.ok) {
+    elements.recipeEditorStatus.textContent = result.error || "Recipe could not be saved";
+  } else {
+    activeRecipeProductName = recipe.productName;
+    await loadBackendSnapshot({ silent: true });
+    editRecipe(recipe.productName);
+    elements.recipeEditorStatus.textContent = "Recipe saved";
+  }
+  recipeSavePending = false;
+  elements.saveRecipe.disabled = false;
+}
+
+async function deleteActiveRecipe() {
+  if (!activeRecipeProductName || recipeSavePending || !isManagement()) return;
+  if (!window.confirm(`Remove the recipe for ${productLabel(activeRecipeProductName)}? Existing production batches will keep their saved copy.`)) return;
+  recipeSavePending = true;
+  elements.deleteRecipe.disabled = true;
+  const result = await syncToBackend("recipe_delete", { recipe: { productName: activeRecipeProductName } });
+  if (!result.ok) {
+    elements.recipeEditorStatus.textContent = result.error || "Recipe could not be removed";
+  } else {
+    await loadBackendSnapshot({ silent: true });
+    startNewRecipe();
+  }
+  recipeSavePending = false;
+  elements.deleteRecipe.disabled = false;
+}
+
+function normalizeProductionSourceClient(value) {
+  const key = normalize(value);
+  return key === "sales" || key.includes("store") ? "Storefront" : "Storage";
 }
 
 function renderStoreOverview() {
@@ -2630,15 +2907,17 @@ function renderProductCard() {
   const target = stockTargets.find(entry => !entry.deleting && inventoryOverviewKey(entry) === inventoryOverviewKey(item));
   const retailPrice = Number(item.price || 0);
   const productPricing = pricingCatalog.products?.[item.name];
-  const ingredients = recipe.map(([ingredient, quantity]) => {
+  const ingredients = recipe.map(([ingredient, quantity, source]) => {
     const pricing = pricingCatalog.materials?.[ingredient];
     const unitCost = Number(pricing?.midpoint || 0);
+    const sourceLocation = normalizeProductionSourceClient(source);
     return {
       ingredient,
       quantity: Number(quantity || 0),
+      sourceLocation,
       unitCost,
       costKnown: Boolean(pricing),
-      available: Number(storageCounts.get(inventoryOverviewKey({ ingredient })) || 0)
+      available: Number(getLatestCounts(sourceLocation).get(inventoryOverviewKey({ ingredient })) || 0)
     };
   });
   const costKnown = ingredients.length > 0 && ingredients.every(ingredient => ingredient.costKnown);
@@ -2661,7 +2940,7 @@ function renderProductCard() {
   const recipeRows = ingredients.length
     ? ingredients.map(ingredient => `
       <div class="product-recipe-row ${ingredient.available < ingredient.quantity ? "short" : ""}">
-        <div><strong>${escapeHtml(ingredient.ingredient)}</strong><span>${formatNumber(ingredient.available)} in storage</span></div>
+        <div><strong>${escapeHtml(ingredient.ingredient)}</strong><span>${formatNumber(ingredient.available)} in ${escapeHtml(ingredient.sourceLocation.toLowerCase())}</span></div>
         <span>${formatNumber(ingredient.quantity)} needed</span>
         <span>${ingredient.costKnown ? formatCurrency(ingredient.quantity * ingredient.unitCost) : "Unpriced"}</span>
       </div>
@@ -3764,7 +4043,7 @@ function renderReplenishment() {
   const materialRows = materialShortages.map(line => `
       <div class="replenishment-row short">
         <strong>${escapeHtml(line.ingredient)}</strong>
-        <span>Need ${formatNumber(line.needed)} / Storage ${formatNumber(line.available)} / Short ${formatNumber(line.shortage)}</span>
+        <span>Need ${formatNumber(line.needed)} / ${escapeHtml(line.sourceLocation)} ${formatNumber(line.available)} / Short ${formatNumber(line.shortage)}</span>
       </div>
     `).join("");
   const missingRecipeRows = plan.missingRecipes.length ? `
@@ -3775,7 +4054,7 @@ function renderReplenishment() {
   ` : "";
   elements.replenishmentMaterialsList.innerHTML = materialRows || missingRecipeRows
     ? materialRows + missingRecipeRows
-    : `<div class="empty-card">Storage covers all known recipe needs</div>`;
+    : `<div class="empty-card">Selected stock locations cover all known recipe needs</div>`;
 
   elements.stockAlertList.innerHTML = plan.missing.length
     ? plan.missing.map(line => `
@@ -3993,7 +4272,7 @@ async function queueActiveOrderProduction() {
     elements.productionMeta.textContent = "Add at least one item with a recipe before queuing production";
     return;
   }
-  await createProductionBatch({
+  openProductionSourceDialog({
     id: crypto.randomUUID(),
     sourceType: "Customer Order",
     sourceId: activeOrder.id,
@@ -4017,7 +4296,7 @@ async function queueRestockProduction() {
     elements.replenishmentMeta.textContent = "All craftable storefront shortages are already covered by active batches";
     return;
   }
-  await createProductionBatch({
+  openProductionSourceDialog({
     id: crypto.randomUUID(),
     sourceType: "Storefront Restock",
     sourceId: "",
@@ -4028,6 +4307,63 @@ async function queueRestockProduction() {
     notes: "Generated from current storefront targets",
     lines
   }, "Missing storefront stock added to the production queue");
+}
+
+function openProductionSourceDialog(payload, successMessage) {
+  const requirements = new Map();
+  payload.lines.forEach(line => {
+    const recipe = recipeCatalog[line.itemName] || [];
+    const crafts = Math.ceil(Number(line.requestedQuantity || 0) / Math.max(1, Number(recipeYieldCatalog[line.itemName] || 1)));
+    recipe.forEach(([ingredient, quantity, defaultSource]) => {
+      const key = normalize(ingredient);
+      const current = requirements.get(key) || {
+        ingredient,
+        needed: 0,
+        sourceLocation: normalizeProductionSourceClient(defaultSource)
+      };
+      current.needed += crafts * Number(quantity || 0);
+      requirements.set(key, current);
+    });
+  });
+  if (!requirements.size) return;
+  const storage = getLatestCounts("Storage");
+  const storefront = getLatestCounts("Storefront");
+  elements.productionSourceList.innerHTML = [...requirements.entries()].map(([key, requirement]) => `
+    <div class="production-source-row" data-production-source-row="${escapeHtml(key)}">
+      <div>
+        <strong>${escapeHtml(requirement.ingredient)}</strong>
+        <span>${formatNumber(requirement.needed)} needed</span>
+      </div>
+      <label>
+        Take From
+        <select data-production-source-select>
+          <option value="Storage" ${requirement.sourceLocation === "Storage" ? "selected" : ""}>Storage / ${formatNumber(storage.get(key) || 0)} available</option>
+          <option value="Storefront" ${requirement.sourceLocation === "Storefront" ? "selected" : ""}>Storefront / ${formatNumber(storefront.get(key) || 0)} available</option>
+        </select>
+      </label>
+    </div>
+  `).join("");
+  pendingProductionQueue = { payload, successMessage };
+  elements.productionSourceStatus.textContent = "";
+  elements.productionSourceDialog.showModal();
+}
+
+function closeProductionSourceDialog() {
+  pendingProductionQueue = null;
+  if (elements.productionSourceDialog.open) elements.productionSourceDialog.close();
+}
+
+async function confirmProductionSourceSelection() {
+  if (!pendingProductionQueue || productionActionPending) return;
+  const ingredientSources = {};
+  elements.productionSourceList.querySelectorAll("[data-production-source-row]").forEach(row => {
+    ingredientSources[row.dataset.productionSourceRow] = row.querySelector("[data-production-source-select]").value;
+  });
+  const { payload, successMessage } = pendingProductionQueue;
+  payload.lines = payload.lines.map(line => ({ ...line, ingredientSources }));
+  elements.productionSourceStatus.textContent = "Queuing production...";
+  await createProductionBatch(payload, successMessage);
+  if (activeSection === "production") closeProductionSourceDialog();
 }
 
 async function createProductionBatch(payload, successMessage) {
@@ -4179,7 +4515,7 @@ function renderProductionDetail(batch) {
     ? materialPlan.materials.map(material => `
       <div class="production-material-row ${material.shortage > 0 ? "short" : "ready"}">
         <strong>${escapeHtml(material.ingredient)}</strong>
-        <span>${formatNumber(material.available)} available / ${formatNumber(material.needed)} needed</span>
+        <span>${escapeHtml(material.sourceLocation)} / ${formatNumber(material.available)} available / ${formatNumber(material.needed)} needed</span>
         <small>${material.shortage > 0 ? `${formatNumber(material.shortage)} short` : "Ready"}</small>
       </div>
     `).join("")
@@ -4197,9 +4533,8 @@ function renderProductionDetail(batch) {
 function getProductionBatchMaterialPlan(batch) {
   const reservedPlan = getProductionReadinessPlans().get(batch.id);
   if (reservedPlan) return reservedPlan;
-  const storage = getLatestCounts("Storage");
   const materials = getProductionBatchMaterialNeeds(batch).map(material => {
-    const available = Number(storage.get(material.key) || 0);
+    const available = Number(getLatestCounts(material.sourceLocation).get(material.itemKey) || 0);
     return { ...material, available, shortage: Math.max(0, material.needed - available) };
   });
   return { materials, shortageCount: materials.filter(material => material.shortage > 0).length };
@@ -4210,8 +4545,10 @@ function getProductionBatchMaterialNeeds(batch) {
   batch.lines.forEach(line => {
     const remainingCrafts = Math.max(0, Number(line.plannedCrafts || 0) - Number(line.completedCrafts || 0));
     line.recipe.forEach(component => {
-      const key = normalize(component.ingredient);
-      const current = totals.get(key) || { ingredient: component.ingredient, needed: 0 };
+      const sourceLocation = normalizeProductionSourceClient(component.sourceLocation);
+      const itemKey = normalize(component.ingredient);
+      const key = `${sourceLocation}:${itemKey}`;
+      const current = totals.get(key) || { ingredient: component.ingredient, sourceLocation, itemKey, needed: 0 };
       current.needed += remainingCrafts * Number(component.quantity || 0);
       totals.set(key, current);
     });
@@ -4220,13 +4557,17 @@ function getProductionBatchMaterialNeeds(batch) {
 }
 
 function getProductionReadinessPlans() {
-  const remaining = new Map(getLatestCounts("Storage"));
+  const remaining = {
+    Storage: new Map(getLatestCounts("Storage")),
+    Storefront: new Map(getLatestCounts("Storefront"))
+  };
   const plans = new Map();
   productionBatches.filter(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status)).forEach(batch => {
     const materials = getProductionBatchMaterialNeeds(batch).map(material => {
-      const available = Number(remaining.get(material.key) || 0);
+      const sourceCounts = remaining[material.sourceLocation];
+      const available = Number(sourceCounts.get(material.itemKey) || 0);
       const shortage = Math.max(0, material.needed - available);
-      remaining.set(material.key, Math.max(0, available - material.needed));
+      sourceCounts.set(material.itemKey, Math.max(0, available - material.needed));
       return { ...material, available, shortage };
     }).sort((a, b) => b.shortage - a.shortage || a.ingredient.localeCompare(b.ingredient));
     plans.set(batch.id, {
@@ -5007,6 +5348,7 @@ async function performBackendRefresh({ silent = false } = {}) {
     backendSnapshot = nextSnapshot;
     applyBusinessConfiguration(nextSnapshot);
     hydrateSharedCatalog(nextSnapshot);
+    if (isManagement()) renderCatalogLedger();
     if (isManagement()) {
       reviewExceptions = Array.isArray(nextSnapshot.sheet?.reviewExceptions)
         ? nextSnapshot.sheet.reviewExceptions
@@ -5130,7 +5472,6 @@ async function retryPendingSyncs() {
 
 function getReplenishmentPlan() {
   const storefrontCounts = getLatestCounts("Storefront");
-  const storageCounts = getLatestCounts("Storage");
   const materialTotals = new Map();
   const missingRecipes = [];
 
@@ -5156,19 +5497,22 @@ function getReplenishmentPlan() {
     }
 
     const batches = recipeBatchCount(line.itemName, line.missing);
-    recipe.forEach(([ingredient, qty]) => {
-      materialTotals.set(ingredient, (materialTotals.get(ingredient) || 0) + Number(qty || 0) * batches);
+    recipe.forEach(([ingredient, qty, source]) => {
+      const sourceLocation = normalizeProductionSourceClient(source);
+      const key = `${sourceLocation}:${normalize(ingredient)}`;
+      const current = materialTotals.get(key) || { ingredient, sourceLocation, needed: 0 };
+      current.needed += Number(qty || 0) * batches;
+      materialTotals.set(key, current);
     });
   });
 
-  const materials = [...materialTotals.entries()]
-    .map(([ingredient, needed]) => {
-      const available = storageCounts.get(normalize(ingredient)) || 0;
+  const materials = [...materialTotals.values()]
+    .map(material => {
+      const available = getLatestCounts(material.sourceLocation).get(normalize(material.ingredient)) || 0;
       return {
-        ingredient,
-        needed,
+        ...material,
         available,
-        shortage: Math.max(0, needed - available)
+        shortage: Math.max(0, material.needed - available)
       };
     })
     .sort((a, b) => b.shortage - a.shortage || a.ingredient.localeCompare(b.ingredient));
@@ -5185,7 +5529,9 @@ function getMaterialPurchasePlan(excludeSupplyOrderId = "") {
     demand.set(key, current);
   };
 
-  getReplenishmentPlan().materials.forEach(line => addDemand(line.ingredient, line.needed));
+  getReplenishmentPlan().materials
+    .filter(line => line.sourceLocation === "Storage")
+    .forEach(line => addDemand(line.ingredient, line.needed));
   orders
     .filter(order => !statusesHiddenFromActive.has(order.status))
     .forEach(order => getProductionPlan(order).materials.forEach(material => addDemand(material.ingredient, material.qty)));

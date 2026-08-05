@@ -38,7 +38,13 @@ assert(!setupScript.includes("parseIngredients("), "first-launch recipes must no
 assert(appHtml.includes('id="openCatalogItemDialogButton"'), "the Store tab must expose manager catalog creation");
 assert(appHtml.includes('id="catalogItemTypeInput"'), "manual catalog creation must distinguish products and materials");
 assert(appHtml.includes('<option value="both">Product and material</option>'), "manual catalog creation must support dual-purpose goods");
+assert(appHtml.includes('data-section="catalog"'), "managers must have a catalog management tab");
+assert(appHtml.includes('id="recipeEditorForm"'), "catalog management must expose a recipe editor");
+assert(appHtml.includes('id="productionSourceDialog"'), "production queues must confirm ingredient source locations");
 assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
+const appScript = fs.readFileSync(path.join(root, "app.js"), "utf8");
+assert(appScript.includes('addGoods(itemCatalog, "product")'), "catalog fallback must classify sellable goods as products");
+assert(appScript.includes('addGoods(ingredientCatalog, "material")'), "catalog fallback must classify recipe ingredients as materials");
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
 assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");
 assert(appHtml.includes('id="settingsLogoPreview"'), "business settings must preview branding changes");

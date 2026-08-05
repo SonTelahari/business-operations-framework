@@ -838,7 +838,8 @@ function cleanProductionLine(line) {
   const recipe = (Array.isArray(line.recipe) ? line.recipe : []).slice(0, 50)
     .map(component => ({
       ingredient: cleanText(component.ingredient || component[0], 100),
-      quantity: Math.max(0, finiteNumber(component.quantity ?? component[1], 0))
+      quantity: Math.max(0, finiteNumber(component.quantity ?? component[1], 0)),
+      sourceLocation: normalizeProductionSource(component.sourceLocation ?? component[2])
     }))
     .filter(component => component.ingredient && component.quantity > 0);
   if (!recipe.length) throw businessError(`No recipe is available for ${itemName}`, 400, "production_recipe_missing");
@@ -855,6 +856,11 @@ function cleanProductionLine(line) {
     completedCrafts: 0,
     recipe
   };
+}
+
+function normalizeProductionSource(value) {
+  const key = normalizeKey(value);
+  return key === "sales" || key.includes("store") ? "Storefront" : "Storage";
 }
 
 function cleanStoredProductionBatch(batch) {

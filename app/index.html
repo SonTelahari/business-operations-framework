@@ -44,6 +44,7 @@
           Production <span class="nav-count hidden" id="productionNavCount">0</span>
         </button>
         <button class="section-button" data-section="store" type="button">Store</button>
+        <button class="section-button management-only" data-section="catalog" type="button">Catalog</button>
         <button class="section-button management-only" data-section="restock" type="button">Restock</button>
         <button class="section-button management-only" data-section="supplies" type="button">Supplies</button>
         <button class="section-button management-only" data-section="buy-orders" type="button">Buy Orders</button>
@@ -296,8 +297,8 @@
             <div class="catalog-item-dialog-heading">
               <div>
                 <p class="eyebrow">Catalog Ledger</p>
-                <h2>Add Good</h2>
-                <p>Create a sellable product, a recipe material, or one good that serves both roles</p>
+                <h2 id="catalogItemDialogTitle">Add Good</h2>
+                <p id="catalogItemDialogDescription">Create a sellable product, a recipe material, or one good that serves both roles</p>
               </div>
               <button class="icon-button" id="closeCatalogItemDialogButton" type="button" title="Close" aria-label="Close">&times;</button>
             </div>
@@ -334,6 +335,13 @@
                 Unit Cost
                 <input id="catalogItemUnitCostInput" type="number" min="0" step="0.01" value="0">
               </label>
+              <label>
+                Status
+                <select id="catalogItemActiveInput">
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
+                </select>
+              </label>
               <label class="catalog-product-field">
                 Sale Price
                 <input id="catalogItemSalePriceInput" type="number" min="0" step="0.01" value="0">
@@ -350,6 +358,77 @@
             </div>
           </form>
         </dialog>
+      </main>
+
+      <main class="catalog-ledger workspace-section hidden management-only" id="catalogSection">
+        <section class="panel catalog-ledger-panel">
+          <div class="panel-header catalog-ledger-heading">
+            <div>
+              <p class="eyebrow">Catalog Ledger</p>
+              <h2>Goods and Recipes</h2>
+              <p id="catalogDataStatus">Manage what the business stocks, sells, and uses in production</p>
+            </div>
+            <div class="catalog-ledger-actions">
+              <label>
+                Search Goods
+                <input id="catalogSearchInput" type="search" autocomplete="off" placeholder="Name, role, or category">
+              </label>
+              <button class="primary-button" id="newCatalogGoodButton" type="button">New Good</button>
+            </div>
+          </div>
+          <div class="catalog-table-wrap">
+            <table class="catalog-table">
+              <thead>
+                <tr><th>Good</th><th>Role</th><th>Category</th><th>Unit Cost</th><th>Sale Price</th><th></th></tr>
+              </thead>
+              <tbody id="catalogGoodsBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel recipe-ledger-panel">
+          <div class="recipe-directory">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Production Book</p>
+                <h2>Recipes</h2>
+                <p>Source defaults can be overridden each time production is queued</p>
+              </div>
+              <button class="ghost-button" id="newRecipeButton" type="button">New Recipe</button>
+            </div>
+            <div class="recipe-list" id="recipeList"></div>
+          </div>
+
+          <form class="recipe-editor" id="recipeEditorForm">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Recipe Entry</p>
+                <h2 id="recipeEditorTitle">New Recipe</h2>
+                <p id="recipeEditorMeta">Select an output and add its ingredients</p>
+              </div>
+            </div>
+            <div class="recipe-editor-header">
+              <label>
+                Product Made
+                <select id="recipeProductInput" required></select>
+              </label>
+              <label>
+                Units Per Craft
+                <input id="recipeYieldInput" type="number" min="0.001" step="0.001" value="1" required>
+              </label>
+            </div>
+            <div class="recipe-ingredient-heading">
+              <strong>Ingredients</strong>
+              <button class="ghost-button" id="addRecipeIngredientButton" type="button">Add Ingredient</button>
+            </div>
+            <div class="recipe-ingredient-list" id="recipeIngredientList"></div>
+            <p class="form-status" id="recipeEditorStatus" role="status"></p>
+            <div class="recipe-editor-actions">
+              <button class="danger-button" id="deleteRecipeButton" type="button">Delete Recipe</button>
+              <button class="primary-button" id="saveRecipeButton" type="submit">Save Recipe</button>
+            </div>
+          </form>
+        </section>
       </main>
 
       <main class="finance workspace-section hidden admin-only" id="financeSection">
@@ -818,7 +897,7 @@
             <section>
               <div class="subsection-heading">
                 <h3>Remaining Materials</h3>
-                <span>Checked against shared storage</span>
+                <span>Checked against each selected stock location</span>
               </div>
               <div class="production-material-status" id="productionMaterialStatus"></div>
             </section>
@@ -1757,6 +1836,25 @@
       </main>
     </div>
 
+    <dialog class="catalog-item-dialog production-source-dialog" id="productionSourceDialog">
+      <form id="productionSourceForm">
+        <div class="catalog-item-dialog-heading">
+          <div>
+            <p class="eyebrow">Production Stock</p>
+            <h2>Choose Ingredient Sources</h2>
+            <p>Confirm where each ingredient should be deducted for this batch</p>
+          </div>
+          <button class="icon-button" id="closeProductionSourceButton" type="button" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div class="production-source-list" id="productionSourceList"></div>
+        <p class="form-status" id="productionSourceStatus" role="status"></p>
+        <div class="catalog-item-actions">
+          <button class="ghost-button" id="cancelProductionSourceButton" type="button">Cancel</button>
+          <button class="primary-button" id="confirmProductionSourceButton" type="submit">Queue Production</button>
+        </div>
+      </form>
+    </dialog>
+
     <script src="pricing.js?v=20260714-kits"></script>
     <script src="items.js?v=20260719-item-aliases"></script>
     <script src="recipes.js?v=20260714-kits"></script>
@@ -1804,7 +1902,7 @@
       <option value="Australia/Sydney"></option>
     </datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260805-dual-catalog-role"></script>
+    <script src="app.js?v=20260805-catalog-recipes"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

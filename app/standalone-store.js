@@ -34,27 +34,30 @@ class StandaloneStore {
         });
       }
 
-      await client.query("DELETE FROM recipe_ingredients WHERE business_id = $1", [this.businessId]);
-      await client.query("DELETE FROM recipe_definitions WHERE business_id = $1", [this.businessId]);
       for (const recipe of configuration.catalog.recipes || []) {
-        await client.query(`
+        const inserted = await client.query(`
           INSERT INTO recipe_definitions (
-            business_id, id, product_name, normalized_product_name, output_quantity
-          ) VALUES ($1, $2, $3, $4, $5)
+            business_id, id, product_name, normalized_product_name, output_quantity, active
+          ) VALUES ($1, $2, $3, $4, $5, true)
+          ON CONFLICT (business_id, normalized_product_name) DO NOTHING
+          RETURNING id
         `, [this.businessId, recipe.id, recipe.productName, inventoryKey(recipe.productName), recipe.yield]);
+        if (!inserted.rowCount) continue;
         for (let index = 0; index < recipe.ingredients.length; index += 1) {
           const ingredient = recipe.ingredients[index];
           await client.query(`
             INSERT INTO recipe_ingredients (
-              business_id, recipe_id, position, ingredient_name, normalized_ingredient_name, quantity
-            ) VALUES ($1, $2, $3, $4, $5, $6)
+              business_id, recipe_id, position, ingredient_name, normalized_ingredient_name, quantity, source_location
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (business_id, recipe_id, position) DO NOTHING
           `, [
             this.businessId,
-            recipe.id,
+            inserted.rows[0].id,
             index,
             ingredient.name,
             inventoryKey(ingredient.name),
-            ingredient.quantity
+            ingredient.quantity,
+            productionSourceType(ingredient.sourceLocation)
           ]);
         }
       }
@@ -150,6 +153,38 @@ class StandaloneStore {
           actor,
           metadata: { batchId }
         });
+      }
+      const recipes = Array.isArray(snapshot.recipes) ? snapshot.recipes : [];
+      for (const rawRecipe of recipes) {
+        const recipe = normalizeRecipe(rawRecipe);
+        const id = cleanText(rawRecipe.id, 120) || legacyCatalogId("recipe", recipe.productName);
+        await client.query(`
+          INSERT INTO recipe_definitions (
+            business_id, id, product_name, normalized_product_name, output_quantity, active, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, true, now())
+          ON CONFLICT (business_id, normalized_product_name) DO UPDATE SET
+            product_name = EXCLUDED.product_name,
+            output_quantity = EXCLUDED.output_quantity,
+            active = true,
+            updated_at = now()
+        `, [this.businessId, id, recipe.productName, inventoryKey(recipe.productName), recipe.yield]);
+        const storedRecipe = await client.query(`
+          SELECT id FROM recipe_definitions
+          WHERE business_id = $1 AND normalized_product_name = $2
+        `, [this.businessId, inventoryKey(recipe.productName)]);
+        const recipeId = storedRecipe.rows[0].id;
+        await client.query("DELETE FROM recipe_ingredients WHERE business_id = $1 AND recipe_id = $2", [this.businessId, recipeId]);
+        for (let index = 0; index < recipe.ingredients.length; index += 1) {
+          const ingredient = recipe.ingredients[index];
+          await client.query(`
+            INSERT INTO recipe_ingredients (
+              business_id, recipe_id, position, ingredient_name, normalized_ingredient_name, quantity, source_location
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `, [
+            this.businessId, recipeId, index, ingredient.name, inventoryKey(ingredient.name),
+            ingredient.quantity, productionSourceType(ingredient.sourceLocation)
+          ]);
+        }
       }
       const ledgerBalance = nullableNumber(snapshot.inventory.ledger?.balance);
       if (ledgerBalance !== null) {
@@ -264,6 +299,7 @@ class StandaloneStore {
       const summary = {
         products: products.length,
         materials: materials.length,
+        recipes: recipes.length,
         storageCounts: storage.length,
         ledgerImported: ledgerBalance !== null,
         financeRows: financeRows.length,
@@ -279,9 +315,19 @@ class StandaloneStore {
   }
 
   async snapshot() {
-    const [catalogResult, inventoryResult, ledgerResult, exceptionResult, purchaseResult] = await Promise.all([
+    const [catalogResult, recipeResult, ingredientResult, inventoryResult, ledgerResult, exceptionResult, purchaseResult] = await Promise.all([
       this.database.query(`
         SELECT * FROM catalog_items WHERE business_id = $1 ORDER BY item_type, category, label
+      `, [this.businessId]),
+      this.database.query(`
+        SELECT * FROM recipe_definitions
+        WHERE business_id = $1 AND active = true
+        ORDER BY product_name
+      `, [this.businessId]),
+      this.database.query(`
+        SELECT * FROM recipe_ingredients
+        WHERE business_id = $1
+        ORDER BY recipe_id, position
       `, [this.businessId]),
       this.database.query(`
         SELECT * FROM inventory_events
@@ -309,10 +355,27 @@ class StandaloneStore {
 
     const inventory = reduceInventory(inventoryResult.rows);
     const catalog = catalogResult.rows.map(catalogRow);
+    const ingredientsByRecipe = new Map();
+    ingredientResult.rows.forEach(row => {
+      const ingredients = ingredientsByRecipe.get(row.recipe_id) || [];
+      ingredients.push({
+        name: row.ingredient_name,
+        quantity: number(row.quantity),
+        sourceLocation: displayProductionSource(row.source_location)
+      });
+      ingredientsByRecipe.set(row.recipe_id, ingredients);
+    });
+    const recipes = recipeResult.rows.map(row => ({
+      id: row.id,
+      productName: row.product_name,
+      yield: number(row.output_quantity),
+      ingredients: ingredientsByRecipe.get(row.id) || []
+    }));
     const products = catalog.filter(isSellableCatalogItem).map(item => {
       const count = inventory.get(`sales:${item.normalizedName}`) || emptyCount(item.name);
       return {
         itemName: item.name,
+        id: item.id,
         itemLabel: item.label,
         itemTag: item.itemTag,
         itemType: item.itemType,
@@ -334,6 +397,7 @@ class StandaloneStore {
       const count = inventory.get(`storage:${item.normalizedName}`) || emptyCount(item.name);
       return {
         ingredient: item.name,
+        id: item.id,
         name: item.name,
         label: item.label,
         itemTag: item.itemTag,
@@ -390,6 +454,8 @@ class StandaloneStore {
       generatedAt: new Date().toISOString(),
       sheets: [],
       reviewExceptions: exceptionResult.rows.map(exceptionRow),
+      catalog,
+      recipes,
       inventory: {
         products,
         materials,
@@ -593,6 +659,9 @@ class StandaloneStore {
   async handleGuiPayload(payload) {
     const action = String(payload?.action || "");
     if (action === "catalog_item") return this.createCatalogItem(payload.item || {});
+    if (action === "catalog_item_update") return this.updateCatalogItem(payload.item || {});
+    if (action === "recipe_upsert") return this.upsertRecipe(payload.recipe || {});
+    if (action === "recipe_delete") return this.deleteRecipe(payload.recipe || {});
     if (action === "manual_operation") return this.recordManualOperation(payload.entry || {});
     if (action === "stock_target") return this.updateStockTarget(payload.target || {});
     if (action === "time_clock") return this.recordTimeEntry(payload.entry || {});
@@ -610,6 +679,93 @@ class StandaloneStore {
       });
       return { ok: true, action: "catalog_item", item: created };
     });
+  }
+
+  async updateCatalogItem(input) {
+    const item = normalizeCatalogItem(input);
+    const id = cleanText(input.id, 120);
+    if (!id) throw storeError("Choose a catalog good to update", 400, "catalog_item_id_required");
+    return this.database.transaction(async client => {
+      const existing = await client.query(`
+        SELECT * FROM catalog_items WHERE business_id = $1 AND id = $2 FOR UPDATE
+      `, [this.businessId, id]);
+      if (!existing.rowCount) throw storeError("Catalog good not found", 404, "catalog_item_not_found");
+      if (inventoryKey(existing.rows[0].name) !== inventoryKey(item.name)) {
+        throw storeError("The catalog name cannot be changed after creation", 400, "catalog_item_name_locked");
+      }
+      const tagConflict = await client.query(`
+        SELECT id FROM catalog_items
+        WHERE business_id = $1 AND id <> $2 AND $3 <> '' AND lower(item_tag) = lower($3)
+        LIMIT 1
+      `, [this.businessId, id, item.tag]);
+      if (tagConflict.rowCount) throw storeError("That game item tag already exists", 409, "catalog_item_conflict");
+      const metadata = json(existing.rows[0].metadata, {});
+      metadata.updatedBy = cleanText(input.updatedBy, 100);
+      metadata.updatedFrom = "Catalog Ledger";
+      const result = await client.query(`
+        UPDATE catalog_items SET
+          item_type = $3, label = $4, item_tag = $5, category = $6, unit_name = $7,
+          unit_cost = $8, sale_price = $9, stock_target = $10, active = $11,
+          metadata = $12::jsonb, updated_at = now()
+        WHERE business_id = $1 AND id = $2
+        RETURNING *
+      `, [
+        this.businessId, id, item.type, item.label, item.tag, item.category, item.unit,
+        item.unitCost, item.salePrice, item.target, input.active !== false, JSON.stringify(metadata)
+      ]);
+      return { ok: true, action: "catalog_item_update", item: catalogRow(result.rows[0]) };
+    });
+  }
+
+  async upsertRecipe(input) {
+    const recipe = normalizeRecipe(input);
+    return this.database.transaction(async client => {
+      await requireCatalogItem(client, this.businessId, recipe.productName, "Recipe product");
+      for (const ingredient of recipe.ingredients) {
+        await requireCatalogItem(client, this.businessId, ingredient.name, "Recipe ingredient");
+      }
+      const existing = await client.query(`
+        SELECT id FROM recipe_definitions
+        WHERE business_id = $1 AND normalized_product_name = $2
+        FOR UPDATE
+      `, [this.businessId, inventoryKey(recipe.productName)]);
+      const id = existing.rows[0]?.id || crypto.randomUUID();
+      await client.query(`
+        INSERT INTO recipe_definitions (
+          business_id, id, product_name, normalized_product_name, output_quantity, active, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, true, now())
+        ON CONFLICT (business_id, normalized_product_name) DO UPDATE SET
+          product_name = EXCLUDED.product_name,
+          output_quantity = EXCLUDED.output_quantity,
+          active = true,
+          updated_at = now()
+      `, [this.businessId, id, recipe.productName, inventoryKey(recipe.productName), recipe.yield]);
+      await client.query("DELETE FROM recipe_ingredients WHERE business_id = $1 AND recipe_id = $2", [this.businessId, id]);
+      for (let index = 0; index < recipe.ingredients.length; index += 1) {
+        const ingredient = recipe.ingredients[index];
+        await client.query(`
+          INSERT INTO recipe_ingredients (
+            business_id, recipe_id, position, ingredient_name, normalized_ingredient_name, quantity, source_location
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `, [
+          this.businessId, id, index, ingredient.name, inventoryKey(ingredient.name),
+          ingredient.quantity, productionSourceType(ingredient.sourceLocation)
+        ]);
+      }
+      return { ok: true, action: "recipe_upsert", recipe: { id, ...recipe } };
+    });
+  }
+
+  async deleteRecipe(input) {
+    const productName = cleanText(input.productName || input.name, 120);
+    if (!productName) throw storeError("Choose a recipe to remove", 400, "recipe_product_required");
+    const result = await this.database.query(`
+      UPDATE recipe_definitions SET active = false, updated_at = now()
+      WHERE business_id = $1 AND normalized_product_name = $2
+      RETURNING id, product_name
+    `, [this.businessId, inventoryKey(productName)]);
+    if (!result.rowCount) throw storeError("Recipe not found", 404, "recipe_not_found");
+    return { ok: true, action: "recipe_delete", recipe: { id: result.rows[0].id, productName: result.rows[0].product_name } };
   }
 
   async recordManualOperation(entry) {
@@ -1357,6 +1513,44 @@ function normalizeCatalogItem(input) {
     salePrice: sellable ? catalogNumber(input?.salePrice ?? input?.price, "Sale price") : 0,
     target: sellable ? catalogNumber(input?.target ?? input?.stockTarget, "Stock target") : 0
   };
+}
+
+function normalizeRecipe(input) {
+  const productName = cleanText(input?.productName || input?.name, 120);
+  const outputQuantity = Number(input?.yield ?? input?.outputQuantity);
+  if (!productName) throw storeError("Choose the product made by this recipe", 400, "recipe_product_required");
+  if (!Number.isFinite(outputQuantity) || outputQuantity <= 0) {
+    throw storeError("Recipe yield must be greater than zero", 400, "invalid_recipe_yield");
+  }
+  const ingredients = (Array.isArray(input?.ingredients) ? input.ingredients : []).slice(0, 50).map(raw => ({
+    name: cleanText(raw?.name || raw?.ingredient || raw?.[0], 120),
+    quantity: Number(raw?.quantity ?? raw?.[1]),
+    sourceLocation: displayProductionSource(raw?.sourceLocation ?? raw?.[2])
+  }));
+  if (!ingredients.length || ingredients.some(ingredient => !ingredient.name || !Number.isFinite(ingredient.quantity) || ingredient.quantity <= 0)) {
+    throw storeError("Every recipe ingredient needs a good and a quantity greater than zero", 400, "invalid_recipe_ingredient");
+  }
+  const keys = ingredients.map(ingredient => inventoryKey(ingredient.name));
+  if (new Set(keys).size !== keys.length) {
+    throw storeError("Each good can only appear once in a recipe", 400, "duplicate_recipe_ingredient");
+  }
+  return { productName, yield: outputQuantity, ingredients };
+}
+
+async function requireCatalogItem(client, businessId, itemName, label) {
+  const result = await client.query(`
+    SELECT 1 FROM catalog_items
+    WHERE business_id = $1 AND normalized_name = $2 AND active = true
+  `, [businessId, inventoryKey(itemName)]);
+  if (!result.rowCount) throw storeError(`${label} is not an active catalog good`, 400, "recipe_catalog_item_required");
+}
+
+function productionSourceType(value) {
+  return inventoryKey(value).includes("store") || inventoryKey(value) === "sales" ? "sales" : "storage";
+}
+
+function displayProductionSource(value) {
+  return productionSourceType(value) === "sales" ? "Storefront" : "Storage";
 }
 
 function isSellableCatalogItem(item) {

@@ -58,6 +58,31 @@ async function run() {
       }
     });
     assert.equal(addedDualPurposeGood.item.itemType, "both");
+    const updatedDualPurposeGood = await store.handleGuiPayload({
+      action: "catalog_item_update",
+      item: {
+        id: addedDualPurposeGood.item.id,
+        type: "both",
+        name: "Raw Tobacco",
+        label: "Raw Tobacco Leaf",
+        category: "Tobacco Materials",
+        unit: "bundle",
+        unitCost: 1.75,
+        salePrice: 3.25,
+        target: 8,
+        active: true,
+        updatedBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(updatedDualPurposeGood.item.label, "Raw Tobacco Leaf");
+    await store.handleGuiPayload({
+      action: "recipe_upsert",
+      recipe: {
+        productName: "Imported Knife",
+        yield: 2,
+        ingredients: [{ name: "Raw Tobacco", quantity: 3, sourceLocation: "Storefront" }]
+      }
+    });
     await assert.rejects(
       () => store.handleGuiPayload({
         action: "catalog_item",
@@ -403,7 +428,9 @@ async function run() {
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Native Ore").category, "Metals");
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").itemType, "both");
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").storageCount, 12);
-    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").unitCost, 1.5);
+    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").unitCost, 1.75);
+    assert.equal(snapshot.recipes.find(recipe => recipe.productName === "Imported Knife").yield, 2);
+    assert.equal(snapshot.recipes.find(recipe => recipe.productName === "Imported Knife").ingredients[0].sourceLocation, "Storefront");
     assert.equal(snapshot.inventory.storefront.find(item => item.itemName === "Native Ore").currentStock, 5);
     assert.equal(snapshot.inventory.ledger.balance, 140);
     assert.equal(snapshot.reviewExceptions.find(entry => entry.webhookId === "discord-unknown-1").status, "Resolved");

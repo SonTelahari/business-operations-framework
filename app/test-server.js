@@ -180,6 +180,11 @@ const mockReceiver = http.createServer(async (request, response) => {
       const key = mockInventoryKey(entry.itemName || entry.itemLabel);
       storageCounts.set(key, Number(storageCounts.get(key) || 0) - Number(entry.quantity || 0));
     }
+    if (entry.kind === "Production Use" && entry.location === "Storefront") {
+      const key = mockInventoryKey(entry.itemName || entry.itemLabel);
+      const product = inventoryProducts.find(candidate => mockInventoryKey(candidate.itemName || candidate.itemLabel) === key);
+      if (product) product.currentStock = Number(product.currentStock || 0) - Number(entry.quantity || 0);
+    }
     if ((entry.kind === "Correction In" || entry.kind === "Production Output") && entry.location === "Storage") {
       const key = mockInventoryKey(entry.itemName || entry.itemLabel);
       storageCounts.set(key, Number(storageCounts.get(key) || 0) + Number(entry.quantity || 0));
@@ -1074,6 +1079,44 @@ async function run() {
     "restock output must wait for the storefront webhook instead of creating finished stock twice"
   );
   assert.equal(storageCounts.get("navy revolver"), 2);
+  inventoryProducts.push({
+    itemName: "Bolts",
+    itemLabel: "Bolts",
+    itemTag: "bolts",
+    category: "Components",
+    salePrice: 0.1,
+    target: 0,
+    currentStock: 4,
+    active: true
+  });
+  const mixedSourceProduction = await post(`${baseUrl}/api/production-batches`, {
+    id: "production-mixed-source",
+    sourceType: "Manual",
+    reference: "Use storefront bolts",
+    lines: [{
+      itemName: "Navy Revolver",
+      quantity: 1,
+      ingredientSources: { bolts: "Storefront" }
+    }]
+  }, managerCookie);
+  assert.equal(mixedSourceProduction.response.status, 200);
+  assert.equal(
+    mixedSourceProduction.body.batch.lines[0].recipe.find(component => component.ingredient === "Bolts").sourceLocation,
+    "Storefront"
+  );
+  const mixedSourceLineId = mixedSourceProduction.body.batch.lines[0].id;
+  const mixedSourceWritesBefore = receiverPayloads.length;
+  const completedMixedSource = await post(`${baseUrl}/api/production-batches/production-mixed-source/progress`, {
+    completions: [{ lineId: mixedSourceLineId, completedCrafts: 1 }]
+  }, workerCookie);
+  assert.equal(completedMixedSource.response.status, 200);
+  const mixedSourceWrites = receiverPayloads.slice(mixedSourceWritesBefore).filter(payload => payload.action === "manual_operation");
+  assert(mixedSourceWrites.some(payload => payload.entry.kind === "Production Use"
+    && payload.entry.itemName === "Bolts"
+    && payload.entry.location === "Storefront"));
+  assert.equal(inventoryProducts.find(product => product.itemName === "Bolts").currentStock, 2);
+  inventoryProducts.splice(inventoryProducts.findIndex(product => product.itemName === "Bolts"), 1);
+
   const cancelCompletedProduction = await post(`${baseUrl}/api/production-batches/production-navy-two/cancel`, {}, managerCookie);
   assert.equal(cancelCompletedProduction.response.status, 409);
   const removeProductionSalesOrder = await remove(`${baseUrl}/api/sales-orders/sales-order-1`, managerCookie);

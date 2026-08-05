@@ -26,7 +26,8 @@ async function run() {
       "002_multitenancy.sql",
       "003_discord_identity.sql",
       "004_beta_operations.sql",
-      "005_dual_purpose_catalog_items.sql"
+      "005_dual_purpose_catalog_items.sql",
+      "006_recipe_source_locations.sql"
     ]);
 
     const tables = await database.query(`
