@@ -357,6 +357,10 @@ const elements = {
   storeOverviewMeta: document.querySelector("#storeOverviewMeta"),
   storefrontOverviewUnits: document.querySelector("#storefrontOverviewUnits"),
   storageOverviewUnits: document.querySelector("#storageOverviewUnits"),
+  storefrontOverviewValue: document.querySelector("#storefrontOverviewValue"),
+  storefrontOverviewValueDetail: document.querySelector("#storefrontOverviewValueDetail"),
+  storageOverviewValue: document.querySelector("#storageOverviewValue"),
+  storageOverviewValueDetail: document.querySelector("#storageOverviewValueDetail"),
   ledgerOverviewBalance: document.querySelector("#ledgerOverviewBalance"),
   ledgerOverviewDetail: document.querySelector("#ledgerOverviewDetail"),
   storefrontOverviewCount: document.querySelector("#storefrontOverviewCount"),
@@ -2877,6 +2881,12 @@ function renderStoreOverview() {
 
   elements.storefrontOverviewUnits.textContent = formatNumber(sumInventoryCounts(storefrontCounts));
   elements.storageOverviewUnits.textContent = formatNumber(sumInventoryCounts(storageCounts));
+  const storefrontValuation = calculateInventoryValuation("Storefront", storefrontCounts);
+  const storageValuation = calculateInventoryValuation("Storage", storageCounts);
+  elements.storefrontOverviewValue.textContent = formatCurrency(storefrontValuation.total);
+  elements.storageOverviewValue.textContent = formatCurrency(storageValuation.total);
+  elements.storefrontOverviewValueDetail.textContent = valuationDetail(storefrontValuation, "At recorded sell prices");
+  elements.storageOverviewValueDetail.textContent = valuationDetail(storageValuation, "At recorded costs", true);
   elements.storefrontOverviewCount.textContent = inventoryLineCountText(visibleStorefront.length, storefrontRows.length, query);
   elements.storageOverviewCount.textContent = inventoryLineCountText(visibleStorage.length, storageRows.length, query);
   elements.storefrontOverviewBody.innerHTML = renderInventoryOverviewRows(visibleStorefront, true);
@@ -3691,6 +3701,61 @@ function inventoryOverviewKey(entry) {
 
 function sumInventoryCounts(counts) {
   return [...counts.values()].reduce((total, quantity) => total + Number(quantity || 0), 0);
+}
+
+function calculateInventoryValuation(location, counts) {
+  const inventory = backendSnapshot?.sheet?.inventory || {};
+  const rows = location === "Storefront"
+    ? (Array.isArray(inventory.storefront) ? inventory.storefront : inventory.products || [])
+    : (Array.isArray(inventory.storage) ? inventory.storage : inventory.materials || []);
+  const rowsByKey = new Map(rows.map(row => [inventoryOverviewKey(row), row]));
+  let total = 0;
+  let valuedUnits = 0;
+  let unvaluedUnits = 0;
+  let unvaluedLines = 0;
+  let fallbackLines = 0;
+
+  counts.forEach((rawQuantity, key) => {
+    const quantity = Math.max(0, Number(rawQuantity || 0));
+    if (!quantity) return;
+    const row = rowsByKey.get(key) || {};
+    const product = productCatalogByKey.get(key);
+    const material = ingredientCatalog.find(item => inventoryOverviewKey(item) === key);
+    const productPricing = findPricingByKey(pricingCatalog.products, key);
+    const materialPricing = findPricingByKey(pricingCatalog.materials, key);
+    const salePrice = firstPositiveNumber(row.salePrice, product?.price, productPricing?.midpoint);
+    const unitCost = firstPositiveNumber(row.unitCost, material?.unitCost, material?.price, materialPricing?.midpoint);
+    const unitValue = location === "Storefront" ? salePrice : (unitCost || salePrice);
+    if (!unitValue) {
+      unvaluedUnits += quantity;
+      unvaluedLines += 1;
+      return;
+    }
+    if (location === "Storage" && !unitCost && salePrice) fallbackLines += 1;
+    valuedUnits += quantity;
+    total += quantity * unitValue;
+  });
+
+  return { total, valuedUnits, unvaluedUnits, unvaluedLines, fallbackLines };
+}
+
+function findPricingByKey(collection, key) {
+  return Object.entries(collection || {}).find(([name]) => normalize(name) === key)?.[1] || null;
+}
+
+function firstPositiveNumber(...values) {
+  return values.map(Number).find(value => Number.isFinite(value) && value > 0) || 0;
+}
+
+function valuationDetail(valuation, baseText, storage = false) {
+  if (!valuation.valuedUnits && !valuation.unvaluedUnits) return "No counted units";
+  if (valuation.unvaluedLines) {
+    return `${baseText} / ${formatNumber(valuation.unvaluedUnits)} units on ${valuation.unvaluedLines} ${valuation.unvaluedLines === 1 ? "line" : "lines"} unvalued`;
+  }
+  if (storage && valuation.fallbackLines) {
+    return `${baseText} / ${valuation.fallbackLines} ${valuation.fallbackLines === 1 ? "line" : "lines"} at sell price`;
+  }
+  return `${baseText} / all counted units valued`;
 }
 
 function inventoryLineCountText(visible, total, query) {

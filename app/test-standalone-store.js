@@ -436,6 +436,8 @@ async function run() {
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").storageCount, 12);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").storageTarget, 20);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").unitCost, 1.75);
+    assert.equal(snapshot.inventory.storage.find(item => item.ingredient === "Raw Tobacco").unitCost, 1.75);
+    assert.equal(snapshot.inventory.storage.find(item => item.ingredient === "Raw Tobacco").salePrice, 3.25);
     assert.equal(snapshot.recipes.find(recipe => recipe.productName === "Imported Knife").yield, 2);
     assert.equal(snapshot.recipes.find(recipe => recipe.productName === "Imported Knife").ingredients[0].sourceLocation, "Storefront");
     assert.equal(snapshot.inventory.storefront.find(item => item.itemName === "Native Ore").currentStock, 5);

@@ -45,10 +45,14 @@ assert(appHtml.includes('<option value="both">Product and material</option>'), "
 assert(appHtml.includes('data-section="catalog"'), "managers must have a catalog management tab");
 assert(appHtml.includes('id="recipeEditorForm"'), "catalog management must expose a recipe editor");
 assert(appHtml.includes('id="productionSourceDialog"'), "production queues must confirm ingredient source locations");
+assert(appHtml.includes('id="storefrontOverviewValue"'), "the Store overview must show storefront value");
+assert(appHtml.includes('id="storageOverviewValue"'), "the Store overview must show storage value");
 assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
 const appScript = fs.readFileSync(path.join(root, "app.js"), "utf8");
 assert(appScript.includes('addGoods(itemCatalog, "product")'), "catalog fallback must classify sellable goods as products");
 assert(appScript.includes('addGoods(ingredientCatalog, "material")'), "catalog fallback must classify recipe ingredients as materials");
+assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefront value must be calculated from current counts");
+assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
 assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");
 assert(appHtml.includes('id="settingsLogoPreview"'), "business settings must preview branding changes");

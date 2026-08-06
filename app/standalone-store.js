@@ -445,9 +445,12 @@ class StandaloneStore {
         itemTag: item.itemTag,
         itemType: item.itemType,
         category: item.category,
+        unitCost: item.unitCost,
+        salePrice: item.salePrice,
         storageTarget: item.storageTarget,
         storageCount: Math.max(0, count.quantity),
-        countedAt: count.countedAt
+        countedAt: count.countedAt,
+        active: item.active
       });
     }
     for (const [key, count] of inventory) {
