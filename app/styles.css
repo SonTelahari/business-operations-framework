@@ -2025,6 +2025,16 @@ tr:last-child td {
   color: #c8f7cb !important;
 }
 
+.status-pill.ready {
+  background: rgba(118, 184, 122, 0.2);
+  color: #c8f7cb !important;
+}
+
+.status-pill.in-production {
+  background: rgba(85, 167, 217, 0.18);
+  color: #b8e4ff !important;
+}
+
 .status-pill.completed {
   background: rgba(118, 184, 122, 0.22);
   color: #d8ffda !important;
@@ -2790,6 +2800,7 @@ tbody tr:nth-child(even) {
 }
 
 .status-pill.reserved,
+.status-pill.ready,
 .status-pill.completed {
   background: rgba(63, 102, 88, 0.12);
   color: #315649 !important;
@@ -2874,6 +2885,11 @@ body.auth-page {
 
 .store-overview-search {
   width: min(100%, 360px);
+}
+
+.ledger-shell .status-pill.in-production {
+  background: rgba(77, 113, 128, 0.14);
+  color: #365967 !important;
 }
 
 .store-overview-tools {

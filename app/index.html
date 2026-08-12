@@ -223,7 +223,7 @@
               <span>Storefront Units</span>
               <strong id="storefrontOverviewUnits">0</strong>
             </div>
-            <div>
+            <div class="management-only">
               <span>Storefront Value</span>
               <strong id="storefrontOverviewValue">$0</strong>
               <small id="storefrontOverviewValueDetail">At recorded sell prices</small>
@@ -232,7 +232,7 @@
               <span>Storage Units</span>
               <strong id="storageOverviewUnits">0</strong>
             </div>
-            <div>
+            <div class="management-only">
               <span>Storage Value</span>
               <strong id="storageOverviewValue">$0</strong>
               <small id="storageOverviewValueDetail">At recorded costs</small>
@@ -703,8 +703,10 @@
               <option value="Paused">Paused</option>
               <option value="Expedited">Expedited</option>
               <option value="Reserved">Reserved</option>
+              <option value="In Production" disabled>In Production</option>
+              <option value="Ready" disabled>Ready</option>
               <option value="Completed">Completed</option>
-              <option value="Cancelled">Cancelled</option>
+              <option value="Cancelled" data-management-only-option>Cancelled</option>
             </select>
           </div>
 
@@ -799,7 +801,7 @@
               </div>
               <div class="production-header-actions">
                 <button class="ghost-button" id="copyProductionButton" type="button">Copy Materials</button>
-                <button class="primary-button management-only" id="queueOrderProductionButton" type="button">Queue Production</button>
+                <button class="primary-button" id="queueOrderProductionButton" type="button">Queue Production</button>
               </div>
             </div>
             <div class="production-grid">
@@ -836,7 +838,7 @@
             <button id="expediteButton" class="ghost-button" type="button">Expedite</button>
             <button id="reserveButton" class="ghost-button" type="button">Reserve</button>
             <button id="completeButton" class="ghost-button" type="button">Complete</button>
-            <button id="deleteOrderButton" class="danger-button" type="button">Remove</button>
+            <button id="deleteOrderButton" class="danger-button management-only" type="button">Remove</button>
           </div>
 
           <div class="summary-preview" id="summaryPreview"></div>
@@ -855,6 +857,8 @@
               <option value="Paused">Paused</option>
               <option value="Expedited">Expedited</option>
               <option value="Reserved">Reserved</option>
+              <option value="In Production">In Production</option>
+              <option value="Ready">Ready</option>
               <option value="Completed">Completed</option>
               <option value="Cancelled">Cancelled</option>
             </select>
@@ -889,6 +893,7 @@
             </div>
             <select id="productionFilterInput" aria-label="Filter production batches">
               <option value="Active">Working Queue</option>
+              <option value="Mine">Assigned to Me</option>
               <option value="All">All</option>
               <option value="Planned">Planned</option>
               <option value="In Progress">In Progress</option>

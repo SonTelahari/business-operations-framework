@@ -9,7 +9,16 @@ const {
 const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially Received", "Received", "Cancelled"]);
 const STOREFRONT_BUY_ORDER_STATUSES = new Set(["Active", "Paused", "Filled", "Cancelled"]);
 const PRODUCTION_BATCH_STATUSES = new Set(["Planned", "In Progress", "Completed", "Cancelled"]);
-const SALES_ORDER_STATUSES = new Set(["Draft", "Paused", "Expedited", "Reserved", "Completed", "Cancelled"]);
+const SALES_ORDER_STATUSES = new Set([
+  "Draft",
+  "Paused",
+  "Expedited",
+  "Reserved",
+  "In Production",
+  "Ready",
+  "Completed",
+  "Cancelled"
+]);
 const DAILY_CLOSE_STATUSES = new Set(["Draft", "Finalized"]);
 
 class BusinessStore {
@@ -322,13 +331,21 @@ class BusinessStore {
       const duplicateSource = batch.sourceId && this.data.productionBatches.find(candidate =>
         candidate.sourceType === batch.sourceType
         && candidate.sourceId === batch.sourceId
-        && candidate.status !== "Completed"
         && candidate.status !== "Cancelled"
+        && (batch.sourceType === "Customer Order" || candidate.status !== "Completed")
       );
       if (duplicateSource) {
         throw businessError("This source already has an active production batch", 409, "production_source_active");
       }
+      const sourceOrder = batch.sourceType === "Customer Order"
+        ? this.data.salesOrders.find(order => order.id === batch.sourceId)
+        : null;
+      if (batch.sourceType === "Customer Order"
+        && (!sourceOrder || ["Ready", "Completed", "Cancelled"].includes(sourceOrder.status))) {
+        throw businessError("The customer order is unavailable or already closed", 409, "customer_order_unavailable");
+      }
       this.data.productionBatches.unshift(batch);
+      transitionSalesOrder(sourceOrder, "In Production", actor, now);
       return structuredClone(batch);
     });
   }
@@ -392,6 +409,10 @@ class BusinessStore {
       if (completed) {
         batch.completedAt = batch.updatedAt;
         batch.completedBy = batch.updatedBy;
+        const sourceOrder = batch.sourceType === "Customer Order"
+          ? this.data.salesOrders.find(order => order.id === batch.sourceId)
+          : null;
+        transitionSalesOrder(sourceOrder, "Ready", actor, batch.updatedAt);
       }
       return structuredClone(batch);
     });
@@ -410,6 +431,10 @@ class BusinessStore {
       batch.status = "Cancelled";
       batch.updatedAt = new Date().toISOString();
       batch.updatedBy = cleanText(actor?.fullName, 100);
+      const sourceOrder = batch.sourceType === "Customer Order"
+        ? this.data.salesOrders.find(order => order.id === batch.sourceId)
+        : null;
+      transitionSalesOrder(sourceOrder, "Reserved", actor, batch.updatedAt);
       return structuredClone(batch);
     });
   }
@@ -856,6 +881,14 @@ function cleanProductionLine(line) {
     completedCrafts: 0,
     recipe
   };
+}
+
+function transitionSalesOrder(order, status, actor, now) {
+  if (!order || order.status === "Completed" || order.status === "Cancelled" || order.status === status) return;
+  order.status = status;
+  order.revision = Number(order.revision || 0) + 1;
+  order.updatedAt = now;
+  order.updatedBy = cleanText(actor?.fullName, 100);
 }
 
 function normalizeProductionSource(value) {

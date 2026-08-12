@@ -16,3 +16,5 @@
 14. `/health` reports the intended application version and a deployment-specific release identifier.
 15. An installed PWA detects a test deployment and offers **Update App**.
 16. Staff know the difference between P&L entries and ledger-only transfers so supplier payments and other recorded obligations are not counted twice.
+17. A test employee can save a customer order, queue its recipe lines, find it under **Assigned to Me**, start it, record partial and complete production, and deliver it from the **Ready** state.
+18. The same employee cannot create storefront-restock or manual production, delete orders, cancel batches, or see inventory values and production costs.

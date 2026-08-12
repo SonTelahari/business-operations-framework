@@ -452,8 +452,11 @@ async function run() {
   assert.equal(importedSalesOrders.body.skipped, 1);
 
   const removedImportedSalesOrder = await remove(`${baseUrl}/api/sales-orders/legacy-sales-order`, employeeCookie);
-  assert.equal(removedImportedSalesOrder.response.status, 200);
-  assert.equal(removedImportedSalesOrder.body.orders.length, 1);
+  assert.equal(removedImportedSalesOrder.response.status, 403);
+  assert.equal(removedImportedSalesOrder.body.code, "manager_required");
+  const managerRemovedImportedSalesOrder = await remove(`${baseUrl}/api/sales-orders/legacy-sales-order`, ownerCookie);
+  assert.equal(managerRemovedImportedSalesOrder.response.status, 200);
+  assert.equal(managerRemovedImportedSalesOrder.body.orders.length, 1);
 
   const employeeAdminAttempt = await getJson(`${baseUrl}/api/admin/users`, employeeCookie);
   assert.equal(employeeAdminAttempt.response.status, 403);
@@ -1001,6 +1004,15 @@ async function run() {
   }, workerCookie);
   assert.equal(workerCreateProduction.response.status, 403);
 
+  const workerOrderMismatch = await post(`${baseUrl}/api/production-batches`, {
+    sourceType: "Customer Order",
+    sourceId: "sales-order-1",
+    reference: "Wrong quantity",
+    lines: [{ itemName: "Navy Revolver", quantity: 3 }]
+  }, workerCookie);
+  assert.equal(workerOrderMismatch.response.status, 400);
+  assert.equal(workerOrderMismatch.body.code, "production_order_mismatch");
+
   [
     ["softwood", 20],
     ["revolver handle", 10],
@@ -1016,11 +1028,36 @@ async function run() {
     dueDate: "2026-07-15",
     assignedTo: "Grace Worker",
     lines: [{ itemName: "Navy Revolver", quantity: 2 }]
-  }, managerCookie);
+  }, workerCookie);
   assert.equal(createdProduction.response.status, 200);
   assert.equal(createdProduction.body.batch.status, "Planned");
+  assert.equal(createdProduction.body.batch.createdBy, "Grace Worker");
+  assert.equal(createdProduction.body.batch.assignedTo, "Ada Employee");
   assert.equal(createdProduction.body.batch.lines[0].plannedCrafts, 2);
+  assert.equal(createdProduction.body.order.status, "In Production");
   const productionLineId = createdProduction.body.batch.lines[0].id;
+
+  const editQueuedProductionOrder = await post(`${baseUrl}/api/sales-orders`, {
+    ...createdProduction.body.order,
+    lines: createdProduction.body.order.lines.map(line => ({ ...line, quantity: line.quantity + 1 }))
+  }, workerCookie);
+  assert.equal(editQueuedProductionOrder.response.status, 409);
+  assert.equal(editQueuedProductionOrder.body.code, "sales_order_production_locked");
+
+  const completeActiveProductionOrder = await post(`${baseUrl}/api/sales-orders`, {
+    ...createdProduction.body.order,
+    status: "Completed"
+  }, workerCookie);
+  assert.equal(completeActiveProductionOrder.response.status, 409);
+  assert.equal(completeActiveProductionOrder.body.code, "sales_order_production_active");
+
+  const workerRestockAttempt = await post(`${baseUrl}/api/production-batches`, {
+    sourceType: "Storefront Restock",
+    reference: "Unauthorized restock",
+    lines: [{ itemName: "Navy Revolver", quantity: 1 }]
+  }, workerCookie);
+  assert.equal(workerRestockAttempt.response.status, 403);
+  assert.equal(workerRestockAttempt.body.code, "customer_order_production_required");
 
   const duplicateProductionSource = await post(`${baseUrl}/api/production-batches`, {
     sourceType: "Customer Order",
@@ -1063,7 +1100,22 @@ async function run() {
   }, workerCookie);
   assert.equal(completedProduction.response.status, 200);
   assert.equal(completedProduction.body.batch.status, "Completed");
+  assert.equal(completedProduction.body.order.status, "Ready");
   assert.equal(storageCounts.get("navy revolver"), 2);
+
+  const reopenReadyProductionOrder = await post(`${baseUrl}/api/sales-orders`, {
+    ...completedProduction.body.order,
+    status: "Draft"
+  }, workerCookie);
+  assert.equal(reopenReadyProductionOrder.response.status, 409);
+  assert.equal(reopenReadyProductionOrder.body.code, "sales_order_ready_locked");
+
+  const deliveredProductionOrder = await post(`${baseUrl}/api/sales-orders`, {
+    ...completedProduction.body.order,
+    status: "Completed"
+  }, workerCookie);
+  assert.equal(deliveredProductionOrder.response.status, 200);
+  assert.equal(deliveredProductionOrder.body.order.status, "Completed");
 
   const restockProduction = await post(`${baseUrl}/api/production-batches`, {
     id: "production-restock-one",

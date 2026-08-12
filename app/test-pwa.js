@@ -47,12 +47,18 @@ assert(appHtml.includes('id="recipeEditorForm"'), "catalog management must expos
 assert(appHtml.includes('id="productionSourceDialog"'), "production queues must confirm ingredient source locations");
 assert(appHtml.includes('id="storefrontOverviewValue"'), "the Store overview must show storefront value");
 assert(appHtml.includes('id="storageOverviewValue"'), "the Store overview must show storage value");
+assert(appHtml.includes('<div class="management-only">\n              <span>Storefront Value</span>'), "storefront value must remain management-only");
+assert(appHtml.includes('<button class="primary-button" id="queueOrderProductionButton"'), "employees must be able to queue customer-order production");
+assert(appHtml.includes('<option value="Mine">Assigned to Me</option>'), "employees need an assigned production view");
+assert(appHtml.includes('<option value="Cancelled" data-management-only-option>'), "order cancellation must remain management-only");
 assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
 const appScript = fs.readFileSync(path.join(root, "app.js"), "utf8");
 assert(appScript.includes('addGoods(itemCatalog, "product")'), "catalog fallback must classify sellable goods as products");
 assert(appScript.includes('addGoods(ingredientCatalog, "material")'), "catalog fallback must classify recipe ingredients as materials");
 assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefront value must be calculated from current counts");
 assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");
+assert(appScript.includes('function completeActiveOrder()'), "customer-order completion must respect linked production");
+assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
 assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");
 assert(appHtml.includes('id="settingsLogoPreview"'), "business settings must preview branding changes");

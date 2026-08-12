@@ -54,11 +54,13 @@ Set `AUTH_SESSION_SECRET` and `BRIDGE_API_TOKEN` before starting Compose. Add `-
 
 ## Accounts and Roles
 
-- **Employees** see the daily desk, store, workbench, and ordinary shift tools.
-- **Managers** can count and adjust stock, maintain targets and suppliers, reconcile webhook exceptions, manage production, approve staff, and inspect the audit ledger.
+- **Employees** see the daily desk, store, workbench, production queue, and ordinary shift tools. They can create customer orders, queue only those orders for production, start batches, record completed production cycles, and mark ready orders delivered. Inventory values, production costs, stock adjustments, cancellations, and administrative controls stay hidden.
+- **Managers** can additionally count and adjust stock, maintain targets and suppliers, create storefront-restock or manual production, cancel batches, reconcile webhook exceptions, approve staff, and inspect the audit ledger.
 - **Admins** additionally control finance, payroll, owner funds, manager promotion, and protected corrections.
 
 New registrations use either the employee's character name and chosen password or Discord login. Discord users create one or more explicitly labelled character profiles, request access using a workspace code, and select an approved business from their profile. A manager or admin approves either kind of request from Staff. Existing password accounts can be linked once from the Discord profile and remain available as a recovery path.
+
+Customer-order production follows a shared status flow: saving the order creates the work record, queuing its recipe lines marks it **In Production**, completing every batch line marks it **Ready**, and the employee marks it **Completed** only after delivery. The production register includes an **Assigned to Me** filter for the employee named as the order handler.
 
 ## Finance Entry Rules
 

@@ -1808,12 +1808,69 @@ async function handleSalesOrderRoute(request, response, url, user) {
       return true;
     }
     if (url.pathname === "/api/sales-orders" && request.method === "POST") {
-      const order = await businessStore.saveSalesOrder(await readJsonBody(request), user);
+      const payload = await readJsonBody(request);
+      const existingOrder = businessStore.getSalesOrder(payload.id);
+      const activeBatch = businessStore.listProductionBatches().find(batch =>
+        batch.sourceType === "Customer Order"
+        && batch.sourceId === String(payload.id || "")
+        && batch.status !== "Completed"
+        && batch.status !== "Cancelled"
+      );
+      if (activeBatch && existingOrder && payload.status !== existingOrder.status) {
+        throw salesOrderError(
+          "Finish or cancel the linked production batch before changing this order's status",
+          409,
+          "sales_order_production_active"
+        );
+      }
+      if (payload.status === "Cancelled" && existingOrder?.status !== "Cancelled" && !isManagementRole(user)) {
+        throw salesOrderError("Manager access is required to cancel an order", 403, "manager_required");
+      }
+      if (["In Production", "Ready"].includes(payload.status) && existingOrder?.status !== payload.status) {
+        throw salesOrderError(
+          "Production controls update this order status automatically",
+          400,
+          "sales_order_status_managed"
+        );
+      }
+      const linkedBatch = businessStore.listProductionBatches().find(batch =>
+        batch.sourceType === "Customer Order"
+        && batch.sourceId === String(payload.id || "")
+        && batch.status !== "Cancelled"
+      );
+      if (linkedBatch?.status === "Completed"
+        && existingOrder?.status === "Ready"
+        && !["Ready", "Completed"].includes(payload.status)
+        && !isManagementRole(user)) {
+        throw salesOrderError(
+          "Ready orders can only be completed by employees",
+          409,
+          "sales_order_ready_locked"
+        );
+      }
+      if (linkedBatch && existingOrder && salesOrderProductionShape(payload) !== salesOrderProductionShape(existingOrder)) {
+        throw salesOrderError(
+          "Production details are locked after an order is queued",
+          409,
+          "sales_order_production_locked"
+        );
+      }
+      if (payload.status === "Completed") {
+        if (activeBatch) {
+          throw salesOrderError(
+            "Finish the linked production batch before completing this order",
+            409,
+            "sales_order_production_incomplete"
+          );
+        }
+      }
+      const order = await businessStore.saveSalesOrder(payload, user);
       await recordSalesOrderAudit("sales_order.saved", order, user);
       sendJson(response, { ok: true, order, orders: businessStore.listSalesOrders() });
       return true;
     }
     if (request.method === "DELETE" && url.pathname.startsWith("/api/sales-orders/")) {
+      if (!requireManagement(response, user)) return true;
       const orderId = decodeURIComponent(url.pathname.slice("/api/sales-orders/".length));
       const linkedBatch = businessStore.listProductionBatches().find(batch =>
         batch.sourceType === "Customer Order"
@@ -1907,11 +1964,46 @@ async function handleProductionBatchRoute(request, response, url, user) {
       return true;
     }
     if (url.pathname === "/api/production-batches" && request.method === "POST") {
-      if (!requireManagement(response, user)) return true;
-      const prepared = await prepareProductionBatch(await readJsonBody(request));
+      const payload = await readJsonBody(request);
+      let sourceOrder = null;
+      if (payload.sourceType === "Customer Order") {
+        sourceOrder = businessStore.getSalesOrder(payload.sourceId);
+        if (!sourceOrder || ["Ready", "Completed", "Cancelled"].includes(sourceOrder.status)) {
+          sendJson(response, {
+            ok: false,
+            error: "The customer order is unavailable or already closed",
+            code: "customer_order_unavailable"
+          }, 409);
+          return true;
+        }
+      }
+      if (!isManagementRole(user)) {
+        if (!sourceOrder) {
+          sendJson(response, {
+            ok: false,
+            error: "Employees can only queue production from a saved customer order",
+            code: "customer_order_production_required"
+          }, 403);
+          return true;
+        }
+        payload.assignedTo = sourceOrder.handler || user.fullName;
+      }
+      const prepared = await prepareProductionBatch(payload);
+      if (sourceOrder) assertProductionMatchesSalesOrder(prepared, sourceOrder);
       const batch = await businessStore.createProductionBatch(prepared, user);
+      let order = null;
+      if (batch.sourceType === "Customer Order" && batch.sourceId) {
+        order = businessStore.getSalesOrder(batch.sourceId);
+        await recordSalesOrderAudit("sales_order.production_queued", order, user);
+      }
       await recordProductionBatchAudit("production_batch.created", batch, user);
-      sendJson(response, { ok: true, batch, batches: businessStore.listProductionBatches() });
+      sendJson(response, {
+        ok: true,
+        batch,
+        batches: businessStore.listProductionBatches(),
+        order,
+        orders: businessStore.listSalesOrders()
+      });
       return true;
     }
 
@@ -1934,8 +2026,17 @@ async function handleProductionBatchRoute(request, response, url, user) {
       }
       if (!requireManagement(response, user)) return true;
       const batch = await businessStore.cancelProductionBatch(batchId, user);
+      if (batch.sourceType === "Customer Order" && batch.sourceId) {
+        const order = businessStore.getSalesOrder(batch.sourceId);
+        await recordSalesOrderAudit("sales_order.production_cancelled", order, user);
+      }
       await recordProductionBatchAudit("production_batch.cancelled", batch, user);
-      sendJson(response, { ok: true, batch, batches: businessStore.listProductionBatches() });
+      sendJson(response, {
+        ok: true,
+        batch,
+        batches: businessStore.listProductionBatches(),
+        orders: businessStore.listSalesOrders()
+      });
       return true;
     }
 
@@ -2001,6 +2102,39 @@ async function prepareProductionBatch(input) {
   };
 }
 
+function assertProductionMatchesSalesOrder(batch, order) {
+  batch.lines.forEach(productionLine => {
+    const productionKeys = new Set([
+      inventoryKey(productionLine.itemName),
+      inventoryKey(productionLine.itemLabel)
+    ].filter(Boolean));
+    const orderedQuantity = order.lines
+      .filter(line => [line.name, line.label, line.tag].some(value => productionKeys.has(inventoryKey(value))))
+      .reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    if (!orderedQuantity || Number(productionLine.requestedQuantity || 0) > orderedQuantity) {
+      throw productionError(
+        `Production for ${productionLine.itemLabel || productionLine.itemName} exceeds the linked customer order`,
+        400,
+        "production_order_mismatch"
+      );
+    }
+  });
+}
+
+function salesOrderProductionShape(order) {
+  const lines = (Array.isArray(order?.lines) ? order.lines : []).map(line => ({
+    key: inventoryKey(line.name || line.label || line.tag),
+    quantity: Number(line.quantity || 0)
+  })).sort((left, right) => left.key.localeCompare(right.key) || left.quantity - right.quantity);
+  return JSON.stringify({
+    customer: String(order?.customer || "").trim(),
+    handler: String(order?.handler || "").trim(),
+    priority: order?.priority === "Expedite" ? "Expedite" : "Normal",
+    deliveryDate: String(order?.deliveryDate || ""),
+    lines
+  });
+}
+
 async function recordProductionProgress(batchId, payload, user) {
   let batch = businessStore.getProductionBatch(batchId);
   if (!batch) throw productionError("Production batch not found", 404, "not_found");
@@ -2022,9 +2156,20 @@ async function recordProductionProgress(batchId, payload, user) {
   }
 
   const updated = await businessStore.commitProductionProgress(batchId, pending.id, user);
+  let order = null;
+  if (updated.status === "Completed" && updated.sourceType === "Customer Order" && updated.sourceId) {
+    order = businessStore.getSalesOrder(updated.sourceId);
+    await recordSalesOrderAudit("sales_order.production_ready", order, user);
+  }
   const auditAction = updated.status === "Completed" ? "production_batch.completed" : "production_batch.progressed";
   await recordProductionBatchAudit(auditAction, updated, user, pending);
-  return { ok: true, batch: updated, batches: businessStore.listProductionBatches() };
+  return {
+    ok: true,
+    batch: updated,
+    batches: businessStore.listProductionBatches(),
+    order,
+    orders: businessStore.listSalesOrders()
+  };
 }
 
 async function prepareProductionProgress(batch, payload, user) {

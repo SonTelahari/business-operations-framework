@@ -90,6 +90,9 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "production_batch.completed": "Production batch completed",
   "production_batch.cancelled": "Production batch cancelled",
   "sales_order.saved": "Sales order saved",
+  "sales_order.production_queued": "Sales order queued for production",
+  "sales_order.production_ready": "Sales order ready for delivery",
+  "sales_order.production_cancelled": "Sales order production cancelled",
   "sales_order.removed": "Sales order removed",
   "sales_order.imported": "Browser sales orders imported",
   "daily_close.saved": "Daily close draft saved",
@@ -1082,7 +1085,7 @@ function wireEvents() {
     setStatus("Expedited");
   });
   document.querySelector("#reserveButton").addEventListener("click", () => setStatus("Reserved"));
-  document.querySelector("#completeButton").addEventListener("click", () => setStatus("Completed"));
+  document.querySelector("#completeButton").addEventListener("click", completeActiveOrder);
   document.querySelector("#deleteOrderButton").addEventListener("click", removeActiveOrder);
   document.querySelector("#addSupplyLineButton").addEventListener("click", addSupplyLine);
   document.querySelector("#addMissingSupplyButton").addEventListener("click", addMissingSupplyLines);
@@ -1409,6 +1412,18 @@ async function setStatus(status) {
   if (status === "Expedited") activeOrder.priority = "Expedite";
   activeOrderDirty = true;
   await saveActiveOrder();
+}
+
+async function completeActiveOrder() {
+  const batch = productionBatchForOrder(activeOrder.id);
+  if (batch && PRODUCTION_ACTIVE_STATUSES.has(batch.status)) {
+    activeProductionBatchId = batch.id;
+    activeSection = "production";
+    render();
+    elements.productionActionStatus.textContent = "Finish this production batch before completing the customer order";
+    return;
+  }
+  await setStatus("Completed");
 }
 
 async function removeActiveOrder() {
@@ -3001,6 +3016,8 @@ function renderProductCard() {
     : item.name;
   const insight = productInsightCache.get(activeProductCardKey);
   const managementPricing = isManagement() ? `
+    <div><dt>MSRP range</dt><dd>${productPricing ? `${formatCurrency(productPricing.low)}-${formatCurrency(productPricing.high)}` : "Unavailable"}</dd></div>
+    <div><dt>MSRP material cost</dt><dd>${costKnown ? `${formatCurrency(unitCost)} / unit` : "Unavailable"}</dd></div>
         <div><dt>Est. gross / unit</dt><dd class="${unitProfit !== null && unitProfit < 0 ? "negative" : ""}">${unitProfit === null ? "Unavailable" : formatCurrency(unitProfit)}</dd></div>
     <div><dt>Est. gross margin</dt><dd>${margin === null ? "Unavailable" : `${formatNumber(margin)}%`}</dd></div>
   ` : "";
@@ -3010,7 +3027,7 @@ function renderProductCard() {
       <div class="product-recipe-row ${ingredient.available < ingredient.quantity ? "short" : ""}">
         <div><strong>${escapeHtml(ingredient.ingredient)}</strong><span>${formatNumber(ingredient.available)} in ${escapeHtml(ingredient.sourceLocation.toLowerCase())}</span></div>
         <span>${formatNumber(ingredient.quantity)} needed</span>
-        <span>${ingredient.costKnown ? formatCurrency(ingredient.quantity * ingredient.unitCost) : "Unpriced"}</span>
+        ${isManagement() ? `<span>${ingredient.costKnown ? formatCurrency(ingredient.quantity * ingredient.unitCost) : "Unpriced"}</span>` : ""}
       </div>
     `).join("")
     : `<div class="empty-card">No recipe recorded</div>`;
@@ -3030,17 +3047,15 @@ function renderProductCard() {
       <div><dt>Storage Target</dt><dd>${storageTarget ? formatNumber(storageTarget.target) : "-"}</dd></div>
     </dl>
     <section class="product-card-section">
-      <h3>Price and Cost</h3>
+      <h3>${isManagement() ? "Price and Cost" : "Price"}</h3>
       <dl class="product-card-facts">
         <div><dt>Store price</dt><dd>${retailPrice > 0 ? formatCurrency(retailPrice) : "Not priced"}</dd></div>
-        <div><dt>MSRP range</dt><dd>${productPricing ? `${formatCurrency(productPricing.low)}-${formatCurrency(productPricing.high)}` : "Unavailable"}</dd></div>
-        <div><dt>MSRP material cost</dt><dd>${costKnown ? `${formatCurrency(unitCost)} / unit` : "Unavailable"}</dd></div>
         <div><dt>Recipe yield</dt><dd>${hasRecipe ? formatNumber(yieldQuantity) : "-"}</dd></div>
         ${managementPricing}
       </dl>
     </section>
     <section class="product-card-section">
-      <div class="product-card-section-heading"><h3>Recipe</h3><span>${costKnown ? `${formatCurrency(batchCost)} / batch` : "Cost incomplete"}</span></div>
+      <div class="product-card-section-heading"><h3>Recipe</h3>${isManagement() ? `<span>${costKnown ? `${formatCurrency(batchCost)} / batch` : "Cost incomplete"}</span>` : ""}</div>
       <div class="product-recipe-list">${recipeRows}</div>
     </section>
     ${salesSection}
@@ -3783,6 +3798,10 @@ function renderRole() {
     option.hidden = !isAdmin();
     option.disabled = !isAdmin();
   });
+  document.querySelectorAll("[data-management-only-option]").forEach(option => {
+    option.hidden = !isManagement();
+    option.disabled = !isManagement();
+  });
   if (!isAdmin() && elements.ledgerType?.selectedOptions[0]?.dataset.adminOnlyOption !== undefined) {
     elements.ledgerType.value = "Ledger Count";
   }
@@ -4255,7 +4274,7 @@ function renderSupplyDeliveryCards(items) {
 
 function renderProduction() {
   const production = getProductionPlan(activeOrder);
-  elements.productionMeta.textContent = `${production.buildLines.length} producible lines / ${production.materials.length} materials / est. ${formatCurrency(production.materialCost)}`;
+  elements.productionMeta.textContent = `${production.buildLines.length} producible lines / ${production.materials.length} materials${isManagement() ? ` / est. ${formatCurrency(production.materialCost)}` : ""}`;
 
   if (!production.buildLines.length) {
     elements.productionBuildList.innerHTML = `<div class="empty-card">No producible order lines yet</div>`;
@@ -4263,7 +4282,7 @@ function renderProduction() {
     elements.productionBuildList.innerHTML = production.buildLines.map(line => `
       <div class="production-row">
         <strong>${escapeHtml(line.name)}</strong>
-      <span>${formatNumber(line.quantity)} needed${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""} / ${formatCurrency(line.unitCost)} ea</span>
+      <span>${formatNumber(line.quantity)} needed${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""}${isManagement() ? ` / ${formatCurrency(line.unitCost)} ea` : ""}</span>
       </div>
     `).join("");
   }
@@ -4274,7 +4293,7 @@ function renderProduction() {
     elements.productionMaterialsList.innerHTML = production.materials.map(material => `
       <div class="production-row">
         <strong>${escapeHtml(material.ingredient)}</strong>
-      <span>${formatNumber(material.qty)} / ${formatCurrency(material.cost)}</span>
+      <span>${formatNumber(material.qty)}${isManagement() ? ` / ${formatCurrency(material.cost)}` : ""}</span>
       </div>
     `).join("");
   }
@@ -4282,11 +4301,9 @@ function renderProduction() {
   elements.missingRecipes.innerHTML = production.missing.length
     ? `<strong>No recipe attached:</strong> ${production.missing.map(escapeHtml).join(", ")}`
     : "";
-  const queued = productionBatches.some(batch => batch.sourceType === "Customer Order"
-    && batch.sourceId === activeOrder.id
-    && PRODUCTION_ACTIVE_STATUSES.has(batch.status));
-  elements.queueOrderProduction.disabled = productionActionPending || !isManagement() || !production.buildLines.length || queued;
-  elements.queueOrderProduction.textContent = queued ? "Already Queued" : "Queue Production";
+  const linkedBatch = productionBatchForOrder(activeOrder.id);
+  elements.queueOrderProduction.disabled = productionActionPending || (!linkedBatch && !production.buildLines.length);
+  elements.queueOrderProduction.textContent = linkedBatch ? "Open Production" : "Queue Production";
 }
 
 function renderOrdersList() {
@@ -4370,10 +4387,10 @@ function buildSummary(order) {
 function buildProductionSummary(order) {
   const production = getProductionPlan(order);
   const buildLines = production.buildLines.length
-    ? production.buildLines.map(line => `${formatNumber(line.quantity)}x ${line.name}${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""} / ${formatCurrency(line.unitCost)} each`).join("\n")
+    ? production.buildLines.map(line => `${formatNumber(line.quantity)}x ${line.name}${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""}${isManagement() ? ` / ${formatCurrency(line.unitCost)} each` : ""}`).join("\n")
     : "No producible lines";
   const materials = production.materials.length
-    ? production.materials.map(material => `${formatNumber(material.qty)}x ${material.ingredient} - ${formatCurrency(material.cost)}`).join("\n")
+    ? production.materials.map(material => `${formatNumber(material.qty)}x ${material.ingredient}${isManagement() ? ` - ${formatCurrency(material.cost)}` : ""}`).join("\n")
     : "No materials needed";
   const missing = production.missing.length
     ? `\nNo recipe attached:\n${production.missing.join("\n")}`
@@ -4388,13 +4405,20 @@ function buildProductionSummary(order) {
     "",
     "Materials:",
     materials,
-    `Estimated material cost: ${formatCurrency(production.materialCost)}`,
+    isManagement() ? `Estimated material cost: ${formatCurrency(production.materialCost)}` : "",
     missing
   ].filter(line => line !== "").join("\n");
 }
 
 async function queueActiveOrderProduction() {
-  if (!isManagement() || productionActionPending) return;
+  if (productionActionPending) return;
+  const linkedBatch = productionBatchForOrder(activeOrder.id);
+  if (linkedBatch) {
+    activeProductionBatchId = linkedBatch.id;
+    activeSection = "production";
+    render();
+    return;
+  }
   updateActiveFromInputs();
   const saved = orders.some(order => order.id === activeOrder.id);
   if (!saved || activeOrderDirty) {
@@ -4513,6 +4537,7 @@ async function createProductionBatch(payload, successMessage) {
     const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     productionBatches = Array.isArray(result.batches) ? result.batches : [];
+    applySalesOrdersFromResult(result);
     activeProductionBatchId = result.batch.id;
     activeSection = "production";
     elements.productionActionStatus.textContent = successMessage;
@@ -4567,6 +4592,7 @@ function renderProductionQueue() {
 
   const filter = elements.productionFilter.value || "Active";
   const visible = productionBatches.filter(batch => filter === "All"
+    || (filter === "Mine" && normalize(batch.assignedTo) === normalize(currentUser?.fullName))
     || (filter === "Active" ? PRODUCTION_ACTIVE_STATUSES.has(batch.status) : batch.status === filter));
   if (!visible.some(batch => batch.id === activeProductionBatchId)) {
     activeProductionBatchId = visible[0]?.id || "";
@@ -4581,7 +4607,7 @@ function renderProductionQueue() {
           <span class="status-pill ${statusClass(batch.status)}">${escapeHtml(batch.status)}</span>
           <strong>${escapeHtml(batch.reference || batch.sourceType)}</strong>
           <span>${escapeHtml(batch.sourceType)} / ${formatNumber(completed)} of ${formatNumber(planned)} production cycles</span>
-          <small>${batch.dueDate ? formatDelivery(batch.dueDate) : "No due date"}${materialPlan.shortageCount ? ` / ${formatNumber(materialPlan.shortageCount)} material shorts` : " / Materials ready"}</small>
+          <small>${batch.assignedTo ? `Assigned to ${escapeHtml(batch.assignedTo)} / ` : "Unassigned / "}${batch.dueDate ? formatDelivery(batch.dueDate) : "No due date"}${materialPlan.shortageCount ? ` / ${formatNumber(materialPlan.shortageCount)} material shorts` : " / Materials ready"}</small>
         </button>
       `;
     }).join("")
@@ -4766,6 +4792,7 @@ async function runProductionAction(batch, action, payload, successMessage) {
     const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     productionBatches = Array.isArray(result.batches) ? result.batches : [];
+    applySalesOrdersFromResult(result);
     activeProductionBatchId = result.batch.id;
     finalMessage = action === "progress" && result.batch.sourceType === "Storefront Restock"
       ? "Materials recorded / awaiting storefront deposit"
@@ -5038,6 +5065,22 @@ function renderOperations() {
 function renderTargets() {
   renderTargetCollection("Storefront", stockTargets, elements.targetList);
   renderTargetCollection("Storage", storageTargets, elements.storageTargetList);
+}
+
+function productionBatchForOrder(orderId) {
+  if (!orderId) return null;
+  return productionBatches.find(batch => batch.sourceType === "Customer Order"
+    && batch.sourceId === orderId
+    && batch.status !== "Cancelled") || null;
+}
+
+function applySalesOrdersFromResult(result) {
+  if (!Array.isArray(result?.orders)) return;
+  orders = result.orders;
+  if (!activeOrderDirty) {
+    const refreshed = orders.find(order => order.id === activeOrder.id);
+    if (refreshed) activeOrder = structuredClone(refreshed);
+  }
 }
 
 function renderTargetCollection(location, targets, listElement) {
