@@ -76,6 +76,7 @@ const businessStore = contextualStore("businessStore");
 const standaloneStore = database.enabled ? contextualStore("standaloneStore") : null;
 const loginAttempts = new Map();
 let supplyReceiptQueue = Promise.resolve();
+let productionCreateQueue = Promise.resolve();
 let productionProgressQueue = Promise.resolve();
 let setupQueue = Promise.resolve();
 
@@ -1864,9 +1865,23 @@ async function handleSalesOrderRoute(request, response, url, user) {
           );
         }
       }
+      let fulfillmentSynced = false;
+      if (payload.status === "Completed"
+        && existingOrder?.status !== "Completed"
+        && linkedBatch?.status === "Completed") {
+        if (Number(payload.revision) !== Number(existingOrder.revision)) {
+          throw salesOrderError(
+            "This order was updated by someone else. Reload it before completing delivery.",
+            409,
+            "sales_order_conflict"
+          );
+        }
+        await syncCustomerOrderFulfillment(existingOrder, linkedBatch, user);
+        fulfillmentSynced = true;
+      }
       const order = await businessStore.saveSalesOrder(payload, user);
       await recordSalesOrderAudit("sales_order.saved", order, user);
-      sendJson(response, { ok: true, order, orders: businessStore.listSalesOrders() });
+      sendJson(response, { ok: true, order, orders: businessStore.listSalesOrders(), fulfillmentSynced });
       return true;
     }
     if (request.method === "DELETE" && url.pathname.startsWith("/api/sales-orders/")) {
@@ -1988,9 +2003,24 @@ async function handleProductionBatchRoute(request, response, url, user) {
         }
         payload.assignedTo = sourceOrder.handler || user.fullName;
       }
-      const prepared = await prepareProductionBatch(payload);
-      if (sourceOrder) assertProductionMatchesSalesOrder(prepared, sourceOrder);
-      const batch = await businessStore.createProductionBatch(prepared, user);
+      const createOperation = productionCreateQueue.then(async () => {
+        const currentSourceOrder = sourceOrder ? businessStore.getSalesOrder(sourceOrder.id) : null;
+        if (currentSourceOrder && businessStore.listProductionBatches().some(batch =>
+          batch.sourceType === "Customer Order"
+          && batch.sourceId === currentSourceOrder.id
+          && batch.status !== "Cancelled"
+        )) {
+          throw productionError("This customer order already has a fulfillment batch", 409, "production_source_active");
+        }
+        const prepared = await prepareProductionBatch(payload);
+        if (currentSourceOrder) {
+          assertProductionMatchesSalesOrder(prepared, currentSourceOrder);
+          await assertProductionStockAvailable(prepared);
+        }
+        return businessStore.createProductionBatch(prepared, user);
+      });
+      productionCreateQueue = createOperation.catch(() => {});
+      const batch = await createOperation;
       let order = null;
       if (batch.sourceType === "Customer Order" && batch.sourceId) {
         order = businessStore.getSalesOrder(batch.sourceId);
@@ -2089,6 +2119,29 @@ async function prepareProductionBatch(input) {
     existing.requestedQuantity += quantity;
     lines.set(item.name, existing);
   });
+  const stockAllocations = new Map();
+  (Array.isArray(input.stockAllocations) ? input.stockAllocations : []).slice(0, 50).forEach(sourceAllocation => {
+    const item = itemByKey.get(inventoryKey(
+      sourceAllocation.itemName || sourceAllocation.name || sourceAllocation.itemLabel
+    ));
+    if (!item) throw productionError("Existing-stock allocations must refer to catalog products", 400, "stock_allocation_item_unknown");
+    const storageQuantity = Number(sourceAllocation.storageQuantity || 0);
+    const storefrontQuantity = Number(sourceAllocation.storefrontQuantity || 0);
+    if (!Number.isInteger(storageQuantity) || storageQuantity < 0
+      || !Number.isInteger(storefrontQuantity) || storefrontQuantity < 0) {
+      throw productionError("Existing-stock quantities must be positive whole numbers", 400, "invalid_stock_allocation_quantity");
+    }
+    if (storageQuantity + storefrontQuantity <= 0) return;
+    const existing = stockAllocations.get(item.name) || {
+      itemName: item.name,
+      itemLabel: item.label || item.name,
+      storageQuantity: 0,
+      storefrontQuantity: 0
+    };
+    existing.storageQuantity += storageQuantity;
+    existing.storefrontQuantity += storefrontQuantity;
+    stockAllocations.set(item.name, existing);
+  });
   return {
     id: String(input.id || crypto.randomUUID()),
     sourceType: input.sourceType,
@@ -2098,27 +2151,176 @@ async function prepareProductionBatch(input) {
     priority: input.priority,
     assignedTo: input.assignedTo,
     notes: input.notes,
-    lines: [...lines.values()]
+    lines: [...lines.values()],
+    stockAllocations: [...stockAllocations.values()]
   };
 }
 
 function assertProductionMatchesSalesOrder(batch, order) {
-  batch.lines.forEach(productionLine => {
-    const productionKeys = new Set([
-      inventoryKey(productionLine.itemName),
-      inventoryKey(productionLine.itemLabel)
-    ].filter(Boolean));
+  const fulfillment = new Map();
+  const addFulfillment = (itemName, itemLabel, producedQuantity, storageQuantity = 0, storefrontQuantity = 0) => {
+    const key = inventoryKey(itemName || itemLabel);
+    const current = fulfillment.get(key) || {
+      itemName,
+      itemLabel: itemLabel || itemName,
+      keys: new Set(),
+      producedQuantity: 0,
+      storageQuantity: 0,
+      storefrontQuantity: 0
+    };
+    [itemName, itemLabel].forEach(value => {
+      const alias = inventoryKey(value);
+      if (alias) current.keys.add(alias);
+    });
+    current.producedQuantity += Number(producedQuantity || 0);
+    current.storageQuantity += Number(storageQuantity || 0);
+    current.storefrontQuantity += Number(storefrontQuantity || 0);
+    fulfillment.set(key, current);
+  };
+  batch.lines.forEach(line => addFulfillment(line.itemName, line.itemLabel, line.requestedQuantity));
+  (batch.stockAllocations || []).forEach(allocation => addFulfillment(
+    allocation.itemName,
+    allocation.itemLabel,
+    0,
+    allocation.storageQuantity,
+    allocation.storefrontQuantity
+  ));
+
+  fulfillment.forEach(entry => {
     const orderedQuantity = order.lines
-      .filter(line => [line.name, line.label, line.tag].some(value => productionKeys.has(inventoryKey(value))))
+      .filter(line => !line.custom && [line.name, line.label, line.tag]
+        .some(value => entry.keys.has(inventoryKey(value))))
       .reduce((sum, line) => sum + Number(line.quantity || 0), 0);
-    if (!orderedQuantity || Number(productionLine.requestedQuantity || 0) > orderedQuantity) {
+    const fulfilledQuantity = entry.producedQuantity + entry.storageQuantity + entry.storefrontQuantity;
+    if (!orderedQuantity || fulfilledQuantity !== orderedQuantity) {
       throw productionError(
-        `Production for ${productionLine.itemLabel || productionLine.itemName} exceeds the linked customer order`,
+        `Fulfillment for ${entry.itemLabel || entry.itemName} must cover the linked order exactly (${fulfilledQuantity}/${orderedQuantity})`,
         400,
         "production_order_mismatch"
       );
     }
   });
+  const uncovered = order.lines.filter(line => !line.custom && Number(line.quantity || 0) > 0).filter(line =>
+    ![...fulfillment.values()].some(entry => [line.name, line.label, line.tag]
+      .some(value => entry.keys.has(inventoryKey(value))))
+  );
+  if (uncovered.length) {
+    throw productionError(
+      `Choose existing stock or production for ${uncovered.map(line => line.label || line.name).join(", ")}`,
+      400,
+      "production_order_mismatch"
+    );
+  }
+}
+
+async function assertProductionStockAvailable(batch) {
+  if (!batch.stockAllocations?.length) return;
+  const snapshot = await readSheetSnapshot();
+  const storefrontRows = Array.isArray(snapshot?.inventory?.storefront)
+    ? snapshot.inventory.storefront
+    : snapshot?.inventory?.products;
+  if (!snapshot?.ok || !Array.isArray(snapshot.inventory?.materials) || !Array.isArray(storefrontRows)) {
+    throw productionError(
+      `Inventory could not be checked${snapshot?.error ? `: ${snapshot.error}` : ""}`,
+      502,
+      "production_inventory_unavailable"
+    );
+  }
+  const counts = {
+    Storage: materialStorageCounts(snapshot.inventory.materials),
+    Storefront: storefrontInventoryCounts(storefrontRows)
+  };
+  const reserved = finishedStockReservations(batch.sourceId);
+  const shortages = [];
+  batch.stockAllocations.forEach(allocation => {
+    const itemKey = inventoryKey(allocation.itemName || allocation.itemLabel);
+    [
+      ["Storage", Number(allocation.storageQuantity || 0)],
+      ["Storefront", Number(allocation.storefrontQuantity || 0)]
+    ].forEach(([location, wanted]) => {
+      if (!wanted) return;
+      const available = Math.max(0,
+        Number(counts[location].get(itemKey)?.quantity || 0)
+          - Number(reserved.get(`${location}:${itemKey}`) || 0)
+      );
+      if (available < wanted) shortages.push(`${allocation.itemLabel || allocation.itemName} in ${location} ${available}/${wanted}`);
+    });
+  });
+  if (shortages.length) {
+    throw productionError(
+      `Existing stock changed before it could be reserved: ${shortages.join(", ")}`,
+      409,
+      "production_stock_allocation_shortage"
+    );
+  }
+}
+
+function finishedStockReservations(excludeOrderId = "") {
+  const reserved = new Map();
+  const ordersById = new Map(businessStore.listSalesOrders().map(order => [order.id, order]));
+  businessStore.listProductionBatches().forEach(batch => {
+    if (batch.sourceType !== "Customer Order" || batch.status === "Cancelled" || batch.sourceId === excludeOrderId) return;
+    const order = ordersById.get(batch.sourceId);
+    if (!order || order.status === "Completed" || order.status === "Cancelled") return;
+    (batch.stockAllocations || []).forEach(allocation => {
+      const itemKey = inventoryKey(allocation.itemName || allocation.itemLabel);
+      [["Storage", allocation.storageQuantity], ["Storefront", allocation.storefrontQuantity]].forEach(([location, quantity]) => {
+        const key = `${location}:${itemKey}`;
+        reserved.set(key, Number(reserved.get(key) || 0) + Number(quantity || 0));
+      });
+    });
+  });
+  return reserved;
+}
+
+async function syncCustomerOrderFulfillment(order, batch, user) {
+  const movements = new Map();
+  const addMovement = (location, itemName, itemLabel, quantity) => {
+    const amount = Number(quantity || 0);
+    if (amount <= 0) return;
+    const key = `${location}:${inventoryKey(itemName || itemLabel)}`;
+    const current = movements.get(key) || {
+      location,
+      itemName,
+      itemLabel: itemLabel || itemName,
+      quantity: 0
+    };
+    current.quantity += amount;
+    movements.set(key, current);
+  };
+  (batch.stockAllocations || []).forEach(allocation => {
+    addMovement("Storage", allocation.itemName, allocation.itemLabel, allocation.storageQuantity);
+    addMovement("Storefront", allocation.itemName, allocation.itemLabel, allocation.storefrontQuantity);
+  });
+  batch.lines.forEach(line => {
+    addMovement("Storage", line.itemName, line.itemLabel, line.requestedQuantity);
+  });
+
+  for (const movement of [...movements.values()].sort((left, right) =>
+    left.location.localeCompare(right.location) || left.itemName.localeCompare(right.itemName)
+  )) {
+    const fingerprint = `${order.id}:${batch.id}:${movement.location}:${inventoryKey(movement.itemName)}`;
+    const entry = {
+      id: `fulfillment-${crypto.createHash("sha256").update(fingerprint).digest("hex").slice(0, 28)}`,
+      kind: "Correction Out",
+      location: movement.location,
+      itemName: movement.itemName,
+      itemLabel: movement.itemLabel,
+      quantity: movement.quantity,
+      amount: 0,
+      note: `Customer order delivered: ${order.customer || order.id}`,
+      employee: user.fullName,
+      createdAt: new Date().toISOString()
+    };
+    const result = await syncGuiPayload({ action: "manual_operation", entry });
+    if (!result.ok) {
+      throw salesOrderError(
+        `Delivery stock update paused: ${result.error || "unknown error"}. Complete the order again to retry safely.`,
+        502,
+        "sales_order_fulfillment_sync_pending"
+      );
+    }
+  }
 }
 
 function salesOrderProductionShape(order) {
@@ -2580,6 +2782,8 @@ async function recordProductionBatchAudit(action, batch, user, progress = null) 
   if (!accountStore) return;
   const plannedCrafts = batch.lines.reduce((sum, line) => sum + Number(line.plannedCrafts || 0), 0);
   const completedCrafts = batch.lines.reduce((sum, line) => sum + Number(line.completedCrafts || 0), 0);
+  const existingStockUnits = (batch.stockAllocations || []).reduce((sum, allocation) =>
+    sum + Number(allocation.storageQuantity || 0) + Number(allocation.storefrontQuantity || 0), 0);
   const progressedCrafts = (progress?.targets || []).reduce((sum, target) => {
     return sum + Math.max(0, Number(target.completedCrafts || 0) - Number(target.previousCrafts || 0));
   }, 0);
@@ -2596,6 +2800,7 @@ async function recordProductionBatchAudit(action, batch, user, progress = null) 
       sourceType: batch.sourceType,
       reference: batch.reference,
       lineCount: batch.lines.length,
+      existingStockUnits,
       plannedCrafts,
       completedCrafts,
       progressedCrafts,

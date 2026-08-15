@@ -60,7 +60,7 @@ Set `AUTH_SESSION_SECRET` and `BRIDGE_API_TOKEN` before starting Compose. Add `-
 
 New registrations use either the employee's character name and chosen password or Discord login. Discord users create one or more explicitly labelled character profiles, request access using a workspace code, and select an approved business from their profile. A manager or admin approves either kind of request from Staff. Existing password accounts can be linked once from the Discord profile and remain available as a recovery path.
 
-Customer-order production follows a shared status flow: saving the order creates the work record, queuing its recipe lines marks it **In Production**, completing every batch line marks it **Ready**, and the employee marks it **Completed** only after delivery. The production register includes an **Assigned to Me** filter for the employee named as the order handler.
+Customer-order fulfillment first reserves available finished goods from storage or storefront stock, then creates production work only for the remaining quantity. The allocation can be adjusted before queueing and is persisted so another order cannot claim the same units. Orders covered entirely by existing stock move directly to **Ready**; otherwise, completing every production line marks the order **Ready**, and the employee marks it **Completed** only after delivery. The production register includes an **Assigned to Me** filter for the employee named as the order handler.
 
 ## Finance Entry Rules
 

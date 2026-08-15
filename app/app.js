@@ -418,6 +418,7 @@ const elements = {
   productionSourceStatus: document.querySelector("#productionSourceStatus"),
   closeProductionSource: document.querySelector("#closeProductionSourceButton"),
   cancelProductionSource: document.querySelector("#cancelProductionSourceButton"),
+  confirmProductionSource: document.querySelector("#confirmProductionSourceButton"),
   businessSettingsForm: document.querySelector("#businessSettingsForm"),
   businessSettingsMeta: document.querySelector("#businessSettingsMeta"),
   businessSettingsStatus: document.querySelector("#businessSettingsStatus"),
@@ -1387,6 +1388,7 @@ async function saveActiveOrder() {
     activeOrderDirty = false;
     legacyOrdersPendingMigration = legacyOrdersPendingMigration.filter(order => order.id !== activeOrder.id);
     render();
+    if (result.fulfillmentSynced) await loadBackendSnapshot({ silent: true });
     elements.orderMeta.textContent = `${activeOrder.status} / Shared revision ${activeOrder.revision} / Saved by ${activeOrder.updatedBy}`;
     return true;
   } catch (error) {
@@ -4274,15 +4276,17 @@ function renderSupplyDeliveryCards(items) {
 
 function renderProduction() {
   const production = getProductionPlan(activeOrder);
-  elements.productionMeta.textContent = `${production.buildLines.length} producible lines / ${production.materials.length} materials${isManagement() ? ` / est. ${formatCurrency(production.materialCost)}` : ""}`;
+  const existingUnits = production.stockAllocations.reduce((sum, allocation) =>
+    sum + Number(allocation.storageQuantity || 0) + Number(allocation.storefrontQuantity || 0), 0);
+  elements.productionMeta.textContent = `${formatNumber(existingUnits)} existing units reserved / ${production.buildLines.length} production lines / ${production.materials.length} materials${isManagement() ? ` / est. ${formatCurrency(production.materialCost)}` : ""}`;
 
-  if (!production.buildLines.length) {
-    elements.productionBuildList.innerHTML = `<div class="empty-card">No producible order lines yet</div>`;
+  if (!production.fulfillmentLines.length) {
+    elements.productionBuildList.innerHTML = `<div class="empty-card">No order lines to fulfill yet</div>`;
   } else {
-    elements.productionBuildList.innerHTML = production.buildLines.map(line => `
+    elements.productionBuildList.innerHTML = production.fulfillmentLines.map(line => `
       <div class="production-row">
-        <strong>${escapeHtml(line.name)}</strong>
-      <span>${formatNumber(line.quantity)} needed${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""}${isManagement() ? ` / ${formatCurrency(line.unitCost)} ea` : ""}</span>
+        <strong>${escapeHtml(line.label || line.name)}</strong>
+        <span>${formatNumber(line.orderedQuantity)} ordered / ${formatNumber(line.existingQuantity)} existing / ${formatNumber(line.productionQuantity)} to produce${line.storageQuantity ? ` / ${formatNumber(line.storageQuantity)} storage` : ""}${line.storefrontQuantity ? ` / ${formatNumber(line.storefrontQuantity)} storefront` : ""}</span>
       </div>
     `).join("");
   }
@@ -4302,7 +4306,8 @@ function renderProduction() {
     ? `<strong>No recipe attached:</strong> ${production.missing.map(escapeHtml).join(", ")}`
     : "";
   const linkedBatch = productionBatchForOrder(activeOrder.id);
-  elements.queueOrderProduction.disabled = productionActionPending || (!linkedBatch && !production.buildLines.length);
+  elements.queueOrderProduction.disabled = productionActionPending
+    || (!linkedBatch && !production.buildLines.length && !production.stockAllocations.length);
   elements.queueOrderProduction.textContent = linkedBatch ? "Open Production" : "Queue Production";
 }
 
@@ -4386,9 +4391,11 @@ function buildSummary(order) {
 
 function buildProductionSummary(order) {
   const production = getProductionPlan(order);
-  const buildLines = production.buildLines.length
-    ? production.buildLines.map(line => `${formatNumber(line.quantity)}x ${line.name}${line.yield > 1 ? ` / ${formatNumber(line.batches)} ${line.batches === 1 ? "batch" : "batches"} makes ${formatNumber(line.producedQuantity)}` : ""}${isManagement() ? ` / ${formatCurrency(line.unitCost)} each` : ""}`).join("\n")
-    : "No producible lines";
+  const buildLines = production.fulfillmentLines.length
+    ? production.fulfillmentLines.map(line =>
+      `${formatNumber(line.orderedQuantity)}x ${line.label || line.name} / ${formatNumber(line.existingQuantity)} existing / ${formatNumber(line.productionQuantity)} to produce`
+    ).join("\n")
+    : "No order lines";
   const materials = production.materials.length
     ? production.materials.map(material => `${formatNumber(material.qty)}x ${material.ingredient}${isManagement() ? ` - ${formatCurrency(material.cost)}` : ""}`).join("\n")
     : "No materials needed";
@@ -4426,8 +4433,10 @@ async function queueActiveOrderProduction() {
     if (!await saveActiveOrder()) return;
   }
   const plan = getProductionPlan(activeOrder);
-  if (!plan.buildLines.length) {
-    elements.productionMeta.textContent = "Add at least one item with a recipe before queuing production";
+  if (!plan.buildLines.length && !plan.stockAllocations.length) {
+    elements.productionMeta.textContent = plan.missing.length
+      ? `No recipe or existing stock is available for ${plan.missing.join(", ")}`
+      : "Add at least one stocked or producible item before queuing fulfillment";
     return;
   }
   openProductionSourceDialog({
@@ -4439,8 +4448,10 @@ async function queueActiveOrderProduction() {
     priority: activeOrder.priority,
     assignedTo: activeOrder.handler,
     notes: activeOrder.notes,
-    lines: plan.buildLines.map(line => ({ itemName: line.name, requestedQuantity: line.quantity }))
-  }, "Customer order added to the production queue");
+    lines: plan.buildLines.map(line => ({ itemName: line.name, requestedQuantity: line.quantity })),
+    stockAllocations: plan.stockAllocations,
+    fulfillmentLines: plan.fulfillmentLines
+  }, "Customer order fulfillment added to the shared queue");
 }
 
 async function queueRestockProduction() {
@@ -4468,6 +4479,20 @@ async function queueRestockProduction() {
 }
 
 function openProductionSourceDialog(payload, successMessage) {
+  pendingProductionQueue = {
+    payload,
+    successMessage,
+    fulfillmentLines: Array.isArray(payload.fulfillmentLines) ? structuredClone(payload.fulfillmentLines) : []
+  };
+  delete payload.fulfillmentLines;
+  elements.productionSourceStatus.textContent = "";
+  renderProductionSourceDialog();
+  elements.productionSourceDialog.showModal();
+}
+
+function renderProductionSourceDialog() {
+  if (!pendingProductionQueue) return;
+  const { payload, fulfillmentLines } = pendingProductionQueue;
   const requirements = new Map();
   payload.lines.forEach(line => {
     const recipe = recipeCatalog[line.itemName] || [];
@@ -4483,27 +4508,108 @@ function openProductionSourceDialog(payload, successMessage) {
       requirements.set(key, current);
     });
   });
-  if (!requirements.size) return;
   const storage = getLatestCounts("Storage");
   const storefront = getLatestCounts("Storefront");
-  elements.productionSourceList.innerHTML = [...requirements.entries()].map(([key, requirement]) => `
-    <div class="production-source-row" data-production-source-row="${escapeHtml(key)}">
-      <div>
-        <strong>${escapeHtml(requirement.ingredient)}</strong>
-        <span>${formatNumber(requirement.needed)} needed</span>
+  const allocationRows = fulfillmentLines.length ? `
+    <section class="production-source-section">
+      <div class="production-source-heading">
+        <strong>Existing Finished Stock</strong>
+        <span>${formatNumber(fulfillmentLines.reduce((sum, line) => sum + Number(line.existingQuantity || 0), 0))} units reserved</span>
       </div>
-      <label>
-        Take From
-        <select data-production-source-select>
-          <option value="Storage" ${requirement.sourceLocation === "Storage" ? "selected" : ""}>Storage / ${formatNumber(storage.get(key) || 0)} available</option>
-          <option value="Storefront" ${requirement.sourceLocation === "Storefront" ? "selected" : ""}>Storefront / ${formatNumber(storefront.get(key) || 0)} available</option>
-        </select>
-      </label>
-    </div>
-  `).join("");
-  pendingProductionQueue = { payload, successMessage };
-  elements.productionSourceStatus.textContent = "";
-  elements.productionSourceDialog.showModal();
+      ${fulfillmentLines.map(line => `
+        <div class="production-allocation-row" data-stock-allocation-row="${escapeHtml(normalize(line.name))}">
+          <div>
+            <strong>${escapeHtml(line.label || line.name)}</strong>
+            <span>${formatNumber(line.orderedQuantity)} ordered / ${formatNumber(line.productionQuantity)} to produce</span>
+          </div>
+          <div class="production-allocation-controls">
+            <label>
+              Storage / ${formatNumber(line.storageAvailable)}
+              <input data-stock-allocation-location="storage" type="number" min="0" max="${Number(line.storageAvailable || 0)}" step="1" value="${Number(line.storageQuantity || 0)}">
+            </label>
+            <label>
+              Storefront / ${formatNumber(line.storefrontAvailable)}
+              <input data-stock-allocation-location="storefront" type="number" min="0" max="${Number(line.storefrontAvailable || 0)}" step="1" value="${Number(line.storefrontQuantity || 0)}">
+            </label>
+          </div>
+        </div>
+      `).join("")}
+    </section>
+  ` : "";
+  const materialRows = requirements.size ? `
+    <section class="production-source-section">
+      <div class="production-source-heading">
+        <strong>Production Materials</strong>
+        <span>${requirements.size} ${requirements.size === 1 ? "material" : "materials"}</span>
+      </div>
+      ${[...requirements.entries()].map(([key, requirement]) => `
+        <div class="production-source-row" data-production-source-row="${escapeHtml(key)}">
+          <div>
+            <strong>${escapeHtml(requirement.ingredient)}</strong>
+            <span>${formatNumber(requirement.needed)} needed</span>
+          </div>
+          <label>
+            Take From
+            <select data-production-source-select>
+              <option value="Storage" ${requirement.sourceLocation === "Storage" ? "selected" : ""}>Storage / ${formatNumber(storage.get(key) || 0)} available</option>
+              <option value="Storefront" ${requirement.sourceLocation === "Storefront" ? "selected" : ""}>Storefront / ${formatNumber(storefront.get(key) || 0)} available</option>
+            </select>
+          </label>
+        </div>
+      `).join("")}
+    </section>
+  ` : `<div class="empty-card">Existing stock covers the complete order</div>`;
+  elements.productionSourceList.innerHTML = `${allocationRows}${materialRows}`;
+  elements.productionSourceList.querySelectorAll("[data-stock-allocation-location]").forEach(input => {
+    input.addEventListener("change", updatePendingProductionAllocation);
+  });
+  const missing = fulfillmentLines.filter(line => line.productionQuantity > 0 && !recipeCatalog[line.name]);
+  elements.confirmProductionSource.disabled = missing.length > 0;
+  elements.productionSourceStatus.textContent = missing.length
+    ? `No recipe is attached to ${missing.map(line => line.label || line.name).join(", ")}`
+    : "";
+}
+
+function updatePendingProductionAllocation() {
+  if (!pendingProductionQueue) return;
+  const rows = new Map([...elements.productionSourceList.querySelectorAll("[data-stock-allocation-row]")]
+    .map(row => [row.dataset.stockAllocationRow, row]));
+  pendingProductionQueue.fulfillmentLines = pendingProductionQueue.fulfillmentLines.map(line => {
+    const row = rows.get(normalize(line.name));
+    if (!row) return line;
+    const storageInput = row.querySelector('[data-stock-allocation-location="storage"]');
+    const storefrontInput = row.querySelector('[data-stock-allocation-location="storefront"]');
+    const orderedQuantity = Number(line.orderedQuantity || 0);
+    const storageQuantity = Math.min(
+      orderedQuantity,
+      Number(line.storageAvailable || 0),
+      Math.max(0, Math.floor(Number(storageInput?.value || 0)))
+    );
+    const storefrontQuantity = Math.min(
+      Math.max(0, orderedQuantity - storageQuantity),
+      Number(line.storefrontAvailable || 0),
+      Math.max(0, Math.floor(Number(storefrontInput?.value || 0)))
+    );
+    return {
+      ...line,
+      storageQuantity,
+      storefrontQuantity,
+      existingQuantity: storageQuantity + storefrontQuantity,
+      productionQuantity: Math.max(0, orderedQuantity - storageQuantity - storefrontQuantity)
+    };
+  });
+  pendingProductionQueue.payload.stockAllocations = pendingProductionQueue.fulfillmentLines
+    .filter(line => line.existingQuantity > 0)
+    .map(line => ({
+      itemName: line.name,
+      itemLabel: line.label || line.name,
+      storageQuantity: line.storageQuantity,
+      storefrontQuantity: line.storefrontQuantity
+    }));
+  pendingProductionQueue.payload.lines = pendingProductionQueue.fulfillmentLines
+    .filter(line => line.productionQuantity > 0 && recipeCatalog[line.name])
+    .map(line => ({ itemName: line.name, requestedQuantity: line.productionQuantity }));
+  renderProductionSourceDialog();
 }
 
 function closeProductionSourceDialog() {
@@ -4519,7 +4625,7 @@ async function confirmProductionSourceSelection() {
   });
   const { payload, successMessage } = pendingProductionQueue;
   payload.lines = payload.lines.map(line => ({ ...line, ingredientSources }));
-  elements.productionSourceStatus.textContent = "Queuing production...";
+  elements.productionSourceStatus.textContent = "Queuing fulfillment...";
   await createProductionBatch(payload, successMessage);
   if (activeSection === "production") closeProductionSourceDialog();
 }
@@ -4539,6 +4645,7 @@ async function createProductionBatch(payload, successMessage) {
     productionBatches = Array.isArray(result.batches) ? result.batches : [];
     applySalesOrdersFromResult(result);
     activeProductionBatchId = result.batch.id;
+    if (result.batch.status === "Completed" && !result.batch.lines.length) elements.productionFilter.value = "All";
     activeSection = "production";
     elements.productionActionStatus.textContent = successMessage;
     render();
@@ -4601,12 +4708,14 @@ function renderProductionQueue() {
     ? visible.map(batch => {
       const planned = batch.lines.reduce((sum, line) => sum + Number(line.plannedCrafts || 0), 0);
       const completed = batch.lines.reduce((sum, line) => sum + Number(line.completedCrafts || 0), 0);
+      const reservedStock = (batch.stockAllocations || []).reduce((sum, allocation) =>
+        sum + Number(allocation.storageQuantity || 0) + Number(allocation.storefrontQuantity || 0), 0);
       const materialPlan = readinessPlans.get(batch.id) || getProductionBatchMaterialPlan(batch);
       return `
         <button class="production-batch-row ${batch.id === activeProductionBatchId ? "active" : ""}" type="button" data-production-batch="${escapeHtml(batch.id)}">
           <span class="status-pill ${statusClass(batch.status)}">${escapeHtml(batch.status)}</span>
           <strong>${escapeHtml(batch.reference || batch.sourceType)}</strong>
-          <span>${escapeHtml(batch.sourceType)} / ${formatNumber(completed)} of ${formatNumber(planned)} production cycles</span>
+          <span>${escapeHtml(batch.sourceType)} / ${formatNumber(reservedStock)} existing units / ${formatNumber(completed)} of ${formatNumber(planned)} production cycles</span>
           <small>${batch.assignedTo ? `Assigned to ${escapeHtml(batch.assignedTo)} / ` : "Unassigned / "}${batch.dueDate ? formatDelivery(batch.dueDate) : "No due date"}${materialPlan.shortageCount ? ` / ${formatNumber(materialPlan.shortageCount)} material shorts` : " / Materials ready"}</small>
         </button>
       `;
@@ -4645,14 +4754,25 @@ function renderProductionDetail(batch) {
   const pendingTargets = new Map((batch.pendingProgress?.targets || []).map(target => [target.lineId, target.completedCrafts]));
   elements.productionDetailSource.textContent = batch.sourceType;
   elements.productionDetailTitle.textContent = batch.reference || "Production batch";
-  elements.productionDetailMeta.textContent = `${batch.lines.length} ${batch.lines.length === 1 ? "line" : "lines"} / ${batch.priority}${batch.notes ? ` / ${batch.notes}` : ""}`;
+  const reservedStock = (batch.stockAllocations || []).reduce((sum, allocation) =>
+    sum + Number(allocation.storageQuantity || 0) + Number(allocation.storefrontQuantity || 0), 0);
+  elements.productionDetailMeta.textContent = `${batch.lines.length} production ${batch.lines.length === 1 ? "line" : "lines"} / ${formatNumber(reservedStock)} existing units / ${batch.priority}${batch.notes ? ` / ${batch.notes}` : ""}`;
   elements.productionDetailStatus.textContent = batch.status;
   elements.productionDetailStatus.className = `status-pill ${statusClass(batch.status)}`;
   elements.productionDetailDue.textContent = batch.dueDate ? formatDelivery(batch.dueDate) : "No due date";
   elements.productionDetailAssigned.textContent = batch.assignedTo || "Unassigned";
   elements.productionDetailCreatedBy.textContent = batch.createdBy || "Unknown";
   elements.productionDetailUpdated.textContent = formatDateTime(batch.updatedAt);
-  elements.productionProgressLines.innerHTML = batch.lines.map(line => {
+  const allocationMarkup = (batch.stockAllocations || []).map(allocation => `
+    <div class="production-progress-row production-stock-allocation">
+      <div>
+        <strong>${escapeHtml(allocation.itemLabel || allocation.itemName)}</strong>
+        <span>${formatNumber(Number(allocation.storageQuantity || 0) + Number(allocation.storefrontQuantity || 0))} existing units reserved${allocation.storageQuantity ? ` / ${formatNumber(allocation.storageQuantity)} storage` : ""}${allocation.storefrontQuantity ? ` / ${formatNumber(allocation.storefrontQuantity)} storefront` : ""}</span>
+      </div>
+      <span class="status-pill ready">Reserved</span>
+    </div>
+  `).join("");
+  const productionMarkup = batch.lines.map(line => {
     const completedCrafts = Number(line.completedCrafts || 0);
     const plannedCrafts = Number(line.plannedCrafts || 0);
     const inputValue = pendingTargets.get(line.id) ?? completedCrafts;
@@ -4669,6 +4789,9 @@ function renderProductionDetail(batch) {
       </div>
     `;
   }).join("");
+  elements.productionProgressLines.innerHTML = allocationMarkup || productionMarkup
+    ? `${allocationMarkup}${productionMarkup}`
+    : `<div class="empty-card">No fulfillment lines selected</div>`;
 
   const materialPlan = getProductionBatchMaterialPlan(batch);
   elements.productionMaterialStatus.innerHTML = materialPlan.materials.length
@@ -5072,6 +5195,23 @@ function productionBatchForOrder(orderId) {
   return productionBatches.find(batch => batch.sourceType === "Customer Order"
     && batch.sourceId === orderId
     && batch.status !== "Cancelled") || null;
+}
+
+function getFinishedStockReservations(excludeOrderId = "") {
+  const reservations = { Storage: new Map(), Storefront: new Map() };
+  const ordersById = new Map(orders.map(order => [order.id, order]));
+  productionBatches.forEach(batch => {
+    if (batch.sourceType !== "Customer Order" || batch.status === "Cancelled" || batch.sourceId === excludeOrderId) return;
+    const order = ordersById.get(batch.sourceId);
+    if (!order || statusesHiddenFromActive.has(order.status)) return;
+    (batch.stockAllocations || []).forEach(allocation => {
+      const key = normalize(allocation.itemName || allocation.itemLabel);
+      [["Storage", allocation.storageQuantity], ["Storefront", allocation.storefrontQuantity]].forEach(([location, quantity]) => {
+        reservations[location].set(key, Number(reservations[location].get(key) || 0) + Number(quantity || 0));
+      });
+    });
+  });
+  return reservations;
 }
 
 function applySalesOrdersFromResult(result) {
@@ -5824,22 +5964,91 @@ function stockKey(entry) {
   return normalize(entry.itemName || entry.itemLabel || entry.ingredient || entry.name);
 }
 
-function getProductionPlan(order) {
+function getProductionPlan(order, allocationOverrides = null) {
   const materialTotals = new Map();
   const buildMap = new Map();
   const missing = [];
+  const orderLines = new Map();
 
   order.lines.forEach(line => {
     if (line.custom) return;
-    const recipe = recipeCatalog[line.name];
-    if (!recipe) {
-      missing.push(line.label || line.name);
-      return;
-    }
-
+    const key = normalize(line.name || line.label || line.tag);
+    if (!key) return;
     const quantity = Number(line.quantity || 0);
-    buildMap.set(line.name, (buildMap.get(line.name) || 0) + quantity);
+    const current = orderLines.get(key) || {
+      key,
+      name: line.name || line.label,
+      label: line.label || line.name,
+      orderedQuantity: 0
+    };
+    current.orderedQuantity += quantity;
+    orderLines.set(key, current);
   });
+
+  const linkedBatch = productionBatchForOrder(order.id);
+  const linkedAllocations = new Map((linkedBatch?.stockAllocations || []).map(allocation => [
+    normalize(allocation.itemName || allocation.itemLabel),
+    allocation
+  ]));
+  const linkedProduction = new Map((linkedBatch?.lines || []).map(line => [
+    normalize(line.itemName || line.itemLabel),
+    Number(line.requestedQuantity || 0)
+  ]));
+  const reservations = getFinishedStockReservations(order.id);
+  const storageCounts = getLatestCounts("Storage");
+  const storefrontCounts = getLatestCounts("Storefront");
+  const fulfillmentLines = [...orderLines.values()].map(line => {
+    const storageAvailable = Math.max(0,
+      Number(storageCounts.get(line.key) || 0) - Number(reservations.Storage.get(line.key) || 0)
+    );
+    const storefrontAvailable = Math.max(0,
+      Number(storefrontCounts.get(line.key) || 0) - Number(reservations.Storefront.get(line.key) || 0)
+    );
+    const override = allocationOverrides instanceof Map
+      ? allocationOverrides.get(line.key)
+      : allocationOverrides?.[line.key];
+    const saved = linkedAllocations.get(line.key);
+    let storageQuantity;
+    let storefrontQuantity;
+    if (saved) {
+      storageQuantity = Math.max(0, Number(saved.storageQuantity || 0));
+      storefrontQuantity = Math.max(0, Number(saved.storefrontQuantity || 0));
+    } else if (override) {
+      const selected = override;
+      storageQuantity = Math.min(line.orderedQuantity, storageAvailable, Math.max(0, Number(selected.storageQuantity || 0)));
+      storefrontQuantity = Math.min(
+        Math.max(0, line.orderedQuantity - storageQuantity),
+        storefrontAvailable,
+        Math.max(0, Number(selected.storefrontQuantity || 0))
+      );
+    } else if (linkedBatch) {
+      storageQuantity = 0;
+      storefrontQuantity = 0;
+    } else {
+      storageQuantity = Math.min(line.orderedQuantity, storageAvailable);
+      storefrontQuantity = Math.min(
+        Math.max(0, line.orderedQuantity - storageQuantity),
+        storefrontAvailable
+      );
+    }
+    const existingQuantity = storageQuantity + storefrontQuantity;
+    const productionQuantity = linkedBatch
+      ? Number(linkedProduction.get(line.key) || 0)
+      : Math.max(0, line.orderedQuantity - existingQuantity);
+    if (productionQuantity > 0) {
+      if (recipeCatalog[line.name]) buildMap.set(line.name, productionQuantity);
+      else missing.push(line.label || line.name);
+    }
+    return {
+      ...line,
+      storageAvailable,
+      storefrontAvailable,
+      storageQuantity,
+      storefrontQuantity,
+      existingQuantity,
+      productionQuantity
+    };
+  }).sort((a, b) => a.label.localeCompare(b.label));
 
   buildMap.forEach((quantity, name) => {
     const batches = recipeBatchCount(name, quantity);
@@ -5849,6 +6058,13 @@ function getProductionPlan(order) {
   });
 
   return {
+    fulfillmentLines,
+    stockAllocations: fulfillmentLines.filter(line => line.existingQuantity > 0).map(line => ({
+      itemName: line.name,
+      itemLabel: line.label || line.name,
+      storageQuantity: line.storageQuantity,
+      storefrontQuantity: line.storefrontQuantity
+    })),
     buildLines: [...buildMap.entries()]
       .map(([name, quantity]) => {
         const yieldQuantity = recipeYield(name);

@@ -185,6 +185,15 @@ const mockReceiver = http.createServer(async (request, response) => {
       const product = inventoryProducts.find(candidate => mockInventoryKey(candidate.itemName || candidate.itemLabel) === key);
       if (product) product.currentStock = Number(product.currentStock || 0) - Number(entry.quantity || 0);
     }
+    if (entry.kind === "Correction Out" && entry.location === "Storage") {
+      const key = mockInventoryKey(entry.itemName || entry.itemLabel);
+      storageCounts.set(key, Number(storageCounts.get(key) || 0) - Number(entry.quantity || 0));
+    }
+    if (entry.kind === "Correction Out" && entry.location === "Storefront") {
+      const key = mockInventoryKey(entry.itemName || entry.itemLabel);
+      const product = inventoryProducts.find(candidate => mockInventoryKey(candidate.itemName || candidate.itemLabel) === key);
+      if (product) product.currentStock = Number(product.currentStock || 0) - Number(entry.quantity || 0);
+    }
     if ((entry.kind === "Correction In" || entry.kind === "Production Output") && entry.location === "Storage") {
       const key = mockInventoryKey(entry.itemName || entry.itemLabel);
       storageCounts.set(key, Number(storageCounts.get(key) || 0) + Number(entry.quantity || 0));
@@ -1110,12 +1119,86 @@ async function run() {
   assert.equal(reopenReadyProductionOrder.response.status, 409);
   assert.equal(reopenReadyProductionOrder.body.code, "sales_order_ready_locked");
 
+  const writesBeforeDelivery = receiverPayloads.length;
   const deliveredProductionOrder = await post(`${baseUrl}/api/sales-orders`, {
     ...completedProduction.body.order,
     status: "Completed"
   }, workerCookie);
   assert.equal(deliveredProductionOrder.response.status, 200);
   assert.equal(deliveredProductionOrder.body.order.status, "Completed");
+  assert.equal(deliveredProductionOrder.body.fulfillmentSynced, true);
+  const deliveryWrites = receiverPayloads.slice(writesBeforeDelivery).filter(payload => payload.action === "manual_operation");
+  assert(deliveryWrites.some(payload => payload.entry.kind === "Correction Out"
+    && payload.entry.location === "Storage"
+    && payload.entry.itemName === "Navy Revolver"
+    && payload.entry.quantity === 2));
+  assert.equal(storageCounts.get("navy revolver"), 0);
+  storageCounts.set("navy revolver", 2);
+
+  const mixedFulfillmentOrder = await post(`${baseUrl}/api/sales-orders`, {
+    id: "sales-order-stock-mix",
+    customer: "Sadie Adler",
+    handler: "Grace Worker",
+    status: "Reserved",
+    priority: "Normal",
+    lines: [{ name: "Navy Revolver", label: "Navy Revolver", category: "Revolvers", quantity: 5, unitPrice: 105 }]
+  }, workerCookie);
+  assert.equal(mixedFulfillmentOrder.response.status, 200);
+  const mixedFulfillment = await post(`${baseUrl}/api/production-batches`, {
+    id: "production-stock-mix",
+    sourceType: "Customer Order",
+    sourceId: "sales-order-stock-mix",
+    reference: "Use two finished revolvers",
+    lines: [{ itemName: "Navy Revolver", quantity: 3 }],
+    stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 2, storefrontQuantity: 0 }]
+  }, workerCookie);
+  assert.equal(mixedFulfillment.response.status, 200);
+  assert.equal(mixedFulfillment.body.batch.lines[0].requestedQuantity, 3);
+  assert.equal(mixedFulfillment.body.batch.stockAllocations[0].storageQuantity, 2);
+  assert.equal(mixedFulfillment.body.order.status, "In Production");
+
+  const competingOrder = await post(`${baseUrl}/api/sales-orders`, {
+    id: "sales-order-stock-competing",
+    customer: "Charles Smith",
+    handler: "Grace Worker",
+    status: "Reserved",
+    priority: "Normal",
+    lines: [{ name: "Navy Revolver", label: "Navy Revolver", category: "Revolvers", quantity: 1, unitPrice: 105 }]
+  }, workerCookie);
+  assert.equal(competingOrder.response.status, 200);
+  const competingAllocation = await post(`${baseUrl}/api/production-batches`, {
+    id: "production-stock-competing",
+    sourceType: "Customer Order",
+    sourceId: "sales-order-stock-competing",
+    stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 1, storefrontQuantity: 0 }]
+  }, workerCookie);
+  assert.equal(competingAllocation.response.status, 409);
+  assert.equal(competingAllocation.body.code, "production_stock_allocation_shortage");
+
+  const cancelledMixedFulfillment = await post(`${baseUrl}/api/production-batches/production-stock-mix/cancel`, {}, managerCookie);
+  assert.equal(cancelledMixedFulfillment.response.status, 200);
+  assert.equal(
+    cancelledMixedFulfillment.body.orders.find(order => order.id === "sales-order-stock-mix").status,
+    "Reserved"
+  );
+  const stockOnlyFulfillment = await post(`${baseUrl}/api/production-batches`, {
+    id: "production-stock-only",
+    sourceType: "Customer Order",
+    sourceId: "sales-order-stock-competing",
+    reference: "Ready from existing stock",
+    stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 1, storefrontQuantity: 0 }]
+  }, workerCookie);
+  assert.equal(stockOnlyFulfillment.response.status, 200);
+  assert.equal(stockOnlyFulfillment.body.batch.lines.length, 0);
+  assert.equal(stockOnlyFulfillment.body.batch.status, "Completed");
+  assert.equal(stockOnlyFulfillment.body.order.status, "Ready");
+  const deliveredStockOnly = await post(`${baseUrl}/api/sales-orders`, {
+    ...stockOnlyFulfillment.body.order,
+    status: "Completed"
+  }, workerCookie);
+  assert.equal(deliveredStockOnly.response.status, 200);
+  assert.equal(deliveredStockOnly.body.fulfillmentSynced, true);
+  assert.equal(storageCounts.get("navy revolver"), 1);
 
   const restockProduction = await post(`${baseUrl}/api/production-batches`, {
     id: "production-restock-one",
@@ -1140,7 +1223,7 @@ async function run() {
     false,
     "restock output must wait for the storefront webhook instead of creating finished stock twice"
   );
-  assert.equal(storageCounts.get("navy revolver"), 2);
+  assert.equal(storageCounts.get("navy revolver"), 1);
   inventoryProducts.push({
     itemName: "Bolts",
     itemLabel: "Bolts",

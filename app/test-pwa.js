@@ -7,7 +7,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.webmanifes
 const serviceWorker = fs.readFileSync(path.join(root, "service-worker.js"), "utf8");
 const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const setupScript = fs.readFileSync(path.join(root, "setup.js"), "utf8");
-const appHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
+const appHtml = fs.readFileSync(path.join(root, "index.html"), "utf8").replace(/\r\n/g, "\n");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
 assert.equal(manifest.name, "Business Operations Ledger");
@@ -45,6 +45,7 @@ assert(appHtml.includes('<option value="both">Product and material</option>'), "
 assert(appHtml.includes('data-section="catalog"'), "managers must have a catalog management tab");
 assert(appHtml.includes('id="recipeEditorForm"'), "catalog management must expose a recipe editor");
 assert(appHtml.includes('id="productionSourceDialog"'), "production queues must confirm ingredient source locations");
+assert(appHtml.includes('id="confirmProductionSourceButton"'), "customer fulfillment must confirm existing-stock allocations");
 assert(appHtml.includes('id="storefrontOverviewValue"'), "the Store overview must show storefront value");
 assert(appHtml.includes('id="storageOverviewValue"'), "the Store overview must show storage value");
 assert(appHtml.includes('<div class="management-only">\n              <span>Storefront Value</span>'), "storefront value must remain management-only");

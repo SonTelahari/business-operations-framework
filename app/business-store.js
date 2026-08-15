@@ -345,7 +345,7 @@ class BusinessStore {
         throw businessError("The customer order is unavailable or already closed", 409, "customer_order_unavailable");
       }
       this.data.productionBatches.unshift(batch);
-      transitionSalesOrder(sourceOrder, "In Production", actor, now);
+      transitionSalesOrder(sourceOrder, batch.status === "Completed" ? "Ready" : "In Production", actor, now);
       return structuredClone(batch);
     });
   }
@@ -829,14 +829,23 @@ function cleanProductionBatch(input, actor, { id, now }) {
     : "Manual";
   const lines = (Array.isArray(input.lines) ? input.lines : []).slice(0, 50)
     .map(cleanProductionLine);
-  if (!lines.length) throw businessError("Add at least one producible item to the production batch", 400, "production_lines_required");
+  const stockAllocations = (Array.isArray(input.stockAllocations) ? input.stockAllocations : []).slice(0, 50)
+    .map(cleanProductionStockAllocation);
+  if (!lines.length && !stockAllocations.length) {
+    throw businessError("Add production work or reserve existing stock for this order", 400, "production_fulfillment_required");
+  }
   const lineKeys = lines.map(line => normalizeKey(line.itemName));
   if (new Set(lineKeys).size !== lineKeys.length) {
     throw businessError("Each product can only appear once in a production batch", 400, "duplicate_production_line");
   }
+  const allocationKeys = stockAllocations.map(allocation => normalizeKey(allocation.itemName));
+  if (new Set(allocationKeys).size !== allocationKeys.length) {
+    throw businessError("Each product can only have one existing-stock allocation", 400, "duplicate_stock_allocation");
+  }
+  const stockOnly = !lines.length && stockAllocations.length > 0;
   return {
     id,
-    status: "Planned",
+    status: stockOnly ? "Completed" : "Planned",
     sourceType,
     sourceId: cleanText(input.sourceId, 100),
     reference: cleanText(input.reference, 150),
@@ -845,11 +854,12 @@ function cleanProductionBatch(input, actor, { id, now }) {
     assignedTo: cleanText(input.assignedTo, 100),
     notes: cleanText(input.notes, 1500),
     lines,
+    stockAllocations,
     pendingProgress: null,
     startedAt: "",
     startedBy: "",
-    completedAt: "",
-    completedBy: "",
+    completedAt: stockOnly ? now : "",
+    completedBy: stockOnly ? cleanText(actor?.fullName, 100) : "",
     createdAt: now,
     createdBy: cleanText(actor?.fullName, 100),
     updatedAt: now,
@@ -883,6 +893,22 @@ function cleanProductionLine(line) {
   };
 }
 
+function cleanProductionStockAllocation(allocation) {
+  const itemName = cleanText(allocation?.itemName || allocation?.name || allocation?.itemLabel, 100);
+  if (!itemName) throw businessError("Every stock allocation needs an item", 400, "invalid_stock_allocation");
+  const storageQuantity = Math.max(0, finiteNumber(allocation.storageQuantity, 0));
+  const storefrontQuantity = Math.max(0, finiteNumber(allocation.storefrontQuantity, 0));
+  if (storageQuantity + storefrontQuantity <= 0) {
+    throw businessError(`Reserve at least one existing ${itemName}`, 400, "empty_stock_allocation");
+  }
+  return {
+    itemName,
+    itemLabel: cleanText(allocation.itemLabel || allocation.label || itemName, 100),
+    storageQuantity,
+    storefrontQuantity
+  };
+}
+
 function transitionSalesOrder(order, status, actor, now) {
   if (!order || order.status === "Completed" || order.status === "Cancelled" || order.status === status) return;
   order.status = status;
@@ -907,6 +933,9 @@ function cleanStoredProductionBatch(batch) {
     return cleaned;
   });
   const status = PRODUCTION_BATCH_STATUSES.has(batch.status) ? batch.status : "Planned";
+  const stockAllocations = (Array.isArray(batch.stockAllocations) ? batch.stockAllocations : [])
+    .slice(0, 50)
+    .map(cleanProductionStockAllocation);
   return {
     ...batch,
     id: cleanText(batch.id, 100) || crypto.randomUUID(),
@@ -921,6 +950,7 @@ function cleanStoredProductionBatch(batch) {
     assignedTo: cleanText(batch.assignedTo, 100),
     notes: cleanText(batch.notes, 1500),
     lines,
+    stockAllocations,
     pendingProgress: batch.pendingProgress ? cleanPendingProductionProgress(batch.pendingProgress, { lines }) : null
   };
 }
