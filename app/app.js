@@ -57,6 +57,7 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "account.rejected": "Access request rejected",
   "account.role_changed": "Staff role changed",
   "account.discord_linked": "Discord account linked",
+  "account.job_linked": "Business job linked",
   "membership.requested": "Discord access requested",
   "membership.approve": "Discord membership approved",
   "membership.disable": "Discord membership disabled",
@@ -65,6 +66,7 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "membership.demote": "Discord membership demoted",
   "auth.login": "Signed in",
   "auth.discord_login": "Signed in with Discord",
+  "auth.workspace_switched": "Switched business",
   "auth.logout": "Signed out",
   "clock.in": "Clocked in",
   "clock.out": "Clocked out",
@@ -128,6 +130,7 @@ let productionBatches = [];
 let dailyCloses = [];
 let currentUser = null;
 let currentWorkspace = null;
+let workspaceProfile = { accountType: "local", currentBusinessId: "", jobs: [] };
 let currentRole = "employee";
 let employeeUsers = [];
 let auditEvents = [];
@@ -167,6 +170,20 @@ const elements = {
   currentUserName: document.querySelector("#currentUserName"),
   currentUserRole: document.querySelector("#currentUserRole"),
   currentWorkspaceCode: document.querySelector("#currentWorkspaceCode"),
+  workspaceSwitcher: document.querySelector("#workspaceSwitcherButton"),
+  workspaceCount: document.querySelector("#workspaceCount"),
+  workspaceDialog: document.querySelector("#workspaceDialog"),
+  workspaceDialogForm: document.querySelector("#workspaceDialogForm"),
+  workspaceJobList: document.querySelector("#workspaceJobList"),
+  workspaceDialogStatus: document.querySelector("#workspaceDialogStatus"),
+  closeWorkspaceDialog: document.querySelector("#closeWorkspaceDialogButton"),
+  doneWorkspaceDialog: document.querySelector("#doneWorkspaceDialogButton"),
+  localWorkspaceLinkSection: document.querySelector("#localWorkspaceLinkSection"),
+  discordWorkspaceLinkSection: document.querySelector("#discordWorkspaceLinkSection"),
+  linkJobWorkspace: document.querySelector("#linkJobWorkspaceInput"),
+  linkJobName: document.querySelector("#linkJobNameInput"),
+  linkJobPassword: document.querySelector("#linkJobPasswordInput"),
+  linkJob: document.querySelector("#linkJobButton"),
   profileButton: document.querySelector("#profileButton"),
   logout: document.querySelector("#logoutButton"),
   customer: document.querySelector("#customerInput"),
@@ -1132,6 +1149,14 @@ function wireEvents() {
   elements.deleteRecipe.addEventListener("click", deleteActiveRecipe);
   elements.closeProductionSource.addEventListener("click", closeProductionSourceDialog);
   elements.cancelProductionSource.addEventListener("click", closeProductionSourceDialog);
+  elements.workspaceSwitcher.addEventListener("click", openWorkspaceDialog);
+  elements.closeWorkspaceDialog.addEventListener("click", closeWorkspaceDialog);
+  elements.doneWorkspaceDialog.addEventListener("click", closeWorkspaceDialog);
+  elements.workspaceDialogForm.addEventListener("submit", linkWorkspaceJob);
+  elements.workspaceJobList.addEventListener("click", switchWorkspace);
+  elements.linkJobWorkspace.addEventListener("input", () => {
+    elements.linkJobWorkspace.value = formatWorkspaceCode(elements.linkJobWorkspace.value);
+  });
   elements.productionSourceForm.addEventListener("submit", event => {
     event.preventDefault();
     confirmProductionSourceSelection();
@@ -3791,6 +3816,7 @@ function renderRole() {
   elements.currentUserName.textContent = currentUser?.fullName || "Loading account";
   elements.currentUserRole.textContent = ({ admin: "Admin", manager: "Manager", employee: "Employee" })[currentRole] || "Employee";
   elements.profileButton?.classList.toggle("hidden", currentUser?.accountType !== "discord");
+  renderWorkspaceSwitcher();
   if (elements.currentWorkspaceCode) {
     elements.currentWorkspaceCode.textContent = currentWorkspace?.code ? `Workspace ${currentWorkspace.code}` : "";
     elements.currentWorkspaceCode.classList.toggle("hidden", !currentWorkspace?.code);
@@ -5311,6 +5337,19 @@ async function loadSessionAndData() {
     if (!response.ok || !result.user) throw new Error("Authentication required");
     currentUser = result.user;
     currentWorkspace = result.workspace || null;
+    workspaceProfile = result.jobProfile || {
+      accountType: currentUser.accountType || "local",
+      currentBusinessId: currentWorkspace?.id || "",
+      jobs: currentWorkspace ? [{
+        businessId: currentWorkspace.id,
+        workspaceCode: currentWorkspace.code,
+        businessName: currentWorkspace.name,
+        fullName: currentUser.fullName,
+        role: currentUser.role,
+        status: "active",
+        current: true
+      }] : []
+    };
     currentRole = currentUser.role;
     timeClock = loadTimeClock(timeClockStorageKey());
     migrateLegacyTimeClock();
@@ -5363,6 +5402,143 @@ async function logout() {
   } finally {
     window.location.replace("/login.html");
   }
+}
+
+function renderWorkspaceSwitcher() {
+  if (!elements.workspaceSwitcher) return;
+  const jobs = Array.isArray(workspaceProfile?.jobs) ? workspaceProfile.jobs : [];
+  const activeCount = jobs.filter(job => job.status === "active").length;
+  elements.workspaceSwitcher.classList.toggle("hidden", !currentWorkspace);
+  elements.workspaceCount.textContent = String(Math.max(1, activeCount));
+  elements.workspaceSwitcher.title = activeCount > 1
+    ? `Switch between ${activeCount} active businesses`
+    : "Link or open another business";
+}
+
+function openWorkspaceDialog() {
+  renderWorkspaceJobs();
+  setWorkspaceDialogStatus("");
+  elements.workspaceDialog.showModal();
+}
+
+function closeWorkspaceDialog() {
+  if (elements.workspaceDialog.open) elements.workspaceDialog.close();
+}
+
+function renderWorkspaceJobs() {
+  const jobs = [...(workspaceProfile?.jobs || [])].sort((left, right) =>
+    Number(Boolean(right.current)) - Number(Boolean(left.current))
+    || workspaceJobStatusRank(left.status) - workspaceJobStatusRank(right.status)
+    || String(left.businessName || "").localeCompare(String(right.businessName || ""))
+  );
+  elements.workspaceJobList.innerHTML = jobs.length ? jobs.map(job => {
+    const active = job.status === "active";
+    const current = Boolean(job.current) || job.businessId === currentWorkspace?.id;
+    return `
+      <div class="workspace-job-row ${current ? "current" : ""}">
+        <div>
+          <strong>${escapeHtml(job.businessName || "Business")}</strong>
+          <span>${escapeHtml(job.fullName || currentUser?.fullName || "")} / ${escapeHtml(workspaceRoleLabel(job.role))}</span>
+          <small>${escapeHtml(job.workspaceCode || "")} / ${escapeHtml(workspaceJobStatusLabel(job.status))}</small>
+        </div>
+        ${current
+          ? '<span class="workspace-current-mark">Current</span>'
+          : active
+            ? `<button class="ghost-button" type="button" data-workspace-business-id="${escapeHtml(job.businessId)}" data-workspace-membership-id="${escapeHtml(job.membershipId || job.id || "")}">Open</button>`
+            : `<span class="workspace-job-state">${escapeHtml(workspaceJobStatusLabel(job.status))}</span>`}
+      </div>
+    `;
+  }).join("") : '<div class="empty-card">No business jobs are connected yet</div>';
+
+  const discord = workspaceProfile?.accountType === "discord";
+  elements.localWorkspaceLinkSection.classList.toggle("hidden", discord);
+  elements.discordWorkspaceLinkSection.classList.toggle("hidden", !discord);
+}
+
+async function switchWorkspace(event) {
+  const button = event.target.closest("[data-workspace-business-id]");
+  if (!button) return;
+  elements.workspaceJobList.querySelectorAll("button").forEach(control => { control.disabled = true; });
+  setWorkspaceDialogStatus("Opening business...");
+  const result = await workspaceRequest("/api/workspaces/select", {
+    businessId: button.dataset.workspaceBusinessId,
+    membershipId: button.dataset.workspaceMembershipId
+  });
+  if (!result.ok) {
+    renderWorkspaceJobs();
+    setWorkspaceDialogStatus(result.error || "Business could not be opened", "error");
+    return;
+  }
+  if (result.workspace?.code) localStorage.setItem("business_ledger_workspace_code", result.workspace.code);
+  window.location.replace("/");
+}
+
+async function linkWorkspaceJob(event) {
+  event.preventDefault();
+  if (workspaceProfile?.accountType === "discord") return;
+  const workspaceCode = formatWorkspaceCode(elements.linkJobWorkspace.value);
+  const fullName = elements.linkJobName.value.trim();
+  const password = elements.linkJobPassword.value;
+  if (!workspaceCode || !fullName || !password) {
+    setWorkspaceDialogStatus("Enter the workspace code, character name, and password", "error");
+    return;
+  }
+  setWorkspaceLinkBusy(true);
+  setWorkspaceDialogStatus("Verifying approved job...");
+  const result = await workspaceRequest("/api/workspaces/link", { workspaceCode, fullName, password });
+  setWorkspaceLinkBusy(false);
+  if (!result.ok) {
+    setWorkspaceDialogStatus(result.error || "Job could not be linked", "error");
+    return;
+  }
+  workspaceProfile = result.profile || workspaceProfile;
+  elements.linkJobWorkspace.value = "";
+  elements.linkJobName.value = "";
+  elements.linkJobPassword.value = "";
+  renderWorkspaceSwitcher();
+  renderWorkspaceJobs();
+  setWorkspaceDialogStatus(`${result.job?.businessName || "Business"} linked to your profile`, "success");
+}
+
+async function workspaceRequest(url, body) {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const result = await response.json();
+    return { ...result, ok: response.ok && result.ok !== false };
+  } catch {
+    return { ok: false, error: "The workspace service could not be reached" };
+  }
+}
+
+function setWorkspaceLinkBusy(busy) {
+  [elements.linkJobWorkspace, elements.linkJobName, elements.linkJobPassword, elements.linkJob]
+    .forEach(control => { control.disabled = busy; });
+}
+
+function setWorkspaceDialogStatus(message, tone = "") {
+  elements.workspaceDialogStatus.textContent = message;
+  elements.workspaceDialogStatus.className = `form-status${tone ? ` ${tone}` : ""}`;
+}
+
+function formatWorkspaceCode(value) {
+  const compact = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
+  return compact.length > 5 ? `${compact.slice(0, 5)}-${compact.slice(5)}` : compact;
+}
+
+function workspaceRoleLabel(role) {
+  return ({ admin: "Admin", manager: "Manager", employee: "Employee" })[role] || "Employee";
+}
+
+function workspaceJobStatusLabel(status) {
+  return ({ active: "Active", pending: "Awaiting approval", disabled: "Disabled", rejected: "Rejected" })[status] || status || "Unavailable";
+}
+
+function workspaceJobStatusRank(status) {
+  return ({ active: 0, pending: 1, disabled: 2, rejected: 3 })[status] ?? 4;
 }
 
 async function loadEmployeeUsers() {

@@ -116,6 +116,33 @@ async function run() {
     const secondSession = await request("/api/auth/session", { cookie: second.cookie });
     assert.equal(firstSession.body.workspace.id, first.body.workspace.id);
     assert.equal(secondSession.body.workspace.id, second.body.workspace.id);
+    assert.equal(firstSession.body.jobProfile.accountType, "local");
+    assert.equal(firstSession.body.jobProfile.jobs.length, 1);
+    assert.equal(firstSession.body.jobProfile.jobs[0].role, "admin");
+
+    const linkedSecondJob = await request("/api/workspaces/link", {
+      method: "POST",
+      cookie: joinCookies(first.cookie, firstSession.cookie),
+      body: {
+        workspaceCode: second.body.workspace.code,
+        fullName: "William Winther",
+        password: "owner-password-123"
+      }
+    });
+    assert.equal(linkedSecondJob.status, 201, JSON.stringify(linkedSecondJob.body));
+    assert.equal(linkedSecondJob.body.profile.jobs.length, 2);
+    assert.equal(linkedSecondJob.body.job.businessId, second.body.workspace.id);
+
+    const switchedToSecond = await request("/api/workspaces/select", {
+      method: "POST",
+      cookie: joinCookies(first.cookie, linkedSecondJob.cookie),
+      body: { businessId: second.body.workspace.id }
+    });
+    assert.equal(switchedToSecond.status, 200, JSON.stringify(switchedToSecond.body));
+    assert.equal(switchedToSecond.body.workspace.id, second.body.workspace.id);
+    const switchedSession = await request("/api/auth/session", { cookie: switchedToSecond.cookie });
+    assert.equal(switchedSession.body.workspace.id, second.body.workspace.id);
+    assert.equal(switchedSession.body.jobProfile.jobs.length, 2);
 
     const operatorOverview = await request("/api/operator/overview", { cookie: operatorCookie });
     assert.equal(operatorOverview.status, 200, JSON.stringify(operatorOverview.body));
@@ -197,6 +224,36 @@ async function run() {
     assert.equal(discordBusinessSession.body.user.fullName, "Arthur Morgan");
     assert.equal(discordBusinessSession.body.user.accountType, "discord");
     assert.equal(discordBusinessSession.body.workspace.id, first.body.workspace.id);
+
+    const secondMembershipRequest = await request("/api/profile/memberships", {
+      method: "POST",
+      cookie: identityCookie,
+      body: { characterId, workspaceCode: second.body.workspace.code }
+    });
+    assert.equal(secondMembershipRequest.status, 201, JSON.stringify(secondMembershipRequest.body));
+    const secondPendingStaff = await request("/api/admin/users", { cookie: second.cookie });
+    const secondDiscordEmployee = secondPendingStaff.body.users.find(entry =>
+      entry.accountType === "discord" && entry.fullName === "Arthur Morgan"
+    );
+    await request(`/api/admin/users/${secondDiscordEmployee.id}/approve`, {
+      method: "POST",
+      cookie: second.cookie
+    });
+    const discordJobs = await request("/api/workspaces", { cookie: membershipSelect.cookie });
+    assert.equal(discordJobs.body.profile.accountType, "discord");
+    assert.equal(discordJobs.body.profile.jobs.filter(job => job.status === "active").length, 2);
+    const switchedDiscordJob = await request("/api/workspaces/select", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: {
+        businessId: second.body.workspace.id,
+        membershipId: secondDiscordEmployee.id
+      }
+    });
+    assert.equal(switchedDiscordJob.status, 200, JSON.stringify(switchedDiscordJob.body));
+    const switchedDiscordSession = await request("/api/auth/session", { cookie: switchedDiscordJob.cookie });
+    assert.equal(switchedDiscordSession.body.workspace.id, second.body.workspace.id);
+    assert.equal(switchedDiscordSession.body.user.role, "employee");
 
     const firstRegistration = await request("/api/auth/register", {
       method: "POST",
@@ -375,6 +432,10 @@ function bridgeRequest(path, options = {}) {
     ...options,
     headers: { ...(options.headers || {}), authorization: `Bearer ${process.env.BRIDGE_API_TOKEN}` }
   });
+}
+
+function joinCookies(...cookies) {
+  return cookies.filter(Boolean).join("; ");
 }
 
 async function request(path, { method = "GET", body = null, cookie = "", headers = {}, redirect = "follow" } = {}) {

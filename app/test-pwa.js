@@ -53,6 +53,9 @@ assert(appHtml.includes('<button class="primary-button" id="queueOrderProduction
 assert(appHtml.includes('<option value="Mine">Assigned to Me</option>'), "employees need an assigned production view");
 assert(appHtml.includes('<option value="Cancelled" data-management-only-option>'), "order cancellation must remain management-only");
 assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
+assert(appHtml.includes('id="workspaceSwitcherButton"'), "authenticated users must have an in-ledger business switcher");
+assert(appHtml.includes('id="workspaceDialog"'), "the business switcher must expose linked and pending jobs");
+assert(appHtml.includes('id="linkJobWorkspaceInput"'), "password users must be able to link an approved job explicitly");
 const appScript = fs.readFileSync(path.join(root, "app.js"), "utf8");
 assert(appScript.includes('addGoods(itemCatalog, "product")'), "catalog fallback must classify sellable goods as products");
 assert(appScript.includes('addGoods(ingredientCatalog, "material")'), "catalog fallback must classify recipe ingredients as materials");
@@ -60,6 +63,8 @@ assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefro
 assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");
 assert(appScript.includes('function completeActiveOrder()'), "customer-order completion must respect linked production");
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
+assert(appScript.includes('function switchWorkspace(event)'), "the ledger must support workspace switching without another login");
+assert(appScript.includes('function linkWorkspaceJob(event)'), "the ledger must support credential-verified local job linking");
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
 assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");
 assert(appHtml.includes('id="settingsLogoPreview"'), "business settings must preview branding changes");

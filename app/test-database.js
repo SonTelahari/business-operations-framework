@@ -28,7 +28,8 @@ async function run() {
       "004_beta_operations.sql",
       "005_dual_purpose_catalog_items.sql",
       "006_recipe_source_locations.sql",
-      "007_storage_targets.sql"
+      "007_storage_targets.sql",
+      "008_local_identity_jobs.sql"
     ]);
 
     const tables = await database.query(`
@@ -45,6 +46,8 @@ async function run() {
       "discord_identities",
       "identity_characters",
       "business_memberships",
+      "local_identities",
+      "local_identity_memberships",
       "oauth_states",
       "beta_invites",
       "beta_invite_redemptions",

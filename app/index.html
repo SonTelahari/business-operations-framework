@@ -30,6 +30,9 @@
             <span id="currentUserRole">Employee</span>
             <span id="currentWorkspaceCode" class="hidden"></span>
           </div>
+          <button class="ghost-button workspace-switcher-button hidden" id="workspaceSwitcherButton" type="button">
+            Businesses <span class="workspace-count" id="workspaceCount">1</span>
+          </button>
           <a class="ghost-button hidden" id="profileButton" href="/profile.html">Characters</a>
           <button class="ghost-button" id="logoutButton" type="button">Sign Out</button>
           <button class="ghost-button" id="newOrderButton" type="button">New Sale</button>
@@ -1907,6 +1910,56 @@
       </form>
     </dialog>
 
+    <dialog class="catalog-item-dialog workspace-dialog" id="workspaceDialog">
+      <form id="workspaceDialogForm">
+        <div class="catalog-item-dialog-heading">
+          <div>
+            <p class="eyebrow">Personal Job Profile</p>
+            <h2>Your Businesses</h2>
+            <p>Open another workplace without mixing its role, stock, hours, or records with this one</p>
+          </div>
+          <button class="icon-button" id="closeWorkspaceDialogButton" type="button" title="Close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="workspace-job-list" id="workspaceJobList"></div>
+
+        <section class="workspace-link-section" id="localWorkspaceLinkSection">
+          <div>
+            <h3>Link an Approved Job</h3>
+            <p>Enter that business's workspace code and your character credentials once</p>
+          </div>
+          <div class="workspace-link-grid">
+            <label>
+              Workspace Code
+              <input id="linkJobWorkspaceInput" type="text" maxlength="11" autocomplete="organization" required placeholder="ABCDE-FGHIJ">
+            </label>
+            <label>
+              Character Name
+              <input id="linkJobNameInput" type="text" maxlength="80" autocomplete="username" required placeholder="First and last name">
+            </label>
+            <label>
+              Password
+              <input id="linkJobPasswordInput" type="password" minlength="10" maxlength="128" autocomplete="current-password" required>
+            </label>
+            <button class="primary-button" id="linkJobButton" type="submit">Link Job</button>
+          </div>
+        </section>
+
+        <section class="workspace-link-section hidden" id="discordWorkspaceLinkSection">
+          <div>
+            <h3>Add Another Business</h3>
+            <p>Use your Characters profile to request or manage business memberships</p>
+          </div>
+          <a class="primary-button" href="/profile.html">Open Characters</a>
+        </section>
+
+        <p class="form-status" id="workspaceDialogStatus" role="status"></p>
+        <div class="catalog-item-actions">
+          <button class="ghost-button" id="doneWorkspaceDialogButton" type="button">Done</button>
+        </div>
+      </form>
+    </dialog>
+
     <script src="pricing.js?v=20260714-kits"></script>
     <script src="items.js?v=20260719-item-aliases"></script>
     <script src="recipes.js?v=20260714-kits"></script>
@@ -1954,7 +2007,7 @@
       <option value="Australia/Sydney"></option>
     </datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260806-inventory-values"></script>
+    <script src="app.js?v=20260815-multi-business-jobs"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

@@ -13,6 +13,10 @@ const {
   MEMBERSHIP_SESSION_MAX_AGE_SECONDS
 } = require("./discord-identity");
 const { StandaloneStore } = require("./standalone-store");
+const {
+  LocalIdentityStore,
+  LOCAL_IDENTITY_SESSION_MAX_AGE_SECONDS
+} = require("./local-identity");
 const { defaultSetupConfiguration, normalizeSetupPayload } = require("./setup-config");
 const { TenantManager, normalizeWorkspaceCode } = require("./tenant-manager");
 const { PlatformOperations } = require("./platform-operations");
@@ -70,6 +74,11 @@ const discordIdentityStore = hostedMode ? new DiscordIdentityStore({
   redirectUri: process.env.DISCORD_REDIRECT_URI || "",
   apiBaseUrl: process.env.DISCORD_API_BASE_URL || "https://discord.com/api/v10",
   authorizeUrl: process.env.DISCORD_AUTHORIZE_URL || "https://discord.com/oauth2/authorize"
+}) : null;
+const localIdentityStore = hostedMode ? new LocalIdentityStore({
+  database,
+  tenantManager,
+  sessionSecret
 }) : null;
 const accountStore = contextualStore("accountStore");
 const businessStore = contextualStore("businessStore");
@@ -345,6 +354,7 @@ async function dispatchHostedRequest(request, response, url) {
       databaseReady: true,
       bridgeApiConfigured: Boolean(process.env.BRIDGE_API_TOKEN),
       discordLoginConfigured: Boolean(discordIdentityStore?.enabled),
+      personalJobProfiles: Boolean(localIdentityStore?.enabled),
       operatorConsoleConfigured: Boolean(platformOperations?.enabled),
       authMode: discordIdentityStore?.enabled ? "workspace-accounts-and-discord" : "workspace-accounts",
       uptimeSeconds: Math.round(process.uptime())
@@ -803,10 +813,14 @@ async function handleHostedSetup(request, response) {
       await platformOperations.redeemInvite(inviteReservation.id, created.business)
         .catch(error => console.error("Unable to record beta invitation redemption:", error.message));
     }
+    const identity = localIdentityStore?.enabled
+      ? await localIdentityStore.ensureIdentityForUser(created.business.id, created.owner.id)
+      : null;
     setSessionCookie(response, request, created.context.accountStore.createSession(created.owner));
+    if (identity) setLocalIdentitySessionCookie(response, request, localIdentityStore.createSession(identity));
     sendJson(response, {
       ok: true,
-      user: created.owner,
+      user: { ...created.owner, accountType: "local" },
       business: created.context.businessStore.getConfiguration().business,
       workspace: publicWorkspace(created.context)
     }, 201);
@@ -906,6 +920,64 @@ function publicWorkspace(context = currentTenantContext()) {
   };
 }
 
+async function getWorkspaceProfile(request, response, user, resolvedIdentity = null) {
+  const currentBusinessId = currentTenantContext().businessId;
+  if (user.accountType === "discord") {
+    const profile = await discordIdentityStore.listProfile(user.identityId);
+    return {
+      accountType: "discord",
+      currentBusinessId,
+      jobs: profile.memberships.map(membership => ({
+        id: membership.id,
+        membershipId: membership.id,
+        accountType: "discord",
+        businessId: membership.businessId,
+        workspaceCode: membership.workspaceCode,
+        businessName: membership.businessName,
+        referenceId: membership.referenceId,
+        fullName: membership.characterName,
+        role: membership.role,
+        status: membership.status,
+        current: membership.businessId === currentBusinessId
+      }))
+    };
+  }
+
+  if (!localIdentityStore?.enabled) {
+    const workspace = publicWorkspace();
+    return {
+      accountType: "local",
+      currentBusinessId,
+      jobs: workspace ? [{
+        id: `local:${currentBusinessId}:${user.id}`,
+        accountType: "local",
+        businessId: currentBusinessId,
+        workspaceCode: workspace.code,
+        businessName: workspace.name,
+        referenceId: workspace.referenceId,
+        userId: user.id,
+        fullName: user.fullName,
+        role: user.role,
+        status: user.status,
+        current: true
+      }] : []
+    };
+  }
+
+  const identity = resolvedIdentity || await localIdentityStore.resolveIdentityForUser(
+    readCookie(request, "local_identity_session"),
+    currentBusinessId,
+    user.id
+  );
+  setLocalIdentitySessionCookie(response, request, localIdentityStore.createSession(identity));
+  const jobs = await localIdentityStore.listJobs(identity.id);
+  return {
+    accountType: "local",
+    currentBusinessId,
+    jobs: jobs.map(job => ({ ...job, current: job.businessId === currentBusinessId }))
+  };
+}
+
 function currentTenantContext() {
   return tenantRequestContext.getStore() || defaultContext;
 }
@@ -933,12 +1005,152 @@ async function handleAccountRoute(request, response, url, user) {
     return true;
   }
   if (url.pathname === "/api/auth/session" && request.method === "GET") {
+    const jobProfile = hostedMode && user
+      ? await getWorkspaceProfile(request, response, user)
+      : null;
     sendJson(response, {
       ok: true,
-      user: user ? { ...user, accountManagement: true } : null,
-      workspace: hostedMode && user ? publicWorkspace() : null
+      user: user ? {
+        ...user,
+        accountType: user.accountType || "local",
+        accountManagement: true
+      } : null,
+      workspace: hostedMode && user ? publicWorkspace() : null,
+      jobProfile
     });
     return true;
+  }
+  if (url.pathname === "/api/workspaces" && request.method === "GET") {
+    if (!user) {
+      sendJson(response, { ok: false, error: "Authentication required", code: "authentication_required" }, 401);
+      return true;
+    }
+    sendJson(response, { ok: true, profile: await getWorkspaceProfile(request, response, user) });
+    return true;
+  }
+  if (url.pathname === "/api/workspaces/link" && request.method === "POST") {
+    if (!user) {
+      sendJson(response, { ok: false, error: "Authentication required", code: "authentication_required" }, 401);
+      return true;
+    }
+    if (user.accountType === "discord") {
+      sendJson(response, {
+        ok: false,
+        error: "Add another business membership from your Characters profile",
+        code: "discord_membership_profile_required"
+      }, 400);
+      return true;
+    }
+    if (!localIdentityStore?.enabled) {
+      sendJson(response, { ok: false, error: "Personal job profiles are unavailable", code: "local_identity_disabled" }, 503);
+      return true;
+    }
+    return handleAccountAction(response, async () => {
+      const body = await readJsonBody(request);
+      const targetContext = await tenantManager.getContextByWorkspaceCode(body.workspaceCode);
+      if (!targetContext) throw routeError("Workspace code was not found", 404, "workspace_not_found");
+      if (targetContext.businessId === currentTenantContext().businessId) {
+        throw routeError("That is already the current business", 400, "workspace_already_current");
+      }
+      const targetUser = await targetContext.accountStore.authenticate(body.fullName, body.password);
+      const identity = await localIdentityStore.resolveIdentityForUser(
+        readCookie(request, "local_identity_session"),
+        currentTenantContext().businessId,
+        user.id
+      );
+      const job = await localIdentityStore.linkJob(identity.id, targetContext.businessId, targetUser.id);
+      setLocalIdentitySessionCookie(response, request, localIdentityStore.createSession(identity));
+      await Promise.all([
+        accountStore.recordAudit({
+          category: "account",
+          action: "account.job_linked",
+          actorId: user.id,
+          actorName: user.fullName,
+          subjectId: targetUser.id,
+          subjectName: targetUser.fullName,
+          details: { businessId: targetContext.businessId, businessName: targetContext.business.name }
+        }),
+        targetContext.accountStore.recordAudit({
+          category: "account",
+          action: "account.job_linked",
+          actorId: targetUser.id,
+          actorName: targetUser.fullName,
+          subjectId: targetUser.id,
+          subjectName: targetUser.fullName,
+          details: { linkedFromBusinessId: currentTenantContext().businessId }
+        })
+      ]);
+      sendJson(response, {
+        ok: true,
+        job,
+        profile: await getWorkspaceProfile(request, response, user, identity)
+      }, 201);
+    });
+  }
+  if (url.pathname === "/api/workspaces/select" && request.method === "POST") {
+    if (!user) {
+      sendJson(response, { ok: false, error: "Authentication required", code: "authentication_required" }, 401);
+      return true;
+    }
+    return handleAccountAction(response, async () => {
+      const body = await readJsonBody(request);
+      const businessId = String(body.businessId || "");
+      if (user.accountType === "discord") {
+        const membership = await discordIdentityStore.recordMembershipLogin(
+          user.identityId,
+          body.membershipId,
+          businessId
+        );
+        if (!membership) throw routeError("That business membership is not active", 403, "membership_inactive");
+        const targetContext = await tenantManager.getContextById(membership.businessId);
+        if (!targetContext) throw routeError("Business workspace is unavailable", 403, "workspace_unavailable");
+        setDiscordMembershipCookie(response, request, discordIdentityStore.createMembershipSession(membership));
+        await targetContext.accountStore.recordAudit({
+          category: "authentication",
+          action: "auth.workspace_switched",
+          actorId: membership.id,
+          actorName: membership.fullName,
+          subjectId: membership.id,
+          subjectName: membership.fullName,
+          details: { accountType: "discord" }
+        });
+        sendJson(response, { ok: true, user: membership, workspace: publicWorkspace(targetContext) });
+        return;
+      }
+
+      if (!localIdentityStore?.enabled) {
+        throw routeError("Personal job profiles are unavailable", 503, "local_identity_disabled");
+      }
+
+      const identity = await localIdentityStore.resolveIdentityForUser(
+        readCookie(request, "local_identity_session"),
+        currentTenantContext().businessId,
+        user.id
+      );
+      const job = await localIdentityStore.getActiveJob(identity.id, businessId);
+      if (!job) throw routeError("That linked job is not active", 403, "job_inactive");
+      const targetContext = await tenantManager.getContextById(job.businessId);
+      const targetUser = targetContext?.accountStore.getUserById(job.userId);
+      if (!targetContext || !targetUser || targetUser.status !== "active") {
+        throw routeError("That linked job is not active", 403, "job_inactive");
+      }
+      setSessionCookie(response, request, targetContext.accountStore.createSession(targetUser));
+      setLocalIdentitySessionCookie(response, request, localIdentityStore.createSession(identity));
+      await targetContext.accountStore.recordAudit({
+        category: "authentication",
+        action: "auth.workspace_switched",
+        actorId: targetUser.id,
+        actorName: targetUser.fullName,
+        subjectId: targetUser.id,
+        subjectName: targetUser.fullName,
+        details: { accountType: "local" }
+      });
+      sendJson(response, {
+        ok: true,
+        user: { ...targetUser, accountType: "local", accountManagement: true },
+        workspace: publicWorkspace(targetContext)
+      });
+    });
   }
   if (url.pathname === "/api/auth/register" && request.method === "POST") {
     if (!allowAuthAttempt(request)) {
@@ -959,8 +1171,16 @@ async function handleAccountRoute(request, response, url, user) {
     return handleAccountAction(response, async () => {
       const body = await readJsonBody(request);
       const authenticatedUser = await accountStore.authenticate(body.fullName, body.password);
+      const identity = localIdentityStore?.enabled
+        ? await localIdentityStore.ensureIdentityForUser(currentTenantContext().businessId, authenticatedUser.id)
+        : null;
       setSessionCookie(response, request, accountStore.createSession(authenticatedUser));
-      sendJson(response, { ok: true, user: authenticatedUser });
+      if (identity) setLocalIdentitySessionCookie(response, request, localIdentityStore.createSession(identity));
+      sendJson(response, {
+        ok: true,
+        user: { ...authenticatedUser, accountType: "local" },
+        workspace: hostedMode ? publicWorkspace() : null
+      });
     });
   }
   if (url.pathname === "/api/auth/logout" && request.method === "POST") {
@@ -3134,11 +3354,21 @@ function setDiscordMembershipCookie(response, request, token) {
   ]);
 }
 
+function setLocalIdentitySessionCookie(response, request, token) {
+  setCookieHeaders(response, [sessionCookie(
+    request,
+    "local_identity_session",
+    token,
+    LOCAL_IDENTITY_SESSION_MAX_AGE_SECONDS
+  )]);
+}
+
 function clearAllSessionCookies(response, request) {
   setCookieHeaders(response, [
     sessionCookie(request, "business_session", "", 0),
     sessionCookie(request, "discord_membership_session", "", 0),
-    sessionCookie(request, "discord_identity_session", "", 0)
+    sessionCookie(request, "discord_identity_session", "", 0),
+    sessionCookie(request, "local_identity_session", "", 0)
   ]);
 }
 
