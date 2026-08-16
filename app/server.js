@@ -31,6 +31,7 @@ const releaseVersion = String(
   || process.env.RAILWAY_GIT_COMMIT_SHA
   || packageVersion
 ).slice(0, 120);
+const ORDER_PRODUCTION_SOURCE_TYPES = new Set(["Customer Order", "Internal Craft"]);
 const port = Number(process.env.PORT || 4273);
 const authUser = process.env.APP_AUTH_USER || "frontier";
 const authPassword = process.env.APP_AUTH_PASSWORD || "";
@@ -2032,7 +2033,7 @@ async function handleSalesOrderRoute(request, response, url, user) {
       const payload = await readJsonBody(request);
       const existingOrder = businessStore.getSalesOrder(payload.id);
       const activeBatch = businessStore.listProductionBatches().find(batch =>
-        batch.sourceType === "Customer Order"
+        ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
         && batch.sourceId === String(payload.id || "")
         && batch.status !== "Completed"
         && batch.status !== "Cancelled"
@@ -2054,8 +2055,17 @@ async function handleSalesOrderRoute(request, response, url, user) {
           "sales_order_status_managed"
         );
       }
+      if ((payload.orderType === "Internal Craft" || existingOrder?.orderType === "Internal Craft")
+        && payload.status === "Completed"
+        && existingOrder?.status !== "Completed") {
+        throw salesOrderError(
+          "Internal crafts complete automatically when their production batch is finished",
+          400,
+          "internal_craft_status_managed"
+        );
+      }
       const linkedBatch = businessStore.listProductionBatches().find(batch =>
-        batch.sourceType === "Customer Order"
+        ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
         && batch.sourceId === String(payload.id || "")
         && batch.status !== "Cancelled"
       );
@@ -2088,7 +2098,8 @@ async function handleSalesOrderRoute(request, response, url, user) {
       let fulfillmentSynced = false;
       if (payload.status === "Completed"
         && existingOrder?.status !== "Completed"
-        && linkedBatch?.status === "Completed") {
+        && linkedBatch?.status === "Completed"
+        && linkedBatch.sourceType === "Customer Order") {
         if (Number(payload.revision) !== Number(existingOrder.revision)) {
           throw salesOrderError(
             "This order was updated by someone else. Reload it before completing delivery.",
@@ -2108,7 +2119,7 @@ async function handleSalesOrderRoute(request, response, url, user) {
       if (!requireManagement(response, user)) return true;
       const orderId = decodeURIComponent(url.pathname.slice("/api/sales-orders/".length));
       const linkedBatch = businessStore.listProductionBatches().find(batch =>
-        batch.sourceType === "Customer Order"
+        ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
         && batch.sourceId === orderId
         && batch.status !== "Cancelled"
       );
@@ -2140,6 +2151,18 @@ function salesOrderError(message, status, code) {
   error.status = status;
   error.code = code;
   return error;
+}
+
+function isInternalCraftOrder(order) {
+  return order?.orderType === "Internal Craft";
+}
+
+function productionSourceTypeForOrder(order) {
+  return isInternalCraftOrder(order) ? "Internal Craft" : "Customer Order";
+}
+
+function salesOrderDisplayName(order) {
+  return isInternalCraftOrder(order) ? order?.label || "Internal stock build" : order?.customer || "Unnamed customer";
 }
 
 async function handleDailyCloseRoute(request, response, url, user) {
@@ -2201,14 +2224,22 @@ async function handleProductionBatchRoute(request, response, url, user) {
     if (url.pathname === "/api/production-batches" && request.method === "POST") {
       const payload = await readJsonBody(request);
       let sourceOrder = null;
-      if (payload.sourceType === "Customer Order") {
+      if (ORDER_PRODUCTION_SOURCE_TYPES.has(payload.sourceType)) {
         sourceOrder = businessStore.getSalesOrder(payload.sourceId);
         if (!sourceOrder || ["Ready", "Completed", "Cancelled"].includes(sourceOrder.status)) {
           sendJson(response, {
             ok: false,
-            error: "The customer order is unavailable or already closed",
-            code: "customer_order_unavailable"
+            error: "The linked order is unavailable or already closed",
+            code: payload.sourceType === "Internal Craft" ? "internal_craft_unavailable" : "customer_order_unavailable"
           }, 409);
+          return true;
+        }
+        if (payload.sourceType !== productionSourceTypeForOrder(sourceOrder)) {
+          sendJson(response, {
+            ok: false,
+            error: "The production type does not match the linked order",
+            code: "production_order_type_mismatch"
+          }, 400);
           return true;
         }
       }
@@ -2216,7 +2247,7 @@ async function handleProductionBatchRoute(request, response, url, user) {
         if (!sourceOrder) {
           sendJson(response, {
             ok: false,
-            error: "Employees can only queue production from a saved customer order",
+            error: "Employees can only queue production from a saved customer or internal craft order",
             code: "customer_order_production_required"
           }, 403);
           return true;
@@ -2226,7 +2257,7 @@ async function handleProductionBatchRoute(request, response, url, user) {
       const createOperation = productionCreateQueue.then(async () => {
         const currentSourceOrder = sourceOrder ? businessStore.getSalesOrder(sourceOrder.id) : null;
         if (currentSourceOrder && businessStore.listProductionBatches().some(batch =>
-          batch.sourceType === "Customer Order"
+          ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
           && batch.sourceId === currentSourceOrder.id
           && batch.status !== "Cancelled"
         )) {
@@ -2235,6 +2266,13 @@ async function handleProductionBatchRoute(request, response, url, user) {
         const prepared = await prepareProductionBatch(payload);
         if (currentSourceOrder) {
           assertProductionMatchesSalesOrder(prepared, currentSourceOrder);
+          if (prepared.sourceType === "Internal Craft" && prepared.stockAllocations.length) {
+            throw productionError(
+              "Internal crafts must produce the full quantity and cannot reserve finished stock",
+              400,
+              "internal_craft_stock_allocation_forbidden"
+            );
+          }
           await assertProductionStockAvailable(prepared);
         }
         return businessStore.createProductionBatch(prepared, user);
@@ -2242,7 +2280,7 @@ async function handleProductionBatchRoute(request, response, url, user) {
       productionCreateQueue = createOperation.catch(() => {});
       const batch = await createOperation;
       let order = null;
-      if (batch.sourceType === "Customer Order" && batch.sourceId) {
+      if (ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType) && batch.sourceId) {
         order = businessStore.getSalesOrder(batch.sourceId);
         await recordSalesOrderAudit("sales_order.production_queued", order, user);
       }
@@ -2276,7 +2314,7 @@ async function handleProductionBatchRoute(request, response, url, user) {
       }
       if (!requireManagement(response, user)) return true;
       const batch = await businessStore.cancelProductionBatch(batchId, user);
-      if (batch.sourceType === "Customer Order" && batch.sourceId) {
+      if (ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType) && batch.sourceId) {
         const order = businessStore.getSalesOrder(batch.sourceId);
         await recordSalesOrderAudit("sales_order.production_cancelled", order, user);
       }
@@ -2549,6 +2587,7 @@ function salesOrderProductionShape(order) {
     quantity: Number(line.quantity || 0)
   })).sort((left, right) => left.key.localeCompare(right.key) || left.quantity - right.quantity);
   return JSON.stringify({
+    orderType: order?.orderType === "Internal Craft" ? "Internal Craft" : "Customer Sale",
     customer: String(order?.customer || "").trim(),
     handler: String(order?.handler || "").trim(),
     priority: order?.priority === "Expedite" ? "Expedite" : "Normal",
@@ -2579,9 +2618,13 @@ async function recordProductionProgress(batchId, payload, user) {
 
   const updated = await businessStore.commitProductionProgress(batchId, pending.id, user);
   let order = null;
-  if (updated.status === "Completed" && updated.sourceType === "Customer Order" && updated.sourceId) {
+  if (updated.status === "Completed" && ORDER_PRODUCTION_SOURCE_TYPES.has(updated.sourceType) && updated.sourceId) {
     order = businessStore.getSalesOrder(updated.sourceId);
-    await recordSalesOrderAudit("sales_order.production_ready", order, user);
+    await recordSalesOrderAudit(
+      updated.sourceType === "Internal Craft" ? "sales_order.internal_craft_completed" : "sales_order.production_ready",
+      order,
+      user
+    );
   }
   const auditAction = updated.status === "Completed" ? "production_batch.completed" : "production_batch.progressed";
   await recordProductionBatchAudit(auditAction, updated, user, pending);
@@ -2907,9 +2950,10 @@ async function recordSalesOrderAudit(action, order, user) {
     actorId: user.id,
     actorName: user.fullName,
     subjectId: order.id,
-    subjectName: order.customer || "Unnamed customer",
+    subjectName: salesOrderDisplayName(order),
     fingerprint: `${action}:${order.id}:${order.revision}`,
     details: {
+      orderType: order.orderType,
       status: order.status,
       priority: order.priority,
       handler: order.handler,
@@ -3627,14 +3671,16 @@ async function buildDailyCloseSnapshot() {
 
   const issues = [
     ...overdueSalesOrders.map(order => ({
-      type: "Overdue Sale",
-      label: order.customer || "Unnamed customer",
+      type: isInternalCraftOrder(order) ? "Overdue Internal Craft" : "Overdue Sale",
+      label: salesOrderDisplayName(order),
       detail: `${order.status} / due ${order.deliveryDate}`
     })),
     ...activeSalesOrders.filter(order => order.priority === "Expedite" || order.status === "Paused").map(order => ({
-      type: order.status === "Paused" ? "Paused Sale" : "Expedited Sale",
-      label: order.customer || "Unnamed customer",
-      detail: order.deliveryDate ? `Due ${order.deliveryDate}` : "In-store order"
+      type: order.status === "Paused"
+        ? (isInternalCraftOrder(order) ? "Paused Internal Craft" : "Paused Sale")
+        : (isInternalCraftOrder(order) ? "Expedited Internal Craft" : "Expedited Sale"),
+      label: salesOrderDisplayName(order),
+      detail: order.deliveryDate ? `Due ${order.deliveryDate}` : (isInternalCraftOrder(order) ? "No target date" : "In-store order")
     })),
     ...activeProductionBatches.map(batch => ({
       type: "Production",

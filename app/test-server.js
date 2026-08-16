@@ -1135,6 +1135,82 @@ async function run() {
   assert.equal(storageCounts.get("navy revolver"), 0);
   storageCounts.set("navy revolver", 2);
 
+  const internalOrder = await post(`${baseUrl}/api/sales-orders`, {
+    id: "internal-stock-order",
+    orderType: "Internal Craft",
+    customer: "Not a customer",
+    handler: "Grace Worker",
+    status: "Reserved",
+    priority: "Normal",
+    deposit: 250,
+    label: "Build Navy reserve stock",
+    lines: [{ name: "Navy Revolver", label: "Navy Revolver", category: "Revolvers", quantity: 2, unitPrice: 105 }]
+  }, workerCookie);
+  assert.equal(internalOrder.response.status, 200);
+  assert.equal(internalOrder.body.order.orderType, "Internal Craft");
+  assert.equal(internalOrder.body.order.customer, "");
+  assert.equal(internalOrder.body.order.deposit, 0);
+  assert.equal(internalOrder.body.order.lines[0].unitPrice, 0);
+
+  const completeInternalWithoutProduction = await post(`${baseUrl}/api/sales-orders`, {
+    ...internalOrder.body.order,
+    status: "Completed"
+  }, workerCookie);
+  assert.equal(completeInternalWithoutProduction.response.status, 400);
+  assert.equal(completeInternalWithoutProduction.body.code, "internal_craft_status_managed");
+
+  const internalAllocationAttempt = await post(`${baseUrl}/api/production-batches`, {
+    id: "internal-stock-allocation-attempt",
+    sourceType: "Internal Craft",
+    sourceId: internalOrder.body.order.id,
+    lines: [{ itemName: "Navy Revolver", quantity: 1 }],
+    stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 1 }]
+  }, workerCookie);
+  assert.equal(internalAllocationAttempt.response.status, 400);
+  assert.equal(internalAllocationAttempt.body.code, "internal_craft_stock_allocation_forbidden");
+
+  [
+    ["iron", 20],
+    ["softwood", 20],
+    ["revolver handle", 10],
+    ["revolver barrel", 10],
+    ["revolver cylinder", 10],
+    ["bolts", 20]
+  ].forEach(([key, quantity]) => storageCounts.set(key, quantity));
+  const internalStorageBefore = storageCounts.get("navy revolver");
+  const internalProduction = await post(`${baseUrl}/api/production-batches`, {
+    id: "internal-stock-production",
+    sourceType: "Internal Craft",
+    sourceId: internalOrder.body.order.id,
+    reference: "Build Navy reserve stock",
+    lines: [{ itemName: "Navy Revolver", quantity: 2 }]
+  }, workerCookie);
+  assert.equal(internalProduction.response.status, 200);
+  assert.equal(internalProduction.body.batch.sourceType, "Internal Craft");
+  assert.equal(internalProduction.body.batch.lines[0].requestedQuantity, 2);
+  assert.deepEqual(internalProduction.body.batch.stockAllocations, []);
+  assert.equal(internalProduction.body.order.status, "In Production");
+
+  const internalWritesBefore = receiverPayloads.length;
+  const completedInternalProduction = await post(
+    `${baseUrl}/api/production-batches/internal-stock-production/progress`,
+    { completions: [{ lineId: internalProduction.body.batch.lines[0].id, completedCrafts: 2 }] },
+    workerCookie
+  );
+  assert.equal(completedInternalProduction.response.status, 200);
+  assert.equal(completedInternalProduction.body.batch.status, "Completed");
+  assert.equal(completedInternalProduction.body.order.status, "Completed");
+  assert.equal(storageCounts.get("navy revolver"), internalStorageBefore + 2);
+  const internalWrites = receiverPayloads.slice(internalWritesBefore).filter(payload => payload.action === "manual_operation");
+  assert(internalWrites.some(payload => payload.entry.kind === "Production Use"));
+  assert(internalWrites.some(payload => payload.entry.kind === "Production Output"
+    && payload.entry.location === "Storage"
+    && payload.entry.itemName === "Navy Revolver"
+    && payload.entry.quantity === 2));
+  assert.equal(internalWrites.some(payload => payload.entry.kind === "Correction Out"), false);
+  assert(internalWrites.every(payload => Number(payload.entry.amount || 0) === 0));
+  storageCounts.set("navy revolver", 2);
+
   const mixedFulfillmentOrder = await post(`${baseUrl}/api/sales-orders`, {
     id: "sales-order-stock-mix",
     customer: "Sadie Adler",
@@ -1354,6 +1430,7 @@ async function run() {
   assert(managerAudit.body.events.some(event => event.action === "webhook_exception.resolved" && event.actorName === "Ada Employee"));
   assert(managerAudit.body.events.some(event => event.action === "production_batch.created" && event.subjectName === "Order 42"));
   assert(managerAudit.body.events.some(event => event.action === "production_batch.completed" && event.actorName === "Grace Worker"));
+  assert(managerAudit.body.events.some(event => event.action === "sales_order.internal_craft_completed" && event.subjectName === "Build Navy reserve stock"));
   assert(managerAudit.body.events.some(event => event.action === "sales_order.saved" && event.subjectName === "Arthur Morgan"));
   assert(managerAudit.body.events.some(event => event.action === "sales_order.imported" && event.actorName === "Ada Employee"));
   assert(managerAudit.body.events.some(event => event.action === "sales_order.removed" && event.subjectName === "Legacy Customer"));

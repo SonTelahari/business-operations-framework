@@ -9,7 +9,17 @@ async function run() {
   const filePath = path.join(directory, "business.json");
   fs.writeFileSync(filePath, JSON.stringify({
     version: 6,
-    salesOrders: [],
+    salesOrders: [{
+      id: "legacy-sale",
+      customer: "Legacy Customer",
+      status: "Draft",
+      priority: "Normal",
+      deposit: 5,
+      lines: [{ name: "Legacy Good", quantity: 1, unitPrice: 12 }],
+      revision: 1,
+      createdAt: "2026-07-10T10:00:00.000Z",
+      updatedAt: "2026-07-10T10:00:00.000Z"
+    }],
     suppliers: [],
     storefrontBuyOrders: [],
     productionBatches: [],
@@ -34,6 +44,7 @@ async function run() {
   try {
     const store = new BusinessStore({ filePath });
     await store.initialize();
+    assert.equal(store.getSalesOrder("legacy-sale").orderType, "Customer Sale");
     const migrated = store.getSupplyOrder("legacy-supply");
     assert.equal(migrated.lines[0].receipts.length, 1);
     assert.deepEqual(migrated.lines[0].receipts[0], {
@@ -52,6 +63,55 @@ async function run() {
     assert.equal(updated.lines[0].receipts.length, 2);
     assert.equal(updated.lines[0].receipts[1].quantity, 2);
     assert.equal(updated.lines[0].receipts[1].receivedAt, "2026-07-22T09:00:00.000Z");
+
+    const actor = { fullName: "William Winther" };
+    const internalOrder = await store.saveSalesOrder({
+      id: "internal-stock-build",
+      orderType: "Internal Craft",
+      customer: "Must be removed",
+      status: "Reserved",
+      priority: "Normal",
+      deposit: 100,
+      label: "Build reserve stock",
+      lines: [{ name: "Crafted Good", quantity: 2, unitPrice: 75 }]
+    }, actor);
+    assert.equal(internalOrder.customer, "");
+    assert.equal(internalOrder.deposit, 0);
+    assert.equal(internalOrder.lines[0].unitPrice, 0);
+
+    await assert.rejects(() => store.createProductionBatch({
+      sourceType: "Internal Craft",
+      sourceId: internalOrder.id,
+      stockAllocations: [{ itemName: "Crafted Good", storageQuantity: 2 }]
+    }, actor), error => error.code === "internal_craft_stock_allocation_forbidden");
+
+    const internalBatch = await store.createProductionBatch({
+      id: "internal-stock-production",
+      sourceType: "Internal Craft",
+      sourceId: internalOrder.id,
+      reference: internalOrder.label,
+      lines: [{
+        itemName: "Crafted Good",
+        requestedQuantity: 2,
+        recipeYield: 1,
+        recipe: [{ ingredient: "Iron", quantity: 1, sourceLocation: "Storage" }]
+      }]
+    }, actor);
+    assert.equal(store.getSalesOrder(internalOrder.id).status, "In Production");
+    await store.beginProductionProgress(internalBatch.id, {
+      id: "internal-progress",
+      targets: [{ lineId: internalBatch.lines[0].id, completedCrafts: 2 }],
+      operations: [{
+        id: "internal-output",
+        kind: "Production Output",
+        location: "Storage",
+        itemName: "Crafted Good",
+        quantity: 2,
+        employee: actor.fullName
+      }]
+    }, actor);
+    await store.commitProductionProgress(internalBatch.id, "internal-progress", actor);
+    assert.equal(store.getSalesOrder(internalOrder.id).status, "Completed");
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

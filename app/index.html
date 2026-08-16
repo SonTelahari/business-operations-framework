@@ -721,6 +721,13 @@
           <div class="view-panel" id="quoteView">
             <div class="form-grid">
               <label>
+                Order Type
+                <select id="orderTypeSelect">
+                  <option value="Customer Sale">Customer Sale</option>
+                  <option value="Internal Craft">Internal Craft</option>
+                </select>
+              </label>
+              <label id="customerField">
                 Customer
                 <input id="customerInput" type="text" autocomplete="off" placeholder="Customer name">
               </label>
@@ -728,7 +735,7 @@
                 Handler
                 <input id="handlerInput" type="text" autocomplete="off" placeholder="Employee">
               </label>
-              <label>
+              <label id="depositField">
                 Deposit Paid
                 <input id="depositInput" type="number" min="0" step="0.01" value="0">
               </label>
@@ -740,7 +747,7 @@
                 </select>
               </label>
               <label>
-                Delivery Date
+                <span id="deliveryDateFieldLabel">Delivery Date</span>
                 <input id="deliveryDateInput" type="date">
               </label>
             </div>
@@ -755,14 +762,14 @@
                 Qty
                 <input id="quantityInput" type="number" min="1" step="1" value="1">
               </label>
-              <label>
+              <label id="linePriceField">
                 Price
                 <input id="priceInput" type="number" min="0" step="0.01">
               </label>
               <button class="primary-button" id="addItemButton" type="button">Add</button>
             </div>
 
-            <div class="quick-custom">
+            <div class="quick-custom" id="quickCustomWork">
               <button class="chip-button" data-custom="Custom work" data-price="25" type="button">Custom Work</button>
               <button class="chip-button" data-custom="Service charge" data-price="40" type="button">Service</button>
               <button class="chip-button" data-custom="Rush work" data-price="50" type="button">Rush</button>
@@ -892,7 +899,7 @@
           <div class="panel-header">
             <div>
               <h2>Batch Register</h2>
-              <p>Shared work queued from customer orders and storefront targets</p>
+              <p>Shared work queued from customer orders, internal stock builds, and storefront targets</p>
             </div>
             <select id="productionFilterInput" aria-label="Filter production batches">
               <option value="Active">Working Queue</option>

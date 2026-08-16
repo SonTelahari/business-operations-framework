@@ -7,6 +7,7 @@ const SUPPLY_ACTIVE_STATUSES = new Set(["Active", "Ordered", "Partially Received
 const SUPPLY_DELIVERY_STATUSES = new Set(["Ordered", "Partially Received"]);
 const BUY_ORDER_OPEN_STATUSES = new Set(["Active", "Paused"]);
 const PRODUCTION_ACTIVE_STATUSES = new Set(["Planned", "In Progress"]);
+const ORDER_PRODUCTION_SOURCE_TYPES = new Set(["Customer Order", "Internal Craft"]);
 const BACKEND_REFRESH_INTERVAL_MS = Number(window.BUSINESS_REFRESH_INTERVAL_MS || window.FRONTIER_REFRESH_INTERVAL_MS || 60000);
 const FOCUS_REFRESH_STALE_MS = Number(window.BUSINESS_FOCUS_REFRESH_STALE_MS || window.FRONTIER_FOCUS_REFRESH_STALE_MS || 15000);
 const statusesHiddenFromActive = new Set(["Completed", "Cancelled"]);
@@ -94,6 +95,7 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "sales_order.saved": "Sales order saved",
   "sales_order.production_queued": "Sales order queued for production",
   "sales_order.production_ready": "Sales order ready for delivery",
+  "sales_order.internal_craft_completed": "Internal craft completed",
   "sales_order.production_cancelled": "Sales order production cancelled",
   "sales_order.removed": "Sales order removed",
   "sales_order.imported": "Browser sales orders imported",
@@ -186,10 +188,15 @@ const elements = {
   linkJob: document.querySelector("#linkJobButton"),
   profileButton: document.querySelector("#profileButton"),
   logout: document.querySelector("#logoutButton"),
+  orderType: document.querySelector("#orderTypeSelect"),
+  activeOrderTitle: document.querySelector("#activeSalesOrderTitle"),
+  customerField: document.querySelector("#customerField"),
   customer: document.querySelector("#customerInput"),
   handler: document.querySelector("#handlerInput"),
+  depositField: document.querySelector("#depositField"),
   deposit: document.querySelector("#depositInput"),
   priority: document.querySelector("#prioritySelect"),
+  deliveryDateFieldLabel: document.querySelector("#deliveryDateFieldLabel"),
   deliveryDate: document.querySelector("#deliveryDateInput"),
   status: document.querySelector("#statusSelect"),
   itemSearch: document.querySelector("#itemSearchInput"),
@@ -198,7 +205,9 @@ const elements = {
   countStockOptions: document.querySelector("#countStockOptions"),
   supplyMaterialOptions: document.querySelector("#supplyMaterialOptions"),
   quantity: document.querySelector("#quantityInput"),
+  linePriceField: document.querySelector("#linePriceField"),
   price: document.querySelector("#priceInput"),
+  quickCustomWork: document.querySelector("#quickCustomWork"),
   lines: document.querySelector("#lineItemsBody"),
   label: document.querySelector("#labelInput"),
   notes: document.querySelector("#notesInput"),
@@ -210,6 +219,9 @@ const elements = {
   savedCount: document.querySelector("#savedCount"),
   filter: document.querySelector("#filterSelect"),
   orderMeta: document.querySelector("#orderMeta"),
+  quoteTab: document.querySelector("#quoteTabButton"),
+  copySummary: document.querySelector("#copySummaryButton"),
+  completeOrder: document.querySelector("#completeButton"),
   quoteView: document.querySelector("#quoteView"),
   productionView: document.querySelector("#productionView"),
   productionMeta: document.querySelector("#productionMeta"),
@@ -590,6 +602,7 @@ function newOrder() {
   const now = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
+    orderType: "Customer Sale",
     customer: "",
     handler: currentUser?.fullName || "",
     status: "Draft",
@@ -605,6 +618,19 @@ function newOrder() {
     createdBy: "",
     updatedBy: ""
   };
+}
+
+function isInternalCraftOrder(order) {
+  return order?.orderType === "Internal Craft";
+}
+
+function orderProductionSourceType(order) {
+  return isInternalCraftOrder(order) ? "Internal Craft" : "Customer Order";
+}
+
+function orderDisplayName(order) {
+  if (isInternalCraftOrder(order)) return order.label || "Internal stock build";
+  return order.customer || "Unnamed customer";
 }
 
 function newDailyClose() {
@@ -1275,6 +1301,7 @@ function wireEvents() {
   });
 
   ["input", "change"].forEach(eventName => {
+    elements.orderType.addEventListener(eventName, updateOrderTypeFromInput);
     elements.customer.addEventListener(eventName, updateActiveFromInputs);
     elements.handler.addEventListener(eventName, updateActiveFromInputs);
     elements.deposit.addEventListener(eventName, updateActiveFromInputs);
@@ -1337,9 +1364,10 @@ function saveCurrentDocument() {
 }
 
 function updateActiveFromInputs() {
-  activeOrder.customer = elements.customer.value.trim();
+  activeOrder.orderType = elements.orderType.value === "Internal Craft" ? "Internal Craft" : "Customer Sale";
+  activeOrder.customer = isInternalCraftOrder(activeOrder) ? "" : elements.customer.value.trim();
   activeOrder.handler = elements.handler.value.trim();
-  activeOrder.deposit = Number(elements.deposit.value || 0);
+  activeOrder.deposit = isInternalCraftOrder(activeOrder) ? 0 : Number(elements.deposit.value || 0);
   activeOrder.priority = elements.priority.value;
   activeOrder.deliveryDate = elements.deliveryDate.value;
   activeOrder.status = elements.status.value;
@@ -1349,6 +1377,27 @@ function updateActiveFromInputs() {
   renderTotals();
   renderPreview();
   renderMeta();
+}
+
+function updateOrderTypeFromInput() {
+  const nextType = elements.orderType.value === "Internal Craft" ? "Internal Craft" : "Customer Sale";
+  if (activeOrder.orderType === nextType) return;
+  const wasInternal = isInternalCraftOrder(activeOrder);
+  activeOrder.orderType = nextType;
+  if (isInternalCraftOrder(activeOrder)) {
+    activeOrder.customer = "";
+    activeOrder.deposit = 0;
+    activeOrder.lines = activeOrder.lines
+      .filter(line => !line.custom)
+      .map(line => ({ ...line, unitPrice: 0 }));
+  } else if (wasInternal) {
+    activeOrder.lines = activeOrder.lines.map(line => ({
+      ...line,
+      unitPrice: Number(findCatalogItem(line.name || line.label)?.price || 0)
+    }));
+  }
+  touchActive();
+  render();
 }
 
 function touchActive() {
@@ -1375,7 +1424,7 @@ function addItemLine() {
     tag: item.tag,
     category: item.category,
     quantity: Math.max(1, Number(elements.quantity.value || 1)),
-    unitPrice: Number(elements.price.value || item.price || 0),
+    unitPrice: isInternalCraftOrder(activeOrder) ? 0 : Number(elements.price.value || item.price || 0),
     custom: false
   });
 
@@ -1443,6 +1492,19 @@ async function setStatus(status) {
 
 async function completeActiveOrder() {
   const batch = productionBatchForOrder(activeOrder.id);
+  if (isInternalCraftOrder(activeOrder)) {
+    if (batch) {
+      activeProductionBatchId = batch.id;
+      activeSection = "production";
+      render();
+      elements.productionActionStatus.textContent = batch.status === "Completed"
+        ? "This internal stock build is complete"
+        : "Finish this production batch to complete the internal craft";
+    } else {
+      elements.orderMeta.textContent = "Queue production to complete an internal craft";
+    }
+    return;
+  }
   if (batch && PRODUCTION_ACTIVE_STATUSES.has(batch.status)) {
     activeProductionBatchId = batch.id;
     activeSection = "production";
@@ -1461,7 +1523,10 @@ async function removeActiveOrder() {
     render();
     return;
   }
-  if (!window.confirm(`Remove the sales order for ${activeOrder.customer || "this customer"}?`)) return;
+  const recordLabel = isInternalCraftOrder(activeOrder)
+    ? `the internal craft ${orderDisplayName(activeOrder)}`
+    : `the sales order for ${orderDisplayName(activeOrder)}`;
+  if (!window.confirm(`Remove ${recordLabel}?`)) return;
   try {
     const response = await fetch(`/api/sales-orders/${encodeURIComponent(activeOrder.id)}`, {
       method: "DELETE",
@@ -2275,6 +2340,8 @@ function preferredSupplyUnitPrice(name) {
 }
 
 function render() {
+  renderOrderMode();
+  elements.orderType.value = isInternalCraftOrder(activeOrder) ? "Internal Craft" : "Customer Sale";
   elements.customer.value = activeOrder.customer;
   elements.handler.value = activeOrder.handler;
   elements.deposit.value = activeOrder.deposit || 0;
@@ -2307,6 +2374,25 @@ function render() {
   renderSection();
 }
 
+function renderOrderMode() {
+  const internal = isInternalCraftOrder(activeOrder);
+  elements.activeOrderTitle.textContent = internal ? "Internal Craft" : businessTerminology.salesOrder;
+  elements.customerField.classList.toggle("hidden", internal);
+  elements.depositField.classList.toggle("hidden", internal);
+  elements.linePriceField.classList.toggle("hidden", internal);
+  elements.quickCustomWork.classList.toggle("hidden", internal);
+  elements.customer.disabled = internal;
+  elements.deposit.disabled = internal;
+  elements.price.disabled = internal;
+  elements.deliveryDateFieldLabel.textContent = internal ? "Target Date" : "Delivery Date";
+  elements.quoteTab.textContent = internal ? "Plan" : "Quote";
+  elements.copySummary.textContent = internal ? "Copy Craft Plan" : "Copy Summary";
+  elements.completeOrder.disabled = internal;
+  elements.completeOrder.title = internal ? "Internal crafts complete from the production queue" : "Complete order";
+  const completedOption = elements.status.querySelector('option[value="Completed"]');
+  if (completedOption) completedOption.disabled = internal;
+}
+
 function renderLines() {
   if (!activeOrder.lines.length) {
     elements.lines.innerHTML = `<tr><td colspan="5" class="empty-line">No lines yet</td></tr>`;
@@ -2314,7 +2400,8 @@ function renderLines() {
   }
 
   elements.lines.innerHTML = activeOrder.lines.map(line => {
-    const total = line.quantity * line.unitPrice;
+    const unitPrice = isInternalCraftOrder(activeOrder) ? 0 : Number(line.unitPrice || 0);
+    const total = line.quantity * unitPrice;
     return `
       <tr>
         <td>
@@ -2322,7 +2409,7 @@ function renderLines() {
           <span>${escapeHtml(line.category || "Manual")}${line.tag ? ` / ${escapeHtml(line.tag)}` : ""}</span>
         </td>
         <td>${formatNumber(line.quantity)}</td>
-        <td>${formatCurrency(line.unitPrice)}</td>
+        <td>${formatCurrency(unitPrice)}</td>
         <td>${formatCurrency(total)}</td>
         <td><button class="icon-button" type="button" data-remove-line="${line.id}" title="Remove line">x</button></td>
       </tr>
@@ -2491,8 +2578,9 @@ function getSupplyReceivedUnits(order) {
 }
 
 function renderTotals() {
-  const subtotal = getSubtotal(activeOrder);
-  const deposit = Number(activeOrder.deposit || 0);
+  const internal = isInternalCraftOrder(activeOrder);
+  const subtotal = internal ? 0 : getSubtotal(activeOrder);
+  const deposit = internal ? 0 : Number(activeOrder.deposit || 0);
   elements.subtotal.textContent = formatCurrency(subtotal);
   elements.depositValue.textContent = formatCurrency(deposit);
   elements.balance.textContent = formatCurrency(Math.max(0, subtotal - deposit));
@@ -3609,8 +3697,8 @@ function buildDailyClosePreview() {
   const openBuyOrders = storefrontBuyOrders.filter(order => BUY_ORDER_OPEN_STATUSES.has(order.status));
   const issues = [
     ...activeSales.filter(order => order.deliveryDate && order.deliveryDate < todayKey()).map(order => ({
-      type: "Overdue Sale",
-      label: order.customer || "Unnamed customer",
+      type: isInternalCraftOrder(order) ? "Overdue Internal Craft" : "Overdue Sale",
+      label: orderDisplayName(order),
       detail: `Due ${order.deliveryDate}`
     })),
     ...activeProduction.map(batch => ({
@@ -4277,8 +4365,8 @@ function renderDashboardCards(items, emptyText) {
   return items.map(order => `
     <button class="dashboard-order" type="button" data-dashboard-order="${order.id}">
       <span class="status-pill ${order.status.toLowerCase()}">${escapeHtml(order.status)}</span>
-      <strong>${escapeHtml(order.customer || "Unnamed customer")}</strong>
-      <span>${formatDelivery(order.deliveryDate)} / ${order.lines.length} lines / ${formatCurrency(getSubtotal(order))}</span>
+      <strong>${escapeHtml(orderDisplayName(order))}</strong>
+      <span>${formatDelivery(order.deliveryDate)} / ${order.lines.length} lines / ${formatCurrency(isInternalCraftOrder(order) ? 0 : getSubtotal(order))}</span>
     </button>
   `).join("");
 }
@@ -4302,9 +4390,12 @@ function renderSupplyDeliveryCards(items) {
 
 function renderProduction() {
   const production = getProductionPlan(activeOrder);
+  const internal = isInternalCraftOrder(activeOrder);
   const existingUnits = production.stockAllocations.reduce((sum, allocation) =>
     sum + Number(allocation.storageQuantity || 0) + Number(allocation.storefrontQuantity || 0), 0);
-  elements.productionMeta.textContent = `${formatNumber(existingUnits)} existing units reserved / ${production.buildLines.length} production lines / ${production.materials.length} materials${isManagement() ? ` / est. ${formatCurrency(production.materialCost)}` : ""}`;
+  elements.productionMeta.textContent = internal
+    ? `${production.buildLines.length} stock-building lines / ${production.materials.length} materials / output goes to storage${isManagement() ? ` / est. ${formatCurrency(production.materialCost)}` : ""}`
+    : `${formatNumber(existingUnits)} existing units reserved / ${production.buildLines.length} production lines / ${production.materials.length} materials${isManagement() ? ` / est. ${formatCurrency(production.materialCost)}` : ""}`;
 
   if (!production.fulfillmentLines.length) {
     elements.productionBuildList.innerHTML = `<div class="empty-card">No order lines to fulfill yet</div>`;
@@ -4312,7 +4403,9 @@ function renderProduction() {
     elements.productionBuildList.innerHTML = production.fulfillmentLines.map(line => `
       <div class="production-row">
         <strong>${escapeHtml(line.label || line.name)}</strong>
-        <span>${formatNumber(line.orderedQuantity)} ordered / ${formatNumber(line.existingQuantity)} existing / ${formatNumber(line.productionQuantity)} to produce${line.storageQuantity ? ` / ${formatNumber(line.storageQuantity)} storage` : ""}${line.storefrontQuantity ? ` / ${formatNumber(line.storefrontQuantity)} storefront` : ""}</span>
+        <span>${internal
+          ? `${formatNumber(line.productionQuantity)} to produce for storage`
+          : `${formatNumber(line.orderedQuantity)} ordered / ${formatNumber(line.existingQuantity)} existing / ${formatNumber(line.productionQuantity)} to produce${line.storageQuantity ? ` / ${formatNumber(line.storageQuantity)} storage` : ""}${line.storefrontQuantity ? ` / ${formatNumber(line.storefrontQuantity)} storefront` : ""}`}</span>
       </div>
     `).join("");
   }
@@ -4354,8 +4447,8 @@ function renderOrdersList() {
   elements.ordersList.innerHTML = visibleOrders.map(order => `
     <button class="order-card ${order.id === activeOrder.id ? "selected" : ""}" type="button" data-order-id="${order.id}">
       <span class="status-pill ${order.status.toLowerCase()}">${escapeHtml(order.status)}</span>
-      <strong>${escapeHtml(order.customer || "Unnamed customer")}</strong>
-      <span>${order.lines.length} lines / ${formatCurrency(getSubtotal(order))}</span>
+      <strong>${escapeHtml(orderDisplayName(order))}</strong>
+      <span>${escapeHtml(isInternalCraftOrder(order) ? "Internal Craft" : "Customer Sale")} / ${order.lines.length} lines / ${formatCurrency(isInternalCraftOrder(order) ? 0 : getSubtotal(order))}</span>
       <span>${formatDelivery(order.deliveryDate)}</span>
       <small>${formatDateTime(order.updatedAt)}</small>
     </button>
@@ -4387,30 +4480,34 @@ async function copyProduction() {
 }
 
 function buildSummary(order) {
+  const internal = isInternalCraftOrder(order);
   const lines = order.lines.length
     ? order.lines.map(line => {
+      if (internal) return `${formatNumber(line.quantity)}x ${line.label || line.name}`;
       const total = line.quantity * line.unitPrice;
       return `${formatNumber(line.quantity)}x ${line.label || line.name} - ${formatCurrency(line.unitPrice)} each = ${formatCurrency(total)}`;
     }).join("\n")
     : "No items added";
 
-  const subtotal = getSubtotal(order);
-  const deposit = Number(order.deposit || 0);
+  const subtotal = internal ? 0 : getSubtotal(order);
+  const deposit = internal ? 0 : Number(order.deposit || 0);
   const balance = Math.max(0, subtotal - deposit);
   const details = [order.label, order.notes].filter(Boolean).join("\n");
 
   return [
-    `${businessProfile.name || "Business"} Quote`,
-    `Customer: ${order.customer || ""}`,
+    `${businessProfile.name || "Business"} ${internal ? "Internal Craft" : "Quote"}`,
+    internal ? "Purpose: Build stock for storage" : `Customer: ${order.customer || ""}`,
     order.handler ? `Handler: ${order.handler}` : "",
-    order.deliveryDate ? `Delivery: ${formatDelivery(order.deliveryDate)}` : "Order Type: In-store",
+    order.deliveryDate
+      ? `${internal ? "Target" : "Delivery"}: ${formatDelivery(order.deliveryDate)}`
+      : internal ? "Target: Not set" : "Order Type: In-store",
     `Status: ${order.status}${order.priority === "Expedite" ? " / Expedite" : ""}`,
     "",
     lines,
     "",
-    `Subtotal: ${formatCurrency(subtotal)}`,
-    `Deposit Paid: ${formatCurrency(deposit)}`,
-    `Balance Due: ${formatCurrency(balance)}`,
+    internal ? "Financial effect: None" : `Subtotal: ${formatCurrency(subtotal)}`,
+    internal ? "" : `Deposit Paid: ${formatCurrency(deposit)}`,
+    internal ? "" : `Balance Due: ${formatCurrency(balance)}`,
     details ? `\nNotes:\n${details}` : ""
   ].filter(line => line !== "").join("\n");
 }
@@ -4419,7 +4516,9 @@ function buildProductionSummary(order) {
   const production = getProductionPlan(order);
   const buildLines = production.fulfillmentLines.length
     ? production.fulfillmentLines.map(line =>
-      `${formatNumber(line.orderedQuantity)}x ${line.label || line.name} / ${formatNumber(line.existingQuantity)} existing / ${formatNumber(line.productionQuantity)} to produce`
+      isInternalCraftOrder(order)
+        ? `${formatNumber(line.productionQuantity)}x ${line.label || line.name} to produce for storage`
+        : `${formatNumber(line.orderedQuantity)}x ${line.label || line.name} / ${formatNumber(line.existingQuantity)} existing / ${formatNumber(line.productionQuantity)} to produce`
     ).join("\n")
     : "No order lines";
   const materials = production.materials.length
@@ -4431,7 +4530,7 @@ function buildProductionSummary(order) {
 
   return [
     `${businessProfile.name || "Business"} Production`,
-    `Customer: ${order.customer || ""}`,
+    isInternalCraftOrder(order) ? "Destination: Storage" : `Customer: ${order.customer || ""}`,
     "",
     "Build:",
     buildLines,
@@ -4455,21 +4554,23 @@ async function queueActiveOrderProduction() {
   updateActiveFromInputs();
   const saved = orders.some(order => order.id === activeOrder.id);
   if (!saved || activeOrderDirty) {
-    elements.productionMeta.textContent = "Saving the customer order before production is queued";
+    elements.productionMeta.textContent = `Saving the ${isInternalCraftOrder(activeOrder) ? "internal craft" : "customer order"} before production is queued`;
     if (!await saveActiveOrder()) return;
   }
   const plan = getProductionPlan(activeOrder);
   if (!plan.buildLines.length && !plan.stockAllocations.length) {
     elements.productionMeta.textContent = plan.missing.length
-      ? `No recipe or existing stock is available for ${plan.missing.join(", ")}`
+      ? `${isInternalCraftOrder(activeOrder) ? "No recipe is available" : "No recipe or existing stock is available"} for ${plan.missing.join(", ")}`
       : "Add at least one stocked or producible item before queuing fulfillment";
     return;
   }
   openProductionSourceDialog({
     id: crypto.randomUUID(),
-    sourceType: "Customer Order",
+    sourceType: orderProductionSourceType(activeOrder),
     sourceId: activeOrder.id,
-    reference: activeOrder.customer || "In-store order",
+    reference: isInternalCraftOrder(activeOrder)
+      ? activeOrder.label || "Internal stock build"
+      : activeOrder.customer || "In-store order",
     dueDate: activeOrder.deliveryDate,
     priority: activeOrder.priority,
     assignedTo: activeOrder.handler,
@@ -4477,7 +4578,9 @@ async function queueActiveOrderProduction() {
     lines: plan.buildLines.map(line => ({ itemName: line.name, requestedQuantity: line.quantity })),
     stockAllocations: plan.stockAllocations,
     fulfillmentLines: plan.fulfillmentLines
-  }, "Customer order fulfillment added to the shared queue");
+  }, isInternalCraftOrder(activeOrder)
+    ? "Internal stock build added to the shared queue"
+    : "Customer order fulfillment added to the shared queue");
 }
 
 async function queueRestockProduction() {
@@ -4536,7 +4639,7 @@ function renderProductionSourceDialog() {
   });
   const storage = getLatestCounts("Storage");
   const storefront = getLatestCounts("Storefront");
-  const allocationRows = fulfillmentLines.length ? `
+  const allocationRows = payload.sourceType === "Customer Order" && fulfillmentLines.length ? `
     <section class="production-source-section">
       <div class="production-source-heading">
         <strong>Existing Finished Stock</strong>
@@ -4584,7 +4687,9 @@ function renderProductionSourceDialog() {
         </div>
       `).join("")}
     </section>
-  ` : `<div class="empty-card">Existing stock covers the complete order</div>`;
+  ` : payload.lines.length
+    ? ""
+    : `<div class="empty-card">Existing stock covers the complete customer order</div>`;
   elements.productionSourceList.innerHTML = `${allocationRows}${materialRows}`;
   elements.productionSourceList.querySelectorAll("[data-stock-allocation-location]").forEach(input => {
     input.addEventListener("change", updatePendingProductionAllocation);
@@ -4651,7 +4756,9 @@ async function confirmProductionSourceSelection() {
   });
   const { payload, successMessage } = pendingProductionQueue;
   payload.lines = payload.lines.map(line => ({ ...line, ingredientSources }));
-  elements.productionSourceStatus.textContent = "Queuing fulfillment...";
+  elements.productionSourceStatus.textContent = payload.sourceType === "Internal Craft"
+    ? "Queuing internal stock build..."
+    : "Queuing fulfillment...";
   await createProductionBatch(payload, successMessage);
   if (activeSection === "production") closeProductionSourceDialog();
 }
@@ -5218,7 +5325,7 @@ function renderTargets() {
 
 function productionBatchForOrder(orderId) {
   if (!orderId) return null;
-  return productionBatches.find(batch => batch.sourceType === "Customer Order"
+  return productionBatches.find(batch => ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
     && batch.sourceId === orderId
     && batch.status !== "Cancelled") || null;
 }
@@ -6141,6 +6248,7 @@ function stockKey(entry) {
 }
 
 function getProductionPlan(order, allocationOverrides = null) {
+  const internal = isInternalCraftOrder(order);
   const materialTotals = new Map();
   const buildMap = new Map();
   const missing = [];
@@ -6186,7 +6294,10 @@ function getProductionPlan(order, allocationOverrides = null) {
     const saved = linkedAllocations.get(line.key);
     let storageQuantity;
     let storefrontQuantity;
-    if (saved) {
+    if (internal) {
+      storageQuantity = 0;
+      storefrontQuantity = 0;
+    } else if (saved) {
       storageQuantity = Math.max(0, Number(saved.storageQuantity || 0));
       storefrontQuantity = Math.max(0, Number(saved.storefrontQuantity || 0));
     } else if (override) {
@@ -6210,7 +6321,7 @@ function getProductionPlan(order, allocationOverrides = null) {
     const existingQuantity = storageQuantity + storefrontQuantity;
     const productionQuantity = linkedBatch
       ? Number(linkedProduction.get(line.key) || 0)
-      : Math.max(0, line.orderedQuantity - existingQuantity);
+      : internal ? line.orderedQuantity : Math.max(0, line.orderedQuantity - existingQuantity);
     if (productionQuantity > 0) {
       if (recipeCatalog[line.name]) buildMap.set(line.name, productionQuantity);
       else missing.push(line.label || line.name);

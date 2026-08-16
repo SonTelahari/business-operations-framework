@@ -9,6 +9,8 @@ const {
 const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially Received", "Received", "Cancelled"]);
 const STOREFRONT_BUY_ORDER_STATUSES = new Set(["Active", "Paused", "Filled", "Cancelled"]);
 const PRODUCTION_BATCH_STATUSES = new Set(["Planned", "In Progress", "Completed", "Cancelled"]);
+const SALES_ORDER_TYPES = new Set(["Customer Sale", "Internal Craft"]);
+const ORDER_PRODUCTION_SOURCE_TYPES = new Set(["Customer Order", "Internal Craft"]);
 const SALES_ORDER_STATUSES = new Set([
   "Draft",
   "Paused",
@@ -26,7 +28,7 @@ class BusinessStore {
     this.filePath = filePath;
     this.repository = repository;
     this.data = {
-      version: 8,
+      version: 9,
       configuration: null,
       salesOrders: [],
       supplyOrders: [],
@@ -329,23 +331,33 @@ class BusinessStore {
       if (existing) return structuredClone(existing);
       const batch = cleanProductionBatch(input, actor, { id, now });
       const duplicateSource = batch.sourceId && this.data.productionBatches.find(candidate =>
-        candidate.sourceType === batch.sourceType
-        && candidate.sourceId === batch.sourceId
+        candidate.sourceId === batch.sourceId
+        && candidate.sourceType === batch.sourceType
         && candidate.status !== "Cancelled"
-        && (batch.sourceType === "Customer Order" || candidate.status !== "Completed")
+        && (ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType) || candidate.status !== "Completed")
       );
       if (duplicateSource) {
         throw businessError("This source already has an active production batch", 409, "production_source_active");
       }
-      const sourceOrder = batch.sourceType === "Customer Order"
+      const sourceOrder = ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
         ? this.data.salesOrders.find(order => order.id === batch.sourceId)
         : null;
-      if (batch.sourceType === "Customer Order"
+      if (ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
         && (!sourceOrder || ["Ready", "Completed", "Cancelled"].includes(sourceOrder.status))) {
-        throw businessError("The customer order is unavailable or already closed", 409, "customer_order_unavailable");
+        throw businessError("The linked order is unavailable or already closed", 409, "sales_order_unavailable");
+      }
+      if (sourceOrder && batch.sourceType !== productionSourceTypeForOrder(sourceOrder)) {
+        throw businessError("The production type does not match the linked order", 400, "production_order_type_mismatch");
       }
       this.data.productionBatches.unshift(batch);
-      transitionSalesOrder(sourceOrder, batch.status === "Completed" ? "Ready" : "In Production", actor, now);
+      transitionSalesOrder(
+        sourceOrder,
+        batch.status === "Completed"
+          ? (isInternalCraftOrder(sourceOrder) ? "Completed" : "Ready")
+          : "In Production",
+        actor,
+        now
+      );
       return structuredClone(batch);
     });
   }
@@ -409,10 +421,10 @@ class BusinessStore {
       if (completed) {
         batch.completedAt = batch.updatedAt;
         batch.completedBy = batch.updatedBy;
-        const sourceOrder = batch.sourceType === "Customer Order"
+        const sourceOrder = ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
           ? this.data.salesOrders.find(order => order.id === batch.sourceId)
           : null;
-        transitionSalesOrder(sourceOrder, "Ready", actor, batch.updatedAt);
+        transitionSalesOrder(sourceOrder, isInternalCraftOrder(sourceOrder) ? "Completed" : "Ready", actor, batch.updatedAt);
       }
       return structuredClone(batch);
     });
@@ -431,10 +443,10 @@ class BusinessStore {
       batch.status = "Cancelled";
       batch.updatedAt = new Date().toISOString();
       batch.updatedBy = cleanText(actor?.fullName, 100);
-      const sourceOrder = batch.sourceType === "Customer Order"
+      const sourceOrder = ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
         ? this.data.salesOrders.find(order => order.id === batch.sourceId)
         : null;
-      transitionSalesOrder(sourceOrder, "Reserved", actor, batch.updatedAt);
+      transitionSalesOrder(sourceOrder, isInternalCraftOrder(sourceOrder) ? "Cancelled" : "Reserved", actor, batch.updatedAt);
       return structuredClone(batch);
     });
   }
@@ -641,7 +653,7 @@ class BusinessStore {
 
 function emptyBusinessData() {
   return {
-    version: 8,
+    version: 9,
     configuration: null,
     salesOrders: [],
     supplyOrders: [],
@@ -655,7 +667,7 @@ function emptyBusinessData() {
 function normalizeBusinessData(input) {
   const parsed = input && typeof input === "object" ? input : {};
   return {
-    version: 8,
+    version: 9,
     configuration: parsed.configuration ? normalizeStoredConfiguration(parsed.configuration) : null,
     salesOrders: cleanObjectArray(parsed.salesOrders).map(cleanStoredSalesOrder),
     supplyOrders: cleanObjectArray(parsed.supplyOrders).map(cleanStoredSupplyOrder),
@@ -689,18 +701,26 @@ function normalizeStoredConfiguration(configuration) {
 }
 
 function cleanSalesOrder(input, actor, { id, now, existing }) {
+  const requestedOrderType = input.orderType || existing?.orderType;
+  const orderType = SALES_ORDER_TYPES.has(requestedOrderType) ? requestedOrderType : "Customer Sale";
+  const internal = orderType === "Internal Craft";
   let status = SALES_ORDER_STATUSES.has(input.status) ? input.status : "Draft";
   let priority = input.priority === "Expedite" ? "Expedite" : "Normal";
   if (status === "Expedited") priority = "Expedite";
-  const lines = (Array.isArray(input.lines) ? input.lines : []).slice(0, 100).map(cleanSalesOrderLine);
+  const lines = (Array.isArray(input.lines) ? input.lines : []).slice(0, 100)
+    .map(line => cleanSalesOrderLine(line, { forceZeroPrice: internal }));
+  if (internal && lines.some(line => line.custom)) {
+    throw businessError("Internal crafts can only contain catalog goods with recipes", 400, "internal_craft_catalog_goods_only");
+  }
   return {
     id,
-    customer: cleanText(input.customer, 120),
+    orderType,
+    customer: internal ? "" : cleanText(input.customer, 120),
     handler: cleanText(input.handler, 100),
     status,
     priority,
     deliveryDate: cleanDate(input.deliveryDate),
-    deposit: Math.max(0, finiteNumber(input.deposit, 0)),
+    deposit: internal ? 0 : Math.max(0, finiteNumber(input.deposit, 0)),
     lines,
     label: cleanText(input.label, 250),
     notes: cleanText(input.notes, 2500),
@@ -806,7 +826,7 @@ function cleanStoredSalesOrder(order) {
   return cleaned;
 }
 
-function cleanSalesOrderLine(line) {
+function cleanSalesOrderLine(line, { forceZeroPrice = false } = {}) {
   const name = cleanText(line?.name || line?.label, 120);
   if (!name) throw businessError("Every sales line needs an item", 400, "invalid_sales_line");
   const quantity = finiteNumber(line.quantity, 0);
@@ -818,19 +838,22 @@ function cleanSalesOrderLine(line) {
     tag: cleanText(line.tag, 120),
     category: cleanText(line.category || "Manual", 80),
     quantity,
-    unitPrice: Math.max(0, finiteNumber(line.unitPrice, 0)),
+    unitPrice: forceZeroPrice ? 0 : Math.max(0, finiteNumber(line.unitPrice, 0)),
     custom: Boolean(line.custom)
   };
 }
 
 function cleanProductionBatch(input, actor, { id, now }) {
-  const sourceType = new Set(["Customer Order", "Storefront Restock", "Manual"]).has(input.sourceType)
+  const sourceType = new Set(["Customer Order", "Internal Craft", "Storefront Restock", "Manual"]).has(input.sourceType)
     ? input.sourceType
     : "Manual";
   const lines = (Array.isArray(input.lines) ? input.lines : []).slice(0, 50)
     .map(cleanProductionLine);
   const stockAllocations = (Array.isArray(input.stockAllocations) ? input.stockAllocations : []).slice(0, 50)
     .map(cleanProductionStockAllocation);
+  if (sourceType === "Internal Craft" && stockAllocations.length) {
+    throw businessError("Internal crafts must produce the full quantity and cannot reserve finished stock", 400, "internal_craft_stock_allocation_forbidden");
+  }
   if (!lines.length && !stockAllocations.length) {
     throw businessError("Add production work or reserve existing stock for this order", 400, "production_fulfillment_required");
   }
@@ -917,6 +940,14 @@ function transitionSalesOrder(order, status, actor, now) {
   order.updatedBy = cleanText(actor?.fullName, 100);
 }
 
+function isInternalCraftOrder(order) {
+  return order?.orderType === "Internal Craft";
+}
+
+function productionSourceTypeForOrder(order) {
+  return isInternalCraftOrder(order) ? "Internal Craft" : "Customer Order";
+}
+
 function normalizeProductionSource(value) {
   const key = normalizeKey(value);
   return key === "sales" || key.includes("store") ? "Storefront" : "Storage";
@@ -940,7 +971,7 @@ function cleanStoredProductionBatch(batch) {
     ...batch,
     id: cleanText(batch.id, 100) || crypto.randomUUID(),
     status,
-    sourceType: new Set(["Customer Order", "Storefront Restock", "Manual"]).has(batch.sourceType)
+    sourceType: new Set(["Customer Order", "Internal Craft", "Storefront Restock", "Manual"]).has(batch.sourceType)
       ? batch.sourceType
       : "Manual",
     sourceId: cleanText(batch.sourceId, 100),

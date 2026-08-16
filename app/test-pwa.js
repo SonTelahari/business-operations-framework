@@ -46,6 +46,8 @@ assert(appHtml.includes('data-section="catalog"'), "managers must have a catalog
 assert(appHtml.includes('id="recipeEditorForm"'), "catalog management must expose a recipe editor");
 assert(appHtml.includes('id="productionSourceDialog"'), "production queues must confirm ingredient source locations");
 assert(appHtml.includes('id="confirmProductionSourceButton"'), "customer fulfillment must confirm existing-stock allocations");
+assert(appHtml.includes('id="orderTypeSelect"'), "the workbench must expose customer-sale and internal-craft modes");
+assert(appHtml.includes('<option value="Internal Craft">Internal Craft</option>'), "internal stock builds must be selectable from the workbench");
 assert(appHtml.includes('id="storefrontOverviewValue"'), "the Store overview must show storefront value");
 assert(appHtml.includes('id="storageOverviewValue"'), "the Store overview must show storage value");
 assert(appHtml.includes('<div class="management-only">\n              <span>Storefront Value</span>'), "storefront value must remain management-only");
@@ -63,6 +65,8 @@ assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefro
 assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");
 assert(appScript.includes('function completeActiveOrder()'), "customer-order completion must respect linked production");
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
+assert(appScript.includes('function isInternalCraftOrder(order)'), "the client must keep internal crafts distinct from customer sales");
+assert(appScript.includes('sourceType: orderProductionSourceType(activeOrder)'), "internal crafts must queue with their own production source type");
 assert(appScript.includes('function switchWorkspace(event)'), "the ledger must support workspace switching without another login");
 assert(appScript.includes('function linkWorkspaceJob(event)'), "the ledger must support credential-verified local job linking");
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");

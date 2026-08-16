@@ -54,7 +54,7 @@ Set `AUTH_SESSION_SECRET` and `BRIDGE_API_TOKEN` before starting Compose. Add `-
 
 ## Accounts and Roles
 
-- **Employees** see the daily desk, store, workbench, production queue, and ordinary shift tools. They can create customer orders, queue only those orders for production, start batches, record completed production cycles, and mark ready orders delivered. Inventory values, production costs, stock adjustments, cancellations, and administrative controls stay hidden.
+- **Employees** see the daily desk, store, workbench, production queue, and ordinary shift tools. They can create customer orders and internal stock builds, queue those saved orders for production, start batches, record completed production cycles, and mark ready customer orders delivered. Inventory values, production costs, stock adjustments, cancellations, and administrative controls stay hidden.
 - **Managers** can additionally count and adjust stock, maintain targets and suppliers, create storefront-restock or manual production, cancel batches, reconcile webhook exceptions, approve staff, and inspect the audit ledger.
 - **Admins** additionally control finance, payroll, owner funds, manager promotion, and protected corrections.
 
@@ -63,6 +63,8 @@ New registrations use either the employee's character name and chosen password o
 One personal profile can hold jobs at several businesses. Discord memberships appear automatically after approval. Password users link each separately approved business account once with its workspace code and credentials, then use the **Businesses** control in the ledger header to switch workplaces. Role, approval status, time entries, stock, and audit history remain scoped to the selected business.
 
 Customer-order fulfillment first reserves available finished goods from storage or storefront stock, then creates production work only for the remaining quantity. The allocation can be adjusted before queueing and is persisted so another order cannot claim the same units. Orders covered entirely by existing stock move directly to **Ready**; otherwise, completing every production line marks the order **Ready**, and the employee marks it **Completed** only after delivery. The production register includes an **Assigned to Me** filter for the employee named as the order handler.
+
+Internal crafts use the same workbench with **Internal Craft** selected. They always build the full entered quantity for storage, even when finished stock already exists. Prices, deposits, balances, ledger movements, and P&L entries are forced to zero. Completing production consumes the chosen recipe ingredients, adds the crafted output to storage, and closes the internal order automatically without a customer-delivery movement.
 
 ## Finance Entry Rules
 
