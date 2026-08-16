@@ -1490,6 +1490,7 @@ async function handleBusinessProfileRoute(request, response, url, user) {
       ok: true,
       business: configuration?.business || null,
       terminology: configuration?.terminology || null,
+      navigation: configuration?.navigation || null,
       updatedAt: configuration?.updatedAt || "",
       updatedBy: configuration?.updatedBy || ""
     });
@@ -1500,7 +1501,8 @@ async function handleBusinessProfileRoute(request, response, url, user) {
     return true;
   }
   try {
-    const previous = businessStore.getConfiguration()?.business || {};
+    const previousConfiguration = businessStore.getConfiguration() || {};
+    const previous = previousConfiguration.business || {};
     const configuration = await businessStore.updateBusinessProfile(await readJsonBody(request), user);
     if (tenantManager) {
       await tenantManager.updateWorkspaceIdentity(
@@ -1520,13 +1522,16 @@ async function handleBusinessProfileRoute(request, response, url, user) {
         name: configuration.business.name,
         location: configuration.business.location,
         referenceId: configuration.business.referenceId,
-        logoChanged: previous.logoUrl !== configuration.business.logoUrl
+        logoChanged: previous.logoUrl !== configuration.business.logoUrl,
+        navigationChanged: JSON.stringify(previousConfiguration.navigation?.sections || {})
+          !== JSON.stringify(configuration.navigation?.sections || {})
       }
     }).catch(error => console.error("Unable to write business profile audit event:", error.message));
     sendJson(response, {
       ok: true,
       business: configuration.business,
       terminology: configuration.terminology,
+      navigation: configuration.navigation,
       workspace: tenantManager ? publicWorkspace() : null,
       updatedAt: configuration.updatedAt,
       updatedBy: configuration.updatedBy
@@ -3598,6 +3603,7 @@ async function getBootstrapData(user) {
     workspace: hostedMode ? publicWorkspace() : null,
     business: configuration?.business || null,
     terminology: configuration?.terminology || null,
+    navigation: configuration?.navigation || null,
     locations: configuration?.locations || [],
     modules: configuration?.modules || {},
     dataBackend: standaloneStore ? "postgresql" : "apps-script",

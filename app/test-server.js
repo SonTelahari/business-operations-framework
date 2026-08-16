@@ -477,6 +477,13 @@ async function run() {
   assert.equal(employeeBuyOrderAttempt.response.status, 403);
   const employeeFinanceAttempt = await getJson(`${baseUrl}/api/finance`, employeeCookie);
   assert.equal(employeeFinanceAttempt.response.status, 403);
+  const ownerNavigationUpdate = await put(`${baseUrl}/api/admin/business-profile`, {
+    navigation: { sections: { review: false, finance: true } }
+  }, ownerCookie);
+  assert.equal(ownerNavigationUpdate.response.status, 200);
+  assert.equal(ownerNavigationUpdate.body.navigation.sections.review, false);
+  assert.equal(ownerNavigationUpdate.body.navigation.sections.finance, true);
+  assert.equal(ownerNavigationUpdate.body.navigation.sections.store, true);
   const employeeBusinessProfileAttempt = await put(`${baseUrl}/api/admin/business-profile`, {
     business: { name: "Unauthorized Rename" }
   }, employeeCookie);
@@ -487,6 +494,8 @@ async function run() {
   const employeeDailyCloseAttempt = await getJson(`${baseUrl}/api/daily-closes`, employeeCookie);
   assert.equal(employeeDailyCloseAttempt.response.status, 403);
   const employeeBootstrap = await getJson(`${baseUrl}/api/bootstrap`, employeeCookie);
+  assert.equal(employeeBootstrap.body.navigation.sections.review, false);
+  assert.equal(employeeBootstrap.body.navigation.sections.store, true);
   assert.equal(Object.prototype.hasOwnProperty.call(employeeBootstrap.body.sheet, "reviewExceptions"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(employeeBootstrap.body.sheet.inventory, "ledger"), false);
   const employeeReviewAttempt = await post(`${baseUrl}/api/sync`, {

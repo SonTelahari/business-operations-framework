@@ -8,6 +8,8 @@ const {
 const defaults = defaultSetupConfiguration();
 assert.equal(defaults.locations.length, 2);
 assert.equal(defaults.modules.production, true);
+assert.equal(defaults.navigation.sections.workbench, true);
+assert.equal(defaults.navigation.sections.finance, true);
 
 const configuration = normalizeSetupPayload({
   business: {
@@ -24,6 +26,7 @@ const configuration = normalizeSetupPayload({
     { name: "Warehouse", type: "storage" }
   ],
   modules: { discord: true },
+  navigation: { sections: { review: false } },
   catalog: {
     materials: [
       { name: "Copper", category: "Metals", unit: "bar", unitCost: 2.5, storageTarget: 30 },
@@ -40,7 +43,24 @@ const configuration = normalizeSetupPayload({
 assert.equal(configuration.business.name, "Copper & Pine");
 assert.equal(configuration.modules.discord, true);
 assert.equal(configuration.modules.finance, true);
+assert.equal(configuration.navigation.sections.review, false);
+assert.equal(configuration.navigation.sections.store, true);
 assert.equal(configuration.catalog.categories[0], "Cookware");
+
+const legacyModuleNavigation = normalizeSetupPayload({
+  business: { name: "Legacy Ledger", currency: "USD", locale: "en-US", timezone: "UTC" },
+  modules: { production: false, finance: false }
+});
+assert.equal(legacyModuleNavigation.navigation.sections.production, false);
+assert.equal(legacyModuleNavigation.navigation.sections.finance, false);
+assert.equal(legacyModuleNavigation.navigation.sections.store, true);
+
+const explicitNavigationOverride = normalizeSetupPayload({
+  business: { name: "Modern Ledger", currency: "USD", locale: "en-US", timezone: "UTC" },
+  modules: { finance: false },
+  navigation: { sections: { finance: true } }
+});
+assert.equal(explicitNavigationOverride.navigation.sections.finance, true);
 
 const catalog = configurationToCatalogData(configuration);
 assert.equal(catalog.items[0].price, 15);

@@ -72,6 +72,11 @@ assert(appScript.includes('function linkWorkspaceJob(event)'), "the ledger must 
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
 assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");
 assert(appHtml.includes('id="settingsLogoPreview"'), "business settings must preview branding changes");
+assert(appHtml.includes('id="settingsNavigationTabs"'), "business settings must expose per-business navigation controls");
+assert(appScript.includes("NAVIGATION_TAB_DEFINITIONS"), "the client must define the configurable workspace tabs");
+assert(appScript.includes("function applyNavigationVisibility()"), "saved navigation choices must update the visible tabs");
+assert(appScript.includes("if (!isNavigationSectionEnabled(section)) return false"), "hidden tabs must also be rejected by the section access guard");
+assert(styles.includes(".business-navigation-tabs"), "navigation controls must have a responsive ledger layout");
 const loginHtml = fs.readFileSync(path.join(root, "login.html"), "utf8");
 assert(loginHtml.includes('id="loginBusinessDescription"'), "the sign-in cover must display the configured business description");
 

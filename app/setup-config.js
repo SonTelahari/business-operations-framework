@@ -9,6 +9,29 @@ const MODULE_DEFAULTS = Object.freeze({
   discord: false
 });
 
+const NAVIGATION_SECTION_DEFAULTS = Object.freeze({
+  workbench: true,
+  production: true,
+  store: true,
+  catalog: true,
+  restock: true,
+  supplies: true,
+  "buy-orders": true,
+  operations: true,
+  "daily-close": true,
+  review: true,
+  employees: true,
+  finance: true
+});
+
+const MODULE_NAVIGATION_SECTIONS = Object.freeze({
+  production: "production",
+  supplies: "suppliers",
+  "buy-orders": "storefrontBuyOrders",
+  employees: "payroll",
+  finance: "finance"
+});
+
 const DEFAULT_LOCATIONS = Object.freeze([
   Object.freeze({ id: "storefront", name: "Storefront", type: "sales" }),
   Object.freeze({ id: "storage", name: "Storage", type: "storage" })
@@ -36,6 +59,7 @@ function defaultSetupConfiguration() {
     },
     locations: DEFAULT_LOCATIONS.map(location => ({ ...location })),
     modules: { ...MODULE_DEFAULTS },
+    navigation: { sections: { ...NAVIGATION_SECTION_DEFAULTS } },
     catalog: {
       categories: [],
       materials: [],
@@ -85,6 +109,7 @@ function normalizeSetupPayload(input) {
   ], 60);
   const recipes = normalizeRecipes(catalogInput.recipes, products, materials);
 
+  const modules = normalizeModules(source.modules);
   return {
     version: 1,
     completedAt: cleanDateTime(source.completedAt),
@@ -105,7 +130,8 @@ function normalizeSetupPayload(input) {
       salesOrder: cleanText(terminologyInput.salesOrder, 50) || "Sales Order"
     },
     locations,
-    modules: normalizeModules(source.modules),
+    modules,
+    navigation: normalizeNavigation(source.navigation, modules),
     catalog: { categories, materials, products, recipes }
   };
 }
@@ -193,6 +219,18 @@ function normalizeModules(input) {
     key,
     source[key] === undefined ? defaultValue : Boolean(source[key])
   ]));
+}
+
+function normalizeNavigation(input, modules) {
+  const source = input && typeof input === "object" ? input : {};
+  const sections = source.sections && typeof source.sections === "object" ? source.sections : {};
+  return {
+    sections: Object.fromEntries(Object.entries(NAVIGATION_SECTION_DEFAULTS).map(([key, defaultValue]) => {
+      const moduleName = MODULE_NAVIGATION_SECTIONS[key];
+      const legacyDefault = moduleName && modules[moduleName] === false ? false : defaultValue;
+      return [key, sections[key] === undefined ? legacyDefault : Boolean(sections[key])];
+    }))
+  };
 }
 
 function normalizeMaterials(input) {
@@ -358,6 +396,7 @@ function setupError(message, code) {
 module.exports = {
   DEFAULT_LOCATIONS,
   MODULE_DEFAULTS,
+  NAVIGATION_SECTION_DEFAULTS,
   configurationToCatalogData,
   defaultSetupConfiguration,
   normalizeSetupPayload,

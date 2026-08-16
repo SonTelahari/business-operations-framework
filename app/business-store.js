@@ -28,7 +28,7 @@ class BusinessStore {
     this.filePath = filePath;
     this.repository = repository;
     this.data = {
-      version: 9,
+      version: 10,
       configuration: null,
       salesOrders: [],
       supplyOrders: [],
@@ -99,7 +99,7 @@ class BusinessStore {
       normalized.completedAt = new Date().toISOString();
       normalized.completedBy = cleanText(actor?.fullName, 100) || "Initial owner";
       this.data.configuration = normalized;
-      this.data.version = 8;
+      this.data.version = 10;
       return structuredClone(normalized);
     });
   }
@@ -120,6 +120,16 @@ class BusinessStore {
         terminology: {
           ...current.terminology,
           ...(source.terminology && typeof source.terminology === "object" ? source.terminology : {})
+        },
+        navigation: {
+          ...current.navigation,
+          ...(source.navigation && typeof source.navigation === "object" ? source.navigation : {}),
+          sections: {
+            ...current.navigation?.sections,
+            ...(source.navigation?.sections && typeof source.navigation.sections === "object"
+              ? source.navigation.sections
+              : {})
+          }
         }
       });
       normalized.completedAt = current.completedAt;
@@ -653,7 +663,7 @@ class BusinessStore {
 
 function emptyBusinessData() {
   return {
-    version: 9,
+    version: 10,
     configuration: null,
     salesOrders: [],
     supplyOrders: [],
@@ -667,7 +677,7 @@ function emptyBusinessData() {
 function normalizeBusinessData(input) {
   const parsed = input && typeof input === "object" ? input : {};
   return {
-    version: 9,
+    version: 10,
     configuration: parsed.configuration ? normalizeStoredConfiguration(parsed.configuration) : null,
     salesOrders: cleanObjectArray(parsed.salesOrders).map(cleanStoredSalesOrder),
     supplyOrders: cleanObjectArray(parsed.supplyOrders).map(cleanStoredSupplyOrder),

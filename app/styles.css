@@ -478,7 +478,7 @@ button {
   color: var(--gold-strong);
 }
 
-.module-disabled {
+.navigation-disabled {
   display: none !important;
 }
 
@@ -5289,6 +5289,75 @@ body.auth-page {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.business-navigation-settings {
+  display: grid;
+  gap: 14px;
+}
+
+.business-navigation-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.business-navigation-heading h3,
+.business-navigation-heading p {
+  margin: 0;
+}
+
+.business-navigation-heading span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.business-navigation-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid rgba(92, 69, 43, 0.34);
+  border-left: 1px solid rgba(92, 69, 43, 0.34);
+}
+
+.business-navigation-tab {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border-right: 1px solid rgba(92, 69, 43, 0.34);
+  border-bottom: 1px solid rgba(92, 69, 43, 0.34);
+  color: var(--ink);
+  cursor: pointer;
+  text-transform: none;
+}
+
+.business-navigation-tab input {
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.business-navigation-tab span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.business-navigation-tab strong {
+  font-family: var(--display-font);
+  font-size: 0.95rem;
+}
+
+.business-navigation-tab small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
 .business-settings-actions {
   display: flex;
   align-items: center;
@@ -5315,6 +5384,10 @@ body.auth-page {
   .business-profile-preview {
     min-height: 0;
   }
+
+  .business-navigation-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 680px) {
@@ -5330,6 +5403,15 @@ body.auth-page {
   .business-settings-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .business-navigation-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .business-navigation-tabs {
+    grid-template-columns: 1fr;
   }
 }
 

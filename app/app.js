@@ -28,6 +28,23 @@ const SECTION_MIN_ROLE = Object.freeze({
   finance: "admin",
   "business-settings": "admin"
 });
+const NAVIGATION_TAB_DEFINITIONS = Object.freeze([
+  { section: "workbench", label: "Sales", role: "Employee" },
+  { section: "production", label: "Production", role: "Employee" },
+  { section: "store", label: "Store", role: "Employee" },
+  { section: "catalog", label: "Catalog", role: "Manager" },
+  { section: "restock", label: "Restock", role: "Manager" },
+  { section: "supplies", label: "Supplies", role: "Manager" },
+  { section: "buy-orders", label: "Buy Orders", role: "Manager" },
+  { section: "operations", label: "Operations", role: "Manager" },
+  { section: "daily-close", label: "Daily Close", role: "Manager" },
+  { section: "review", label: "Review", role: "Manager" },
+  { section: "employees", label: "Staff", role: "Manager" },
+  { section: "finance", label: "Finance", role: "Admin" }
+]);
+const DEFAULT_NAVIGATION_SECTIONS = Object.freeze(Object.fromEntries(
+  NAVIGATION_TAB_DEFINITIONS.map(tab => [tab.section, true])
+));
 let deliveryDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "2-digit",
   month: "2-digit",
@@ -115,7 +132,7 @@ const stockCatalog = [...itemCatalog, ...ingredientCatalog];
 const productCatalogByKey = new Map();
 let businessProfile = { name: "Business", ledgerName: "Business Ledger", location: "", referenceId: "", description: "", logoUrl: "", currency: "USD", locale: "en-US", timezone: "UTC" };
 let businessTerminology = { salesLocation: "Storefront", storageLocation: "Storage", salesOrder: "Sales Order" };
-let enabledModules = {};
+let navigationSections = { ...DEFAULT_NAVIGATION_SECTIONS };
 rebuildCatalogIndexes();
 
 let legacyOrdersPendingMigration = loadOrders();
@@ -465,6 +482,7 @@ const elements = {
   settingsSalesLocation: document.querySelector("#settingsSalesLocationInput"),
   settingsStorageLocation: document.querySelector("#settingsStorageLocationInput"),
   settingsSalesOrder: document.querySelector("#settingsSalesOrderInput"),
+  settingsNavigationTabs: document.querySelector("#settingsNavigationTabs"),
   settingsLogoPreview: document.querySelector("#settingsLogoPreview"),
   settingsMonogramPreview: document.querySelector("#settingsMonogramPreview"),
   settingsNamePreview: document.querySelector("#settingsNamePreview"),
@@ -855,7 +873,10 @@ function replaceObject(target, source) {
 function applyBusinessConfiguration(snapshot) {
   businessProfile = { ...businessProfile, ...(snapshot?.business || {}) };
   businessTerminology = { ...businessTerminology, ...(snapshot?.terminology || {}) };
-  enabledModules = { ...(snapshot?.modules || {}) };
+  navigationSections = {
+    ...DEFAULT_NAVIGATION_SECTIONS,
+    ...(snapshot?.navigation?.sections || {})
+  };
   const name = businessProfile.name || "Business";
   const ledgerName = businessProfile.ledgerName || `${name} Ledger`;
   const locale = businessProfile.locale || "en-US";
@@ -914,18 +935,9 @@ function applyBusinessConfiguration(snapshot) {
     monogram.classList.remove("hidden");
     monogram.textContent = businessInitials(name);
   }
-  const sectionModules = {
-    production: "production",
-    supplies: "suppliers",
-    "buy-orders": "storefrontBuyOrders",
-    employees: "payroll",
-    finance: "finance"
-  };
-  Object.entries(sectionModules).forEach(([section, moduleName]) => {
-    document.querySelectorAll(`[data-section="${section}"]`).forEach(control => {
-      control.classList.toggle("module-disabled", enabledModules[moduleName] === false);
-    });
-  });
+  applyNavigationVisibility();
+  if (!canAccessSection(activeSection)) activeSection = "dashboard";
+  renderSection();
   if (isAdmin() && !businessSettingsDirty) populateBusinessSettings();
 }
 
@@ -938,6 +950,17 @@ function pluralizeLabel(value) {
 
 function businessInitials(value) {
   return String(value || "Business Ledger").split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0]).join("").toUpperCase();
+}
+
+function isNavigationSectionEnabled(section) {
+  if (section === "dashboard" || section === "business-settings") return true;
+  return navigationSections[section] !== false;
+}
+
+function applyNavigationVisibility() {
+  document.querySelectorAll(".section-tabs [data-section]").forEach(control => {
+    control.classList.toggle("navigation-disabled", !isNavigationSectionEnabled(control.dataset.section));
+  });
 }
 
 function populateBusinessSettings() {
@@ -954,11 +977,25 @@ function populateBusinessSettings() {
   elements.settingsSalesLocation.value = businessTerminology.salesLocation || "Storefront";
   elements.settingsStorageLocation.value = businessTerminology.storageLocation || "Storage";
   elements.settingsSalesOrder.value = businessTerminology.salesOrder || "Sales Order";
+  renderBusinessNavigationSettings();
   const workspaceCode = currentWorkspace?.workspaceCode || currentWorkspace?.code || "";
   elements.businessSettingsMeta.textContent = workspaceCode
     ? `Workspace ${workspaceCode} / business identity and ledger presentation`
     : "Business identity and ledger presentation";
   renderBusinessSettingsPreview();
+}
+
+function renderBusinessNavigationSettings() {
+  if (!elements.settingsNavigationTabs) return;
+  elements.settingsNavigationTabs.innerHTML = NAVIGATION_TAB_DEFINITIONS.map(tab => `
+    <label class="business-navigation-tab">
+      <input type="checkbox" data-navigation-section="${escapeHtml(tab.section)}"${navigationSections[tab.section] !== false ? " checked" : ""}>
+      <span>
+        <strong>${escapeHtml(tab.label)}</strong>
+        <small>${escapeHtml(tab.role)}</small>
+      </span>
+    </label>
+  `).join("");
 }
 
 function renderBusinessSettingsPreview() {
@@ -1014,6 +1051,12 @@ async function saveBusinessSettings() {
           salesLocation: elements.settingsSalesLocation.value.trim(),
           storageLocation: elements.settingsStorageLocation.value.trim(),
           salesOrder: elements.settingsSalesOrder.value.trim()
+        },
+        navigation: {
+          sections: Object.fromEntries(NAVIGATION_TAB_DEFINITIONS.map(tab => [
+            tab.section,
+            Boolean(elements.settingsNavigationTabs.querySelector(`[data-navigation-section="${tab.section}"]`)?.checked)
+          ]))
         }
       })
     });
@@ -1028,7 +1071,7 @@ async function saveBusinessSettings() {
     applyBusinessConfiguration({
       business: result.business,
       terminology: result.terminology,
-      modules: enabledModules
+      navigation: result.navigation
     });
     elements.businessSettingsStatus.textContent = `Saved ${formatDateTime(result.updatedAt || new Date().toISOString())}`;
   } catch (error) {
@@ -1227,6 +1270,11 @@ function wireEvents() {
     elements.businessSettingsStatus.textContent = "Unsaved changes";
     renderBusinessSettingsPreview();
   }));
+  elements.settingsNavigationTabs.addEventListener("change", event => {
+    if (!event.target.matches("[data-navigation-section]")) return;
+    businessSettingsDirty = true;
+    elements.businessSettingsStatus.textContent = "Unsaved changes";
+  });
   elements.settingsLogoPreview.addEventListener("error", () => {
     elements.settingsLogoPreview.classList.add("hidden");
     elements.settingsMonogramPreview.classList.remove("hidden");
@@ -2599,6 +2647,7 @@ function renderView() {
 }
 
 function renderSection() {
+  if (!canAccessSection(activeSection)) activeSection = "dashboard";
   document.querySelectorAll("[data-section]").forEach(button => {
     button.classList.toggle("active", button.dataset.section === activeSection);
   });
@@ -3930,6 +3979,7 @@ function renderRole() {
 function canAccessSection(section) {
   const requiredRole = SECTION_MIN_ROLE[section] || "admin";
   if ((ROLE_RANK[currentRole] || 0) < ROLE_RANK[requiredRole]) return false;
+  if (!isNavigationSectionEnabled(section)) return false;
   return section !== "employees" || Boolean(currentUser?.accountManagement);
 }
 
