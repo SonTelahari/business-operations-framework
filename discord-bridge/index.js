@@ -122,7 +122,7 @@ client.on('messageCreate', async (message) => {
       });
       await forwardToBusinessApi(outboundPayload);
       if (SHARED_BUSINESS_MODE) {
-        inventoryPublisher.requestRefresh('storefront event', message.channelId);
+        inventoryPublisher.requestRefresh('business event', message.channelId);
       } else {
         inventoryPublisher.requestRefresh('storefront event');
       }

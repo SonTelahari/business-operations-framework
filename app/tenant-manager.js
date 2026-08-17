@@ -225,14 +225,24 @@ class TenantManager {
   }
 
   async resolveDiscordChannel(channelId) {
+    return (await this.resolveDiscordChannelRoute(channelId))?.context || null;
+  }
+
+  async resolveDiscordChannelRoute(channelId) {
     const cleanChannelId = cleanDiscordId(channelId);
     if (!cleanChannelId) return null;
     const result = await this.database.query(`
-      SELECT business_id
+      SELECT business_id,
+        CASE WHEN event_channel_id = $1 THEN 'storefront' ELSE 'storage-ledger' END AS channel_type
       FROM business_integrations
-      WHERE provider = 'discord' AND event_channel_id = $1 AND status = 'active'
+      WHERE provider = 'discord'
+        AND status = 'active'
+        AND (event_channel_id = $1 OR storage_ledger_channel_id = $1)
+      LIMIT 1
     `, [cleanChannelId]);
-    return result.rows[0] ? this.getContextById(result.rows[0].business_id) : null;
+    if (!result.rows[0]) return null;
+    const context = await this.getContextById(result.rows[0].business_id);
+    return context ? { context, channelType: result.rows[0].channel_type } : null;
   }
 
   async saveDiscordIntegration(businessId, input = {}) {
@@ -240,31 +250,55 @@ class TenantManager {
     if (!context) throw tenantError("Business workspace not found", 404, "workspace_not_found");
     const guildId = cleanDiscordId(input.guildId);
     const eventChannelId = cleanDiscordId(input.eventChannelId);
+    const storageLedgerChannelId = cleanDiscordId(input.storageLedgerChannelId);
     const inventoryChannelId = cleanDiscordId(input.inventoryChannelId);
     const alertChannelId = cleanDiscordId(input.alertChannelId);
     if (!eventChannelId) {
       throw tenantError("Select the Discord channel that receives storefront events", 400, "event_channel_required");
     }
+    if (storageLedgerChannelId && storageLedgerChannelId === eventChannelId) {
+      throw tenantError("Use separate channels for storefront and storage/ledger events", 400, "discord_event_channels_must_differ");
+    }
     try {
+      const conflict = await this.database.query(`
+        SELECT business_id
+        FROM business_integrations
+        WHERE provider = 'discord'
+          AND status = 'active'
+          AND business_id <> $1
+          AND (
+            ($2 <> '' AND (event_channel_id = $2 OR storage_ledger_channel_id = $2))
+            OR ($3 <> '' AND (event_channel_id = $3 OR storage_ledger_channel_id = $3))
+          )
+        LIMIT 1
+      `, [businessId, eventChannelId, storageLedgerChannelId]);
+      if (conflict.rowCount) {
+        throw tenantError("That Discord event channel is already connected to another business", 409, "discord_channel_taken");
+      }
       const result = await this.database.query(`
         INSERT INTO business_integrations (
-          business_id, provider, guild_id, event_channel_id, inventory_channel_id,
-          alert_channel_id, status, metadata, updated_at
-        ) VALUES ($1, 'discord', $2, $3, $4, $5, 'active', $6::jsonb, now())
+          business_id, provider, guild_id, event_channel_id, storage_ledger_channel_id,
+          inventory_channel_id, alert_channel_id, status, metadata, updated_at
+        ) VALUES ($1, 'discord', $2, $3, $4, $5, $6, 'active', $7::jsonb, now())
         ON CONFLICT (business_id, provider) DO UPDATE SET
           guild_id = EXCLUDED.guild_id,
           event_channel_id = EXCLUDED.event_channel_id,
+          storage_ledger_channel_id = EXCLUDED.storage_ledger_channel_id,
           inventory_channel_id = EXCLUDED.inventory_channel_id,
           alert_channel_id = EXCLUDED.alert_channel_id,
           status = 'active',
           metadata = EXCLUDED.metadata,
           updated_at = now()
-        RETURNING guild_id, event_channel_id, inventory_channel_id, alert_channel_id, status, updated_at
-      `, [businessId, guildId, eventChannelId, inventoryChannelId, alertChannelId, JSON.stringify(cleanMetadata(input.metadata))]);
+        RETURNING guild_id, event_channel_id, storage_ledger_channel_id,
+          inventory_channel_id, alert_channel_id, status, updated_at
+      `, [
+        businessId, guildId, eventChannelId, storageLedgerChannelId,
+        inventoryChannelId, alertChannelId, JSON.stringify(cleanMetadata(input.metadata))
+      ]);
       return publicIntegration(result.rows[0]);
     } catch (error) {
       if (error.code === "23505" || /unique/i.test(error.message)) {
-        throw tenantError("That storefront event channel is already connected to another business", 409, "discord_channel_taken");
+        throw tenantError("That Discord event channel is already connected to another business", 409, "discord_channel_taken");
       }
       throw error;
     }
@@ -272,7 +306,8 @@ class TenantManager {
 
   async getDiscordIntegration(businessId) {
     const result = await this.database.query(`
-      SELECT guild_id, event_channel_id, inventory_channel_id, alert_channel_id, status, updated_at
+      SELECT guild_id, event_channel_id, storage_ledger_channel_id,
+        inventory_channel_id, alert_channel_id, status, updated_at
       FROM business_integrations
       WHERE business_id = $1 AND provider = 'discord'
     `, [businessId]);
@@ -282,6 +317,7 @@ class TenantManager {
   async listDiscordIntegrations() {
     const result = await this.database.query(`
       SELECT i.business_id, b.workspace_code, b.name, i.guild_id, i.event_channel_id,
+             i.storage_ledger_channel_id,
              i.inventory_channel_id, i.alert_channel_id, i.status, i.updated_at
       FROM business_integrations i
       JOIN businesses b ON b.id = i.business_id
@@ -365,6 +401,7 @@ function publicIntegration(row) {
   return {
     guildId: String(row.guild_id || row.guildId || ""),
     eventChannelId: String(row.event_channel_id || row.eventChannelId || ""),
+    storageLedgerChannelId: String(row.storage_ledger_channel_id || row.storageLedgerChannelId || ""),
     inventoryChannelId: String(row.inventory_channel_id || row.inventoryChannelId || ""),
     alertChannelId: String(row.alert_channel_id || row.alertChannelId || ""),
     status: String(row.status || "active"),

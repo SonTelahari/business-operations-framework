@@ -1907,6 +1907,47 @@
             </div>
           </form>
         </section>
+
+        <section class="panel business-settings-panel discord-settings-panel" id="discordSettingsPanel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Automation</p>
+              <h2>Discord Channels</h2>
+              <p>Update these IDs when the business moves channels or Discord servers</p>
+            </div>
+          </div>
+
+          <form id="discordSettingsForm">
+            <div class="business-settings-fields discord-settings-fields">
+              <label>
+                Discord server ID
+                <input id="discordGuildIdInput" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22">
+              </label>
+              <label>
+                Storefront event channel ID
+                <input id="discordEventChannelIdInput" required inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22">
+              </label>
+              <label>
+                Storage and ledger event channel ID
+                <input id="discordStorageLedgerChannelIdInput" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22">
+              </label>
+              <label>
+                Inventory overview channel ID
+                <input id="discordInventoryChannelIdInput" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22">
+              </label>
+              <label>
+                Stock alert channel ID
+                <input id="discordAlertChannelIdInput" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22">
+              </label>
+            </div>
+
+            <div class="business-settings-actions">
+              <p class="form-status" id="discordSettingsStatus" role="status">Loading Discord configuration</p>
+              <button class="ghost-button" id="reloadDiscordSettingsButton" type="button">Reload Saved</button>
+              <button class="primary-button" id="saveDiscordSettingsButton" type="submit">Save Channels</button>
+            </div>
+          </form>
+        </section>
       </main>
     </div>
 

@@ -5204,6 +5204,14 @@ body.auth-page {
   padding: 22px;
 }
 
+.discord-settings-panel {
+  margin-top: 22px;
+}
+
+.discord-settings-fields {
+  margin-top: 18px;
+}
+
 .business-settings-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.8fr);

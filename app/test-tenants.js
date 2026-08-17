@@ -58,13 +58,31 @@ async function run() {
     const firstIntegration = await tenants.saveDiscordIntegration(first.business.id, {
       guildId: "123456789012345678",
       eventChannelId: "223456789012345678",
+      storageLedgerChannelId: "423456789012345678",
       inventoryChannelId: "323456789012345678"
     });
     assert.equal(firstIntegration.eventChannelId, "223456789012345678");
+    assert.equal(firstIntegration.storageLedgerChannelId, "423456789012345678");
     assert.equal((await tenants.resolveDiscordChannel("223456789012345678")).businessId, first.business.id);
+    const storefrontRoute = await tenants.resolveDiscordChannelRoute("223456789012345678");
+    const storageRoute = await tenants.resolveDiscordChannelRoute("423456789012345678");
+    assert.equal(storefrontRoute.channelType, "storefront");
+    assert.equal(storageRoute.channelType, "storage-ledger");
+    assert.equal(storageRoute.context.businessId, first.business.id);
     await assert.rejects(
       tenants.saveDiscordIntegration(second.business.id, { eventChannelId: "223456789012345678" }),
       error => error.code === "discord_channel_taken"
+    );
+    await assert.rejects(
+      tenants.saveDiscordIntegration(second.business.id, { eventChannelId: "423456789012345678" }),
+      error => error.code === "discord_channel_taken"
+    );
+    await assert.rejects(
+      tenants.saveDiscordIntegration(first.business.id, {
+        eventChannelId: "223456789012345678",
+        storageLedgerChannelId: "223456789012345678"
+      }),
+      error => error.code === "discord_event_channels_must_differ"
     );
 
     console.log("Hosted tenant identity and isolation tests passed.");

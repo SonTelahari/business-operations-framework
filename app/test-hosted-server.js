@@ -89,7 +89,8 @@ async function run() {
 
     const first = await createBusiness("Frontier Firearms", "23", "William Winther", {
       guildId: "123456789012345671",
-      eventChannelId: "223456789012345671"
+      eventChannelId: "223456789012345671",
+      storageLedgerChannelId: "423456789012345671"
     }, issuedInvite.body.invite.code);
     const second = await createBusiness("Frontier Firearms", "23", "William Winther", null, issuedInvite.body.invite.code);
     const exhaustedInvite = await request("/api/setup/complete", {
@@ -266,7 +267,7 @@ async function run() {
     assert.equal(firstRegistration.status, 201);
     assert.equal(secondRegistration.status, 201);
 
-    await configureDiscord(second.cookie, "123456789012345672", "223456789012345672");
+    await configureDiscord(second.cookie, "123456789012345672", "223456789012345672", "423456789012345672");
     await forwardDeposit("first-deposit", "223456789012345671", 4);
     await forwardDeposit("second-deposit", "223456789012345672", 9);
 
@@ -274,6 +275,37 @@ async function run() {
     const secondSnapshot = await bridgeRequest(`/api/integrations/discord/snapshot?discord_channel_id=223456789012345672`);
     assert.equal(firstSnapshot.body.inventory.products[0].currentStock, 4);
     assert.equal(secondSnapshot.body.inventory.products[0].currentStock, 9);
+
+    await forwardDeposit("first-storage-deposit", "423456789012345671", 6);
+    const ledgerControl = await bridgeRequest("/api/integrations/discord/events", {
+      method: "POST",
+      body: {
+        webhook_id: "first-storage-ledger-control",
+        discord_channel_id: "423456789012345671",
+        event_type: "Adjustment",
+        shop_ledger: 321,
+        occurred_at: "2026-08-02T10:05:00.000Z"
+      }
+    });
+    assert.equal(ledgerControl.status, 200, JSON.stringify(ledgerControl.body));
+    assert.equal(ledgerControl.body.reviewRequired, undefined);
+    assert.equal(ledgerControl.body.ledgerControlWritten, true);
+    const firstBootstrapAfterStorage = await request("/api/bootstrap", { cookie: first.cookie });
+    assert.equal(
+      firstBootstrapAfterStorage.body.sheet.inventory.storage.find(item =>
+        (item.ingredient || item.itemName) === "Hosted Product"
+      ).storageCount,
+      6
+    );
+    assert.equal(
+      firstBootstrapAfterStorage.body.sheet.inventory.products.find(item => item.itemName === "Hosted Product").currentStock,
+      4
+    );
+    assert.equal(firstBootstrapAfterStorage.body.sheet.inventory.ledger.balance, 321);
+    assert.equal((await database.query(
+      "SELECT COUNT(*)::int AS count FROM finance_events WHERE business_id = $1",
+      [first.body.workspace.id]
+    )).rows[0].count, 0);
 
     const employeeCatalogAttempt = await request("/api/sync", {
       method: "POST",
@@ -392,14 +424,15 @@ async function createBusiness(name, referenceId, ownerName, discordIntegration =
   return response;
 }
 
-async function configureDiscord(cookie, guildId, eventChannelId) {
+async function configureDiscord(cookie, guildId, eventChannelId, storageLedgerChannelId = "") {
   const response = await request("/api/integrations/discord/configuration", {
     method: "POST",
     cookie,
-    body: { guildId, eventChannelId }
+    body: { guildId, eventChannelId, storageLedgerChannelId }
   });
   assert.equal(response.status, 200, JSON.stringify(response.body));
   assert.equal(response.body.integration.eventChannelId, eventChannelId);
+  assert.equal(response.body.integration.storageLedgerChannelId, storageLedgerChannelId);
 }
 
 async function forwardDeposit(id, channelId, quantity) {

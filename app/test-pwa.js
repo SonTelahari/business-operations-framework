@@ -7,6 +7,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.webmanifes
 const serviceWorker = fs.readFileSync(path.join(root, "service-worker.js"), "utf8");
 const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const setupScript = fs.readFileSync(path.join(root, "setup.js"), "utf8");
+const setupHtml = fs.readFileSync(path.join(root, "setup.html"), "utf8");
 const appHtml = fs.readFileSync(path.join(root, "index.html"), "utf8").replace(/\r\n/g, "\n");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
@@ -73,6 +74,11 @@ assert(appHtml.includes('data-section="business-settings"'), "administrators mus
 assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");
 assert(appHtml.includes('id="settingsLogoPreview"'), "business settings must preview branding changes");
 assert(appHtml.includes('id="settingsNavigationTabs"'), "business settings must expose per-business navigation controls");
+assert(appHtml.includes('id="discordSettingsForm"'), "business settings must expose editable Discord channels");
+assert(appHtml.includes('id="discordStorageLedgerChannelIdInput"'), "business settings must distinguish storage and ledger events");
+assert(setupHtml.includes('id="discordStorageLedgerChannelIdInput"'), "first launch must collect the storage and ledger event channel");
+assert(appScript.includes("function loadDiscordSettings"), "administrators must be able to load saved Discord routing");
+assert(appScript.includes("function saveDiscordSettings"), "administrators must be able to update Discord routing");
 assert(appScript.includes("NAVIGATION_TAB_DEFINITIONS"), "the client must define the configurable workspace tabs");
 assert(appScript.includes("function applyNavigationVisibility()"), "saved navigation choices must update the visible tabs");
 assert(appScript.includes("if (!isNavigationSectionEnabled(section)) return false"), "hidden tabs must also be rejected by the section access guard");

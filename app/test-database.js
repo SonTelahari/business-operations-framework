@@ -29,7 +29,8 @@ async function run() {
       "005_dual_purpose_catalog_items.sql",
       "006_recipe_source_locations.sql",
       "007_storage_targets.sql",
-      "008_local_identity_jobs.sql"
+      "008_local_identity_jobs.sql",
+      "009_storage_ledger_discord_channel.sql"
     ]);
 
     const tables = await database.query(`

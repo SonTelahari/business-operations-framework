@@ -210,6 +210,7 @@ function collectPayload() {
     discordIntegration: {
       guildId: document.querySelector("#discordGuildIdInput").value.trim(),
       eventChannelId: document.querySelector("#discordEventChannelIdInput").value.trim(),
+      storageLedgerChannelId: document.querySelector("#discordStorageLedgerChannelIdInput").value.trim(),
       inventoryChannelId: document.querySelector("#discordInventoryChannelIdInput").value.trim(),
       alertChannelId: document.querySelector("#discordAlertChannelIdInput").value.trim()
     },

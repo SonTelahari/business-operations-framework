@@ -183,6 +183,8 @@ let recipeSavePending = false;
 let pendingProductionQueue = null;
 let businessSettingsSavePending = false;
 let businessSettingsDirty = false;
+let discordSettingsSavePending = false;
+let discordIntegration = null;
 const productInsightCache = new Map();
 
 const elements = {
@@ -489,6 +491,16 @@ const elements = {
   settingsLedgerPreview: document.querySelector("#settingsLedgerPreview"),
   settingsLocationPreview: document.querySelector("#settingsLocationPreview"),
   settingsDescriptionPreview: document.querySelector("#settingsDescriptionPreview"),
+  discordSettingsPanel: document.querySelector("#discordSettingsPanel"),
+  discordSettingsForm: document.querySelector("#discordSettingsForm"),
+  discordSettingsStatus: document.querySelector("#discordSettingsStatus"),
+  reloadDiscordSettings: document.querySelector("#reloadDiscordSettingsButton"),
+  saveDiscordSettings: document.querySelector("#saveDiscordSettingsButton"),
+  discordGuildId: document.querySelector("#discordGuildIdInput"),
+  discordEventChannelId: document.querySelector("#discordEventChannelIdInput"),
+  discordStorageLedgerChannelId: document.querySelector("#discordStorageLedgerChannelIdInput"),
+  discordInventoryChannelId: document.querySelector("#discordInventoryChannelIdInput"),
+  discordAlertChannelId: document.querySelector("#discordAlertChannelIdInput"),
   financeSection: document.querySelector("#financeSection"),
   financeDataStatus: document.querySelector("#financeDataStatus"),
   financeCoverageStatus: document.querySelector("#financeCoverageStatus"),
@@ -1083,6 +1095,80 @@ async function saveBusinessSettings() {
   }
 }
 
+function populateDiscordSettings(integration = discordIntegration) {
+  if (!elements.discordSettingsForm) return;
+  const saved = integration || {};
+  elements.discordGuildId.value = saved.guildId || "";
+  elements.discordEventChannelId.value = saved.eventChannelId || "";
+  elements.discordStorageLedgerChannelId.value = saved.storageLedgerChannelId || "";
+  elements.discordInventoryChannelId.value = saved.inventoryChannelId || "";
+  elements.discordAlertChannelId.value = saved.alertChannelId || "";
+}
+
+async function loadDiscordSettings({ silent = false } = {}) {
+  if (!isAdmin() || !elements.discordSettingsPanel) return;
+  if (!silent) elements.discordSettingsStatus.textContent = "Loading Discord configuration";
+  try {
+    const response = await fetch("/api/integrations/discord/configuration", {
+      headers: { accept: "application/json" }
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
+    if (response.status === 404) {
+      elements.discordSettingsPanel.classList.add("hidden");
+      return;
+    }
+    if (!response.ok) throw new Error(result.error || `API ${response.status}`);
+    discordIntegration = result.integration || {};
+    populateDiscordSettings();
+    elements.discordSettingsPanel.classList.remove("hidden");
+    elements.discordSettingsStatus.textContent = discordIntegration.eventChannelId
+      ? "Discord channels loaded"
+      : "Add the storefront event channel to enable Discord routing";
+  } catch (error) {
+    elements.discordSettingsStatus.textContent = error.message;
+  }
+}
+
+async function saveDiscordSettings() {
+  if (!isAdmin() || discordSettingsSavePending) return;
+  discordSettingsSavePending = true;
+  elements.saveDiscordSettings.disabled = true;
+  elements.reloadDiscordSettings.disabled = true;
+  elements.discordSettingsStatus.textContent = "Saving Discord channels";
+  try {
+    const response = await fetch("/api/integrations/discord/configuration", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        guildId: elements.discordGuildId.value.trim(),
+        eventChannelId: elements.discordEventChannelId.value.trim(),
+        storageLedgerChannelId: elements.discordStorageLedgerChannelId.value.trim(),
+        inventoryChannelId: elements.discordInventoryChannelId.value.trim(),
+        alertChannelId: elements.discordAlertChannelId.value.trim()
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      window.location.replace("/login.html");
+      return;
+    }
+    if (!response.ok) throw new Error(result.error || `API ${response.status}`);
+    discordIntegration = result.integration || {};
+    populateDiscordSettings();
+    elements.discordSettingsStatus.textContent = "Discord channels saved";
+  } catch (error) {
+    elements.discordSettingsStatus.textContent = error.message;
+  } finally {
+    discordSettingsSavePending = false;
+    elements.saveDiscordSettings.disabled = false;
+    elements.reloadDiscordSettings.disabled = false;
+  }
+}
+
 function seedSupplyMaterialOptions() {
   const byName = new Map(ingredientCatalog.map(item => [normalize(item.name), item]));
   suppliers.flatMap(supplier => supplier.products || []).forEach(product => {
@@ -1275,6 +1361,11 @@ function wireEvents() {
     businessSettingsDirty = true;
     elements.businessSettingsStatus.textContent = "Unsaved changes";
   });
+  elements.discordSettingsForm.addEventListener("submit", event => {
+    event.preventDefault();
+    saveDiscordSettings();
+  });
+  elements.reloadDiscordSettings.addEventListener("click", () => loadDiscordSettings());
   elements.settingsLogoPreview.addEventListener("error", () => {
     elements.settingsLogoPreview.classList.add("hidden");
     elements.settingsMonogramPreview.classList.remove("hidden");
@@ -1342,7 +1433,10 @@ function wireEvents() {
       if (activeSection === "review" && isManagement()) loadBackendSnapshot({ silent: true });
       if (activeSection === "catalog" && isManagement()) renderCatalogLedger();
       if (activeSection === "finance" && isAdmin()) loadFinance();
-      if (activeSection === "business-settings" && isAdmin() && !businessSettingsDirty) populateBusinessSettings();
+      if (activeSection === "business-settings" && isAdmin()) {
+        if (!businessSettingsDirty) populateBusinessSettings();
+        loadDiscordSettings({ silent: true });
+      }
       if (activeSection === "production") loadProductionBatches({ silent: true });
       if (activeSection === "daily-close" && isManagement()) renderDailyCloseWorkspace();
     });

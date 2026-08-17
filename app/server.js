@@ -875,7 +875,9 @@ async function dispatchHostedDiscordRequest(request, response, url) {
   let context = null;
   if (eventRoute && request.method === "POST") {
     const body = await readJsonBody(request);
-    context = await tenantManager.resolveDiscordChannel(body.discord_channel_id);
+    const channelRoute = await tenantManager.resolveDiscordChannelRoute(body.discord_channel_id);
+    context = channelRoute?.context || null;
+    if (channelRoute) body.discord_channel_type = channelRoute.channelType;
   } else if (snapshotRoute && request.method === "GET") {
     context = await tenantManager.resolveDiscordChannel(
       url.searchParams.get("discord_channel_id") || request.headers["x-discord-channel-id"]
@@ -1465,7 +1467,13 @@ async function handleBusinessIntegrationRoute(request, response, url, user) {
         actorName: user.fullName,
         subjectId: currentTenantContext().businessId,
         subjectName: currentTenantContext().business.name,
-        details: { guildId: integration.guildId, eventChannelId: integration.eventChannelId }
+        details: {
+          guildId: integration.guildId,
+          eventChannelId: integration.eventChannelId,
+          storageLedgerChannelId: integration.storageLedgerChannelId,
+          inventoryChannelId: integration.inventoryChannelId,
+          alertChannelId: integration.alertChannelId
+        }
       });
       sendJson(response, { ok: true, workspace: publicWorkspace(), integration });
     } catch (error) {

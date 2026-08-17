@@ -10,6 +10,7 @@ const normalized = normalizeDiscordIntegrations([
     workspaceCode: 'AAAAA-BBBBB',
     status: 'active',
     eventChannelId: 'event-a',
+    storageLedgerChannelId: 'storage-a',
     inventoryChannelId: 'inventory-a',
     alertChannelId: 'alerts-a'
   },
@@ -27,6 +28,7 @@ const normalized = normalizeDiscordIntegrations([
 ]);
 assert.equal(normalized.length, 1);
 assert.equal(normalized[0].key, 'business-a');
+assert.equal(normalized[0].storageLedgerChannelId, 'storage-a');
 
 async function runSharedPublisherChecks() {
   let directory = [
@@ -36,6 +38,7 @@ async function runSharedPublisherChecks() {
       businessName: 'Business A',
       status: 'active',
       eventChannelId: 'event-a',
+      storageLedgerChannelId: 'storage-a',
       inventoryChannelId: 'inventory-a',
       alertChannelId: 'alerts-a'
     },
@@ -45,6 +48,7 @@ async function runSharedPublisherChecks() {
       businessName: 'Business B',
       status: 'active',
       eventChannelId: 'event-b',
+      storageLedgerChannelId: 'storage-b',
       inventoryChannelId: 'inventory-b',
       alertChannelId: ''
     }
@@ -125,6 +129,9 @@ async function runSharedPublisherChecks() {
 
   publisher.requestRefresh('tester event', 'event-b');
   assert.deepEqual(created[0].refreshes, []);
+  assert.deepEqual(created[1].refreshes, ['tester event']);
+  publisher.requestRefresh('storage event', 'storage-a');
+  assert.deepEqual(created[0].refreshes, ['storage event']);
   assert.deepEqual(created[1].refreshes, ['tester event']);
 
   const handled = await publisher.handleInteraction({ message: { id: 'inventory-b' } });

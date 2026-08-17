@@ -135,7 +135,9 @@ function createSharedInventoryPublisher(options) {
   function requestRefresh(reason = 'storefront event', eventChannelId = '') {
     const normalizedChannelId = String(eventChannelId || '').trim();
     for (const entry of publishers.values()) {
-      if (normalizedChannelId && entry.integration.eventChannelId !== normalizedChannelId) continue;
+      if (normalizedChannelId
+        && entry.integration.eventChannelId !== normalizedChannelId
+        && entry.integration.storageLedgerChannelId !== normalizedChannelId) continue;
       entry.publisher.requestRefresh(reason);
     }
   }
@@ -202,6 +204,7 @@ function normalizeDiscordIntegrations(integrations) {
       const businessId = String(integration.businessId || '').trim();
       const workspaceCode = String(integration.workspaceCode || '').trim();
       const eventChannelId = String(integration.eventChannelId || '').trim();
+      const storageLedgerChannelId = String(integration.storageLedgerChannelId || '').trim();
       const inventoryChannelId = String(integration.inventoryChannelId || '').trim();
       const alertChannelId = String(integration.alertChannelId || '').trim();
       const status = String(integration.status || 'active').trim().toLowerCase();
@@ -211,10 +214,11 @@ function normalizeDiscordIntegrations(integrations) {
         businessId,
         workspaceCode,
         eventChannelId,
+        storageLedgerChannelId,
         inventoryChannelId,
         alertChannelId,
         status,
-        signature: [eventChannelId, inventoryChannelId, alertChannelId].join('|')
+        signature: [eventChannelId, storageLedgerChannelId, inventoryChannelId, alertChannelId].join('|')
       };
     })
     .filter(integration => integration.key

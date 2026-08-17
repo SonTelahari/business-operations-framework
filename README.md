@@ -92,7 +92,7 @@ CAPTURE_ONLY=1
 
 Keep `CAPTURE_ONLY=1` until the target server's real Discord messages pass parser tests. Set it to `0` only after a test forward appears in the app. Storefront stock and shortage channels are optional.
 
-For one shared hosted bridge, set `SHARED_BUSINESS_MODE=1` and leave `DISCORD_CHANNEL_ID` blank. An admin connects each business's event channel in its workspace. The app routes incoming events by that registered channel and rejects channels assigned to another business.
+For one shared hosted bridge, set `SHARED_BUSINESS_MODE=1` and leave `DISCORD_CHANNEL_ID` blank. An admin connects each business's storefront event channel and optional storage/ledger event channel in **Business Settings**. The app routes incoming events by the registered channel and rejects channels assigned to another business. Storefront events affect storefront stock and storefront P&L; storage/ledger events affect storage counts and authoritative ledger balances without creating duplicate sales or purchase finance entries.
 
 ## Hosted Workspaces
 
@@ -112,7 +112,7 @@ DISCORD_REDIRECT_URI=https://<gui-public-domain>/auth/discord/callback
 
 Beta workspaces are permanent tenant records, not disposable previews. Releases apply additive PostgreSQL migrations to the same internal business UUID, so testers keep their catalog, recipes, inventory, finance, staff, orders, webhook history, and audit trail without repeating setup. See `docs/beta-operations.md` for the release and recovery procedure.
 
-The first-launch ledger also accepts optional Discord server, storefront event, inventory, and alert channel IDs. This registers routing immediately; during the private beta, the service operator still adds the shared bot to the Discord server.
+The first-launch ledger also accepts optional Discord server, storage/ledger event, inventory, and alert channel IDs in addition to the required storefront event channel. This registers routing immediately; admins can later replace any channel ID from **Business Settings** if the business moves channels or Discord servers. During the private beta, the service operator still adds the shared bot to the Discord server.
 
 ## Business Archive Migration
 

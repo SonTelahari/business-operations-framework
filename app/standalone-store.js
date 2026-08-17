@@ -1252,10 +1252,13 @@ async function insertException(client, businessId, event, payload, { transaction
 }
 
 async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
+  const inventoryLocation = event.location === "storage" ? "storage" : "sales";
   const metadata = {
     webhookId: event.webhookId,
     orderId: event.orderId,
-    listingItemTotal: event.currentItemTotal
+    listingItemTotal: event.currentItemTotal,
+    discordChannelType: event.channelType,
+    location: event.location
   };
   const quantityDelta = event.type === "Sale" || event.direction === "Stock Out"
     ? -event.quantity
@@ -1264,12 +1267,12 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
     // Discord reports a price-listing total, while the app aggregates stock by product.
     await insertInventory(client, businessId, {
       eventId: `${event.webhookId}:stock`, occurredAt: event.occurredAt, source: "Discord", kind: event.type,
-      location: "sales", item: event.item,
+      location: inventoryLocation, item: event.item,
       quantityDelta,
       absoluteQuantity: null,
       unitPrice: event.unitPrice, actor: event.actor, metadata
     });
-    if (event.type === "Stocking Movement" && event.direction === "Stock In" && event.unitPrice > 0) {
+    if (inventoryLocation === "sales" && event.type === "Stocking Movement" && event.direction === "Stock In" && event.unitPrice > 0) {
       await client.query(`
         UPDATE catalog_items
         SET sale_price = $3, updated_at = now()
@@ -1278,16 +1281,18 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
     }
   }
   const appInventoryTotal = event.item && event.quantity > 0
-    ? await currentInventoryQuantity(client, businessId, "sales", event.item)
+    ? await currentInventoryQuantity(client, businessId, inventoryLocation, event.item)
     : null;
   const stockVariance = appInventoryTotal === null || event.currentItemTotal === null
     ? null
     : appInventoryTotal - event.currentItemTotal;
   const stockDiscrepancy = stockVariance !== null && Math.abs(stockVariance) > 0.0005;
   if (applyLedger) {
-    const derivedCash = event.type === "Sale"
-      ? event.quantity * event.unitPrice
-      : event.type === "Purchase" ? -(event.quantity * event.unitPrice) : 0;
+    const derivedCash = event.location === "sales"
+      ? event.type === "Sale"
+        ? event.quantity * event.unitPrice
+        : event.type === "Purchase" ? -(event.quantity * event.unitPrice) : 0
+      : 0;
     if (event.ledgerBalance !== null || derivedCash) {
       await insertLedger(client, businessId, {
         eventId: `${event.webhookId}:ledger`, occurredAt: event.occurredAt, source: "Discord", kind: event.type,
@@ -1298,7 +1303,7 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
     }
   }
   const total = money(event.quantity * event.unitPrice);
-  if ((event.type === "Sale" || event.type === "Purchase") && total > 0) {
+  if (event.location === "sales" && (event.type === "Sale" || event.type === "Purchase") && total > 0) {
     await insertFinance(client, businessId, {
       eventId: `${event.webhookId}:finance`, occurredAt: event.occurredAt,
       type: event.type === "Sale" ? "Revenue" : "Expense",
@@ -1460,6 +1465,8 @@ async function createCatalogItemRecord(client, businessId, input, { source, crea
 
 function normalizeWebhook(payload) {
   const reviewRequested = payload?.review_required === true || String(payload?.review_required || "").toLowerCase() === "true";
+  const suppliedReviewReason = cleanText(firstValue(payload, ["review_reason"]), 300);
+  const channelType = cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) || "storefront";
   const rawType = firstValue(payload, ["event_type", "type", "action", "event"]);
   const type = normalizeType(rawType);
   const direction = normalizeDirection(firstValue(payload, ["direction", "movement", "stock_direction"]), type);
@@ -1471,9 +1478,18 @@ function normalizeWebhook(payload) {
     : ["qty", "quantity", "count", "amount"]));
   const discordItemName = cleanText(firstValue(payload, ["discord_item_name"]), 200);
   const discordItemLabel = cleanText(firstValue(payload, ["discord_item_label"]), 200);
-  const reasons = cleanText(firstValue(payload, ["review_reason"]), 300).split(",").map(value => value.trim()).filter(Boolean);
+  const ledgerBalance = nullableNumber(firstValue(payload, ["shop_ledger", "ledger_balance", "current_ledger"]));
+  let reasons = suppliedReviewReason.split(",").map(value => value.trim()).filter(Boolean);
   if (!item && !discordItemName && !discordItemLabel && !reasons.includes("missing_item")) reasons.push("missing_item");
   if (!(quantity > 0) && !reasons.includes("missing_quantity")) reasons.push("missing_quantity");
+  const hasItemIdentity = Boolean(item || discordItemName || discordItemLabel);
+  const ledgerOnly = channelType === "storage-ledger" && ledgerBalance !== null && !hasItemIdentity;
+  if (ledgerOnly) {
+    reasons = reasons.filter(reason => reason !== "missing_item" && reason !== "missing_quantity");
+  }
+  const location = channelType === "storage-ledger"
+    ? hasItemIdentity ? "storage" : "ledger"
+    : "sales";
   return {
     webhookId: cleanText(firstValue(payload, ["webhook_id", "id", "event_id", "discord_message_id", "order_id", "buy_order_id", "receipt_id"]), 150) || crypto.randomUUID(),
     type,
@@ -1482,14 +1498,16 @@ function normalizeWebhook(payload) {
     quantity,
     unitPrice: Math.max(0, number(firstValue(payload, ["unit_price", "price", "sale_price", "buy_price"]))),
     currentItemTotal: nullableNumber(firstValue(payload, ["current_item_total", "current_stock", "stock_total"])),
-    ledgerBalance: nullableNumber(firstValue(payload, ["shop_ledger", "ledger_balance", "current_ledger"])),
+    ledgerBalance,
     occurredAt: validDate(firstValue(payload, ["timestamp", "occurred_at", "created_at"])),
     actor: cleanText(firstValue(payload, ["actor", "customer", "buyer", "seller", "player"]), 150),
     orderId: cleanText(firstValue(payload, ["order_id", "buy_order_id", "receipt_id", "transaction_id"]), 150),
     discordTitle: cleanText(firstValue(payload, ["discord_title", "title"]), 200),
     discordItemName,
     discordItemLabel,
-    reviewRequired: reviewRequested || reasons.length > 0,
+    channelType,
+    location,
+    reviewRequired: reasons.length > 0 || (reviewRequested && !suppliedReviewReason && !ledgerOnly),
     reviewReason: reasons.join(",")
   };
 }

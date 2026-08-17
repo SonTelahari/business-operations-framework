@@ -639,6 +639,38 @@ async function run() {
     assert.deepEqual(afterTransfer.totals, beforeResolution.totals);
     assert.equal(afterTransfer.ledger.balance, 195);
 
+    const storageFinanceBefore = await store.finance();
+    const storageMovement = await store.ingestWebhook({
+      webhook_id: "discord-storage-widget-1",
+      discord_channel_type: "storage-ledger",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      item_name: "Iron Widget",
+      quantity: 3,
+      current_item_total: 3,
+      unit_price: 25,
+      occurred_at: "2026-08-01T15:00:00.000Z"
+    });
+    assert.equal(storageMovement.reviewRequired, undefined);
+    assert.equal(storageMovement.appInventoryTotal, 3);
+    let storageSnapshot = await store.snapshot();
+    assert.equal(storageSnapshot.inventory.storage.find(item => item.ingredient === "Iron Widget").storageCount, 3);
+    assert.equal(storageSnapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 8);
+    assert.deepEqual((await store.finance()).totals, storageFinanceBefore.totals);
+
+    const storageLedgerControl = await store.ingestWebhook({
+      webhook_id: "discord-storage-ledger-control-1",
+      discord_channel_type: "storage-ledger",
+      event_type: "Adjustment",
+      shop_ledger: 275,
+      occurred_at: "2026-08-01T15:05:00.000Z"
+    });
+    assert.equal(storageLedgerControl.reviewRequired, undefined);
+    assert.equal(storageLedgerControl.ledgerControlWritten, true);
+    storageSnapshot = await store.snapshot();
+    assert.equal(storageSnapshot.inventory.ledger.balance, 275);
+    assert.deepEqual((await store.finance()).totals, storageFinanceBefore.totals);
+
     console.log("Standalone PostgreSQL workflow tests passed.");
   } finally {
     await database.close();

@@ -646,6 +646,23 @@ Sell Price: $2.25`
       shop_ledger: 0,
       current_item_total: null
     }
+  },
+  {
+    name: 'ledger-only control',
+    input: {
+      id: 'ledger-control-example',
+      title: 'Ledger Updated',
+      description: 'Shop Info:\nShop name: Frontier Firearms\nShop Ledger: $2,768.00'
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      item_name: '',
+      quantity: 0,
+      shop_ledger: 2768,
+      review_required: true,
+      review_reason: 'missing_item,missing_quantity'
+    }
   }
 ];
 
