@@ -1548,15 +1548,38 @@ async function rememberMapping(client, businessId, mapping) {
 
 async function createCatalogItemRecord(client, businessId, input, { source, createdBy = "" }) {
   const conflict = await client.query(`
-    SELECT name, label, item_tag FROM catalog_items
+    SELECT * FROM catalog_items
     WHERE business_id = $1 AND (
       normalized_name = $2 OR lower(label) = $3 OR ($4 <> '' AND lower(item_tag) = $4)
     )
+    ORDER BY CASE WHEN normalized_name = $2 THEN 0 ELSE 1 END
     LIMIT 1
   `, [businessId, inventoryKey(input.name), inventoryKey(input.label), inventoryKey(input.tag)]);
   if (conflict.rowCount) {
+    const existing = conflict.rows[0];
+    if (existing.active === false && existing.normalized_name === inventoryKey(input.name)) {
+      const metadata = {
+        ...json(existing.metadata, {}),
+        source,
+        createdBy,
+        reactivatedAt: new Date().toISOString()
+      };
+      const reactivated = await client.query(`
+        UPDATE catalog_items SET
+          item_type = $3, label = $4, item_tag = $5, category = $6, unit_name = $7,
+          unit_cost = $8, sale_price = $9, stock_target = $10, storage_target = $11,
+          active = true, metadata = $12::jsonb, updated_at = now()
+        WHERE business_id = $1 AND id = $2
+        RETURNING *
+      `, [
+        businessId, existing.id, input.type, input.label, input.tag, input.category,
+        input.unit, input.unitCost, input.salePrice, input.target, input.storageTarget,
+        JSON.stringify(metadata)
+      ]);
+      return catalogRow(reactivated.rows[0]);
+    }
     throw storeError(
-      `A catalog good already uses ${conflict.rows[0].label || conflict.rows[0].name}`,
+      `A catalog good already uses ${existing.label || existing.name}`,
       409,
       "catalog_item_conflict"
     );
@@ -1763,7 +1786,10 @@ function isMaterialCatalogItem(item) {
 
 function catalogNumber(value, label) {
   if (value === "" || value === null || value === undefined) return 0;
-  const parsed = Number(value);
+  const text = String(value).trim().replace(/\s+/g, "");
+  const parsed = Number(text.includes(",") && !text.includes(".")
+    ? text.replace(",", ".")
+    : text.replace(/,/g, ""));
   if (!Number.isFinite(parsed) || parsed < 0) {
     throw storeError(`${label} must be zero or greater`, 400, "invalid_catalog_item");
   }

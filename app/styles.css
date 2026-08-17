@@ -5494,6 +5494,13 @@ body.auth-page {
   font-weight: 700;
 }
 
+#reviewActionStatus {
+  min-height: 1.3em;
+  margin: 0.35rem 0 0;
+  color: var(--accent);
+  font-weight: 700;
+}
+
 @media (max-width: 940px) {
   .business-settings-layout {
     grid-template-columns: 1fr;

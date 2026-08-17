@@ -42,6 +42,30 @@ async function run() {
       }
     });
     assert.equal(addedMaterial.item.itemType, "material");
+    await store.handleGuiPayload({
+      action: "catalog_item_update",
+      item: {
+        ...addedMaterial.item,
+        type: "material",
+        name: "Glass Bottle",
+        label: "Glass Bottle",
+        category: "Containers",
+        unit: "bottle",
+        unitCost: 0.5,
+        active: false,
+        updatedBy: "Ada Lovelace"
+      }
+    });
+    const reactivatedMaterial = await store.handleGuiPayload({
+      action: "catalog_item",
+      item: {
+        type: "material", name: "Glass Bottle", label: "Glass Bottle", category: "Containers",
+        unit: "bottle", unitCost: "0,75", createdBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(reactivatedMaterial.item.id, addedMaterial.item.id);
+    assert.equal(reactivatedMaterial.item.active, true);
+    assert.equal(reactivatedMaterial.item.unitCost, 0.75);
     const addedProduct = await store.handleGuiPayload({
       action: "catalog_item",
       item: {
@@ -348,11 +372,12 @@ async function run() {
           tag: "ITEM_NATIVE_ORE",
           category: "Metals",
           unit: "ore",
-          unitCost: 1.5
+          unitCost: "1,50"
         }
       }
     });
     assert.equal(resolvedMaterial.catalogItem.itemType, "material");
+    assert.equal(resolvedMaterial.catalogItem.unitCost, 1.5);
     const mappedMaterial = await store.ingestWebhook({
       webhook_id: "discord-unknown-material-2",
       event_type: "Stocking Movement",
@@ -430,7 +455,7 @@ async function run() {
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Rifle Ammo Express").salePrice, 2.25);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Iron").storageCount, 25);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Iron").storageTarget, 12);
-    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Glass Bottle").unitCost, 0.5);
+    assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Glass Bottle").unitCost, 0.75);
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Native Ore").category, "Metals");
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").itemType, "both");
     assert.equal(snapshot.inventory.materials.find(item => item.ingredient === "Raw Tobacco").storageCount, 12);
@@ -715,6 +740,60 @@ Has Taken 2 Iron Widget From Van Horn Gunsmith Inventory`
     assert.equal(repairedStorageLog.actorName, "William Winther");
     assert.equal(
       storageSnapshot.reviewExceptions.find(entry => entry.webhookId === "discord-stale-storage-withdrawal").status,
+      "Resolved"
+    );
+
+    const emptyCrateReview = await store.ingestWebhook({
+      webhook_id: "discord-empty-crate-withdrawal",
+      discord_channel_type: "storefront",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      proposed_item_name: "",
+      proposed_quantity: 0,
+      review_required: true,
+      review_reason: "missing_item,missing_quantity",
+      raw_payload: `Steam name : Son Telahari
+PlayerName: William Winther
+Server ID 6
+Steam ID: steam:110000103fa2447
+Has Taken 90 Empty Crate From Van Horn Gunsmith Inventory`
+    });
+    assert.equal(emptyCrateReview.reviewRequired, true);
+    assert.equal(emptyCrateReview.reviewReason, "unknown_item");
+    const emptyCrateResolution = await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-empty-crate-withdrawal",
+        itemName: "Empty Crate",
+        quantity: 90,
+        eventType: "Stocking Movement",
+        direction: "Stock Out",
+        rememberMapping: true,
+        resolvedBy: "Ada Lovelace",
+        newItem: {
+          enabled: true,
+          type: "material",
+          name: "Empty Crate",
+          label: "Empty Crate",
+          tag: "Empty Crate",
+          category: "Materials",
+          unit: "unit",
+          unitCost: "1,50"
+        }
+      }
+    });
+    assert.equal(emptyCrateResolution.catalogItemCreated, true);
+    assert.equal(emptyCrateResolution.catalogItem.unitCost, 1.5);
+    const emptyCrateMovement = await database.query(`
+      SELECT location_type, quantity_delta FROM inventory_events
+      WHERE business_id = $1 AND event_id = 'discord-empty-crate-withdrawal:stock'
+    `, [store.businessId]);
+    assert.equal(emptyCrateMovement.rows[0].location_type, "storage");
+    assert.equal(Number(emptyCrateMovement.rows[0].quantity_delta), -90);
+    storageSnapshot = await store.snapshot();
+    assert.equal(storageSnapshot.inventory.storage.find(item => item.ingredient === "Empty Crate").storageCount, 0);
+    assert.equal(
+      storageSnapshot.reviewExceptions.find(entry => entry.webhookId === "discord-empty-crate-withdrawal").status,
       "Resolved"
     );
 

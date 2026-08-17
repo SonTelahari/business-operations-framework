@@ -357,6 +357,7 @@ const elements = {
   exceptionNavCount: document.querySelector("#exceptionNavCount"),
   dashboardReviewCount: document.querySelector("#dashboardReviewCount"),
   reviewDataStatus: document.querySelector("#reviewDataStatus"),
+  reviewActionStatus: document.querySelector("#reviewActionStatus"),
   reviewOpenCount: document.querySelector("#reviewOpenCount"),
   reviewResolvedCount: document.querySelector("#reviewResolvedCount"),
   reviewIgnoredCount: document.querySelector("#reviewIgnoredCount"),
@@ -2943,10 +2944,10 @@ function catalogItemDraft(input) {
     tag: String(input.tag || "").trim(),
     category: String(input.category || (type === "material" ? "Materials" : type === "both" ? "Products and Materials" : "Products")).trim(),
     unit: String(input.unit || "unit").trim() || "unit",
-    unitCost: input.unitCost === "" ? 0 : Number(input.unitCost),
-    salePrice: sellable ? input.salePrice === "" ? 0 : Number(input.salePrice) : 0,
-    target: sellable ? input.target === "" ? 0 : Number(input.target) : 0,
-    storageTarget: input.storageTarget === "" ? 0 : Number(input.storageTarget),
+    unitCost: input.unitCost === "" ? 0 : formNumber(input.unitCost),
+    salePrice: sellable ? input.salePrice === "" ? 0 : formNumber(input.salePrice) : 0,
+    target: sellable ? input.target === "" ? 0 : formNumber(input.target) : 0,
+    storageTarget: input.storageTarget === "" ? 0 : formNumber(input.storageTarget),
     active: input.active !== false
   };
 }
@@ -2958,6 +2959,15 @@ function validateCatalogItemDraft(item) {
     return "Costs, prices, and targets must be zero or greater";
   }
   return "";
+}
+
+function formNumber(value) {
+  const text = String(value ?? "").trim().replace(/\s+/g, "");
+  if (!text) return 0;
+  const normalized = text.includes(",") && !text.includes(".")
+    ? text.replace(",", ".")
+    : text.replace(/,/g, "");
+  return Number(normalized);
 }
 
 function catalogGoods() {
@@ -4223,6 +4233,7 @@ function renderWebhookLog() {
 }
 
 function renderReviewEditor(entry) {
+  elements.reviewActionStatus.textContent = "";
   if (!entry) {
     elements.reviewEditorTitle.textContent = "No event selected";
     elements.reviewEditorStatus.textContent = "-";
@@ -4431,20 +4442,20 @@ async function resolveReviewException() {
   const transactionAlreadyWritten = Boolean(entry.transactionWritten);
   const creating = !transactionAlreadyWritten && elements.reviewCreateProduct.checked;
   const item = findExactStockItem(elements.reviewItem.value);
-  const quantity = Number(elements.reviewQuantity.value);
+  const quantity = formNumber(elements.reviewQuantity.value);
   const packaged = elements.reviewPackageConversion.checked;
-  const quantityMultiplier = packaged ? Number(elements.reviewUnitsPerPackage.value) : 1;
+  const quantityMultiplier = packaged ? formNumber(elements.reviewUnitsPerPackage.value) : 1;
   if (!creating && !item) {
-    elements.reviewDataStatus.textContent = "Select an exact catalog item or recipe material";
+    setReviewActionStatus("Select an exact catalog item or recipe material");
     elements.reviewItem.focus();
     return;
   }
   if (creating && backendSnapshot?.dataBackend !== "postgresql" && Number(backendSnapshot?.sheet?.schemaVersion || 0) < 8) {
-    elements.reviewDataStatus.textContent = "Update the legacy data service before adding new wares";
+    setReviewActionStatus("Update the legacy data service before adding new wares");
     return;
   }
   if (creating && item) {
-    elements.reviewDataStatus.textContent = "This ware already exists; uncheck the new ware option to apply it";
+    setReviewActionStatus("This ware already exists; uncheck the new ware option to apply it");
     elements.reviewItem.focus();
     return;
   }
@@ -4464,27 +4475,28 @@ async function resolveReviewException() {
   } : null;
   const newItemValidation = creating ? validateCatalogItemDraft(newItem) : "";
   if (newItemValidation) {
-    elements.reviewDataStatus.textContent = newItemValidation;
+    setReviewActionStatus(newItemValidation);
     return;
   }
   if (!Number.isFinite(quantity) || quantity <= 0) {
-    elements.reviewDataStatus.textContent = "Enter a positive quantity";
+    setReviewActionStatus("Enter a positive quantity");
     elements.reviewQuantity.focus();
     return;
   }
   if (!Number.isFinite(quantityMultiplier) || quantityMultiplier < 1 || quantityMultiplier > 1000000) {
-    elements.reviewDataStatus.textContent = "Enter between 1 and 1,000,000 units per crate";
+    setReviewActionStatus("Enter between 1 and 1,000,000 units per crate");
     elements.reviewUnitsPerPackage.focus();
     return;
   }
   if (packaged && !elements.reviewRememberMapping.checked) {
-    elements.reviewDataStatus.textContent = "Keep Remember checked to save the crate conversion rule";
+    setReviewActionStatus("Keep Remember checked to save the crate conversion rule");
     elements.reviewRememberMapping.focus();
     return;
   }
 
   elements.resolveReview.disabled = true;
   elements.ignoreReview.disabled = true;
+  setReviewActionStatus(creating ? "Adding catalog good and applying movement..." : "Applying movement...");
   const result = await syncToBackend("resolve_exception", {
     exception: {
       webhookId: entry.webhookId,
@@ -4494,19 +4506,24 @@ async function resolveReviewException() {
       direction: elements.reviewDirection.value,
       quantity,
       quantityMultiplier,
-      unitPrice: Number(elements.reviewUnitPrice.value || 0),
+      unitPrice: formNumber(elements.reviewUnitPrice.value),
       rememberMapping: !transactionAlreadyWritten && elements.reviewRememberMapping.checked,
       note: elements.reviewNote.value.trim(),
       newItem
     }
   });
   if (!result.ok) {
-    elements.reviewDataStatus.textContent = `Resolution failed: ${result.error || "data sync failed"}`;
+    setReviewActionStatus(`Resolution failed: ${result.error || "data sync failed"}`);
     setReviewEditorDisabled(false);
     return;
   }
   activeReviewExceptionId = "";
   await loadBackendSnapshot({ silent: true });
+}
+
+function setReviewActionStatus(message) {
+  elements.reviewActionStatus.textContent = message;
+  elements.reviewDataStatus.textContent = message;
 }
 
 async function ignoreReviewException() {
