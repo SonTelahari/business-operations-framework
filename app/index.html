@@ -1348,13 +1348,18 @@
                 <div class="review-stock-summary"><dt>Variance</dt><dd id="reviewStockVariance">-</dd></div>
               </dl>
               <div class="review-cash-fields hidden" id="reviewCashFields">
-                <label>
-                  Cash Amount
-                  <input id="reviewCashAmountInput" type="number" min="0" step="0.01" value="0" readonly>
-                </label>
+                <div class="review-cash-balance">
+                  <div><span>Webhook Total</span><strong id="reviewCashTotal">0</strong></div>
+                  <div><span>Accounted For</span><strong id="reviewCashAllocated">0</strong></div>
+                  <div><span>Still Unassigned</span><strong id="reviewCashRemaining">0</strong></div>
+                </div>
                 <label>
                   Direction
                   <input id="reviewCashDirectionInput" type="text" value="Cash In" readonly>
+                </label>
+                <label>
+                  Allocate Now
+                  <input id="reviewCashAmountInput" type="number" min="0.01" step="0.01" value="0">
                 </label>
                 <label>
                   Operation
@@ -1366,6 +1371,7 @@
                   Reference or Counterparty
                   <input id="reviewCashReferenceInput" type="text" autocomplete="off" placeholder="Customer, supplier, payroll period, or purpose">
                 </label>
+                <div class="review-cash-allocation-list" id="reviewCashAllocationList"></div>
                 <p>Classification determines whether this affects profit, owner funds, safekeeping, or only ledger cash.</p>
               </div>
               <div class="review-correction-grid">

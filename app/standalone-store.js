@@ -248,6 +248,31 @@ class StandaloneStore {
           cleanText(exception.note, 1000),
           Boolean(exception.transactionWritten)
         ]);
+        const cashAllocations = Array.isArray(exception.cashAllocations) ? exception.cashAllocations : [];
+        for (let allocationIndex = 0; allocationIndex < cashAllocations.length; allocationIndex += 1) {
+          const allocation = cashAllocations[allocationIndex];
+          const allocationAmount = money(number(allocation.amount));
+          if (!(allocationAmount > 0)) continue;
+          await client.query(`
+            INSERT INTO cash_review_allocations (
+              business_id, webhook_id, allocation_id, occurred_at, direction, classification,
+              reference, note, amount, actor_name, resolved_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (business_id, webhook_id, allocation_id) DO NOTHING
+          `, [
+            this.businessId,
+            webhookId,
+            cleanText(allocation.id, 150) || `${batchId}:cash:${index}:${allocationIndex}`,
+            validDate(allocation.createdAt || exception.receivedAt || snapshot.generatedAt),
+            cleanText(allocation.direction, 30) || cleanText(exception.direction, 30),
+            cleanText(allocation.category, 100) || "Imported Cash Allocation",
+            cleanText(allocation.reference, 250),
+            cleanText(allocation.note, 2500),
+            allocationAmount,
+            cleanText(allocation.actorName, 150),
+            cleanText(allocation.resolvedBy, 100) || actor
+          ]);
+        }
       }
 
       const financeRows = Array.isArray(finance?.breakdown) ? finance.breakdown : [];
@@ -320,7 +345,7 @@ class StandaloneStore {
   }
 
   async snapshot() {
-    const [catalogResult, recipeResult, ingredientResult, inventoryResult, ledgerResult, exceptionResult, webhookResult, purchaseResult] = await Promise.all([
+    const [catalogResult, recipeResult, ingredientResult, inventoryResult, ledgerResult, exceptionResult, webhookResult, purchaseResult, cashAllocationResult] = await Promise.all([
       this.database.query(`
         SELECT * FROM catalog_items WHERE business_id = $1 ORDER BY item_type, category, label
       `, [this.businessId]),
@@ -365,6 +390,11 @@ class StandaloneStore {
         FROM webhook_events
         WHERE business_id = $1 AND status = 'applied' AND event_type = 'Purchase'
         ORDER BY occurred_at
+      `, [this.businessId]),
+      this.database.query(`
+        SELECT * FROM cash_review_allocations
+        WHERE business_id = $1
+        ORDER BY created_at, allocation_id
       `, [this.businessId])
     ]);
 
@@ -469,13 +499,23 @@ class StandaloneStore {
       storage.push({ ingredient: count.itemName, storageCount: Math.max(0, count.quantity), countedAt: count.countedAt });
     }
 
+    const cashAllocationsByWebhook = new Map();
+    cashAllocationResult.rows.forEach(row => {
+      const allocations = cashAllocationsByWebhook.get(row.webhook_id) || [];
+      allocations.push(cashAllocationRow(row));
+      cashAllocationsByWebhook.set(row.webhook_id, allocations);
+    });
+
     return {
       ok: true,
       schemaVersion: 1,
       dataBackend: "postgresql",
       generatedAt: new Date().toISOString(),
       sheets: [],
-      reviewExceptions: exceptionResult.rows.map(exceptionRow),
+      reviewExceptions: exceptionResult.rows.map(row => exceptionRow(
+        row,
+        cashAllocationsByWebhook.get(row.webhook_id) || []
+      )),
       webhookLog: webhookResult.rows.map(webhookEventRow),
       catalog,
       recipes,
@@ -1239,6 +1279,20 @@ class StandaloneStore {
   async ignoreException(correction) {
     const webhookId = cleanText(correction.webhookId, 150);
     return this.database.transaction(async client => {
+      const cashCheck = await client.query(`
+        SELECT e.proposed_event_type, w.payload
+        FROM webhook_exceptions e
+        JOIN webhook_events w USING (business_id, webhook_id)
+        WHERE e.business_id = $1 AND e.webhook_id = $2
+      `, [this.businessId, webhookId]);
+      const cashPayload = json(cashCheck.rows[0]?.payload, {});
+      if (cashCheck.rows[0]?.proposed_event_type === "Cash Movement" || parseLedgerCashText(cashPayload.raw_payload)) {
+        throw storeError(
+          "Cash movements must be fully allocated and cannot be ignored",
+          400,
+          "cash_review_required"
+        );
+      }
       const result = await client.query(`
         UPDATE webhook_exceptions SET
           status = 'Ignored', resolved_at = now(), resolved_by = $3, resolution_note = $4
@@ -1393,8 +1447,10 @@ const CASH_CLASSIFICATIONS = Object.freeze({
 
 async function resolveCashException(client, businessId, { webhookId, stored, payload, correction, ledgerCash }) {
   const direction = ledgerCash?.direction || cleanText(stored.proposed_direction, 30);
-  const amount = ledgerCash?.amount || number(stored.proposed_quantity) || number(payload.cash_amount);
-  if (!(amount > 0)) throw storeError("Cash review requires a positive amount", 400, "invalid_cash_amount");
+  const totalAmount = money(ledgerCash?.amount || number(stored.proposed_quantity) || number(payload.cash_amount));
+  if (!(totalAmount > 0)) throw storeError("Cash review requires a positive amount", 400, "invalid_cash_amount");
+  const allocationAmount = money(number(correction.cashAmount));
+  if (!(allocationAmount > 0)) throw storeError("Enter an allocation greater than zero", 400, "invalid_cash_allocation");
   const classification = cleanText(correction.cashCategory, 100);
   const descriptor = CASH_CLASSIFICATIONS[classification];
   if (!descriptor) throw storeError("Choose what operation this cash movement belongs to", 400, "cash_classification_required");
@@ -1404,8 +1460,42 @@ async function resolveCashException(client, businessId, { webhookId, stored, pay
 
   const actor = cleanText(stored.actor_name, 150) || cleanText(ledgerCash?.actor, 150);
   const resolvedBy = cleanText(correction.resolvedBy, 100) || "Manager";
+  const allocationId = cleanText(correction.allocationId, 150) || crypto.randomUUID();
   const reference = cleanText(correction.cashReference, 250);
   const note = cleanText(correction.note, 2500);
+  const existingAllocation = await client.query(`
+    SELECT allocation_id FROM cash_review_allocations
+    WHERE business_id = $1 AND webhook_id = $2 AND allocation_id = $3
+  `, [businessId, webhookId, allocationId]);
+  const allocationTotalResult = await client.query(`
+    SELECT COALESCE(SUM(amount), 0) AS amount
+    FROM cash_review_allocations
+    WHERE business_id = $1 AND webhook_id = $2
+  `, [businessId, webhookId]);
+  const allocatedBefore = money(number(allocationTotalResult.rows[0]?.amount));
+  const remainingBefore = Math.max(0, money(totalAmount - allocatedBefore));
+  if (existingAllocation.rowCount) {
+    return {
+      ok: true,
+      duplicate: true,
+      action: "resolve_exception",
+      webhookId,
+      status: remainingBefore <= 0 ? "Resolved" : "Open",
+      cashMovement: true,
+      cashAmount: totalAmount,
+      cashAllocated: allocatedBefore,
+      cashRemaining: remainingBefore,
+      direction,
+      transactionWritten: allocatedBefore > 0
+    };
+  }
+  if (allocationAmount - remainingBefore > 0.005) {
+    throw storeError(
+      `This allocation exceeds the remaining ${remainingBefore.toFixed(2)}`,
+      400,
+      "cash_allocation_exceeds_remaining"
+    );
+  }
   const metadata = {
     webhookId,
     actor,
@@ -1416,54 +1506,75 @@ async function resolveCashException(client, businessId, { webhookId, stored, pay
     ledgerName: cleanText(ledgerCash?.ledgerName || payload.ledger_name, 200)
   };
 
+  await client.query(`
+    INSERT INTO cash_review_allocations (
+      business_id, webhook_id, allocation_id, occurred_at, direction, classification,
+      reference, note, amount, actor_name, resolved_by
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+  `, [
+    businessId, webhookId, allocationId, stored.occurred_at, direction, classification,
+    reference, note, allocationAmount, actor, resolvedBy
+  ]);
+
   await insertLedger(client, businessId, {
-    eventId: `${webhookId}:ledger`,
+    eventId: `${webhookId}:ledger:${allocationId}`,
     occurredAt: stored.occurred_at,
     source: "Discord Review",
     kind: classification,
-    amountDelta: direction === "Cash In" ? amount : -amount,
+    amountDelta: direction === "Cash In" ? allocationAmount : -allocationAmount,
     actor,
     metadata
   });
   if (descriptor.type) {
     await insertFinance(client, businessId, {
-      eventId: `${webhookId}:finance`,
+      eventId: `${webhookId}:finance:${allocationId}`,
       occurredAt: stored.occurred_at,
       type: descriptor.type,
       category: descriptor.category,
       label: reference || descriptor.label,
       source: "Discord Review",
       direction,
-      amount,
+      amount: allocationAmount,
       metadata
     });
   }
 
+  const cashAllocated = money(allocatedBefore + allocationAmount);
+  const cashRemaining = Math.max(0, money(totalAmount - cashAllocated));
+  const complete = cashRemaining <= 0;
+
   await client.query(`
     UPDATE webhook_exceptions SET
-      status = 'Resolved', resolved_item_name = $3, resolved_at = now(), resolved_by = $4,
-      resolution_note = $5, transaction_written = true,
-      proposed_event_type = 'Cash Movement', proposed_direction = $6, proposed_quantity = $7
+      status = $3, resolved_item_name = $4,
+      resolved_at = CASE WHEN $3 = 'Resolved' THEN now() ELSE NULL END,
+      resolved_by = CASE WHEN $3 = 'Resolved' THEN $5 ELSE '' END,
+      resolution_note = CASE WHEN $3 = 'Resolved' THEN $6 ELSE '' END,
+      transaction_written = true,
+      proposed_event_type = 'Cash Movement', proposed_direction = $7, proposed_quantity = $8
     WHERE business_id = $1 AND webhook_id = $2
-  `, [businessId, webhookId, classification, resolvedBy, note, direction, amount]);
+  `, [businessId, webhookId, complete ? "Resolved" : "Open", classification, resolvedBy, note, direction, totalAmount]);
   await client.query(`
     UPDATE webhook_events SET
-      status = 'applied', event_type = 'Cash Movement', direction = $3,
-      item_name = $4, quantity = $5, unit_price = 0, actor_name = $6
+      status = $3, event_type = 'Cash Movement', direction = $4,
+      item_name = $5, quantity = $6, unit_price = 0, actor_name = $7
     WHERE business_id = $1 AND webhook_id = $2
-  `, [businessId, webhookId, direction, classification, amount, actor]);
+  `, [businessId, webhookId, complete ? "applied" : "review", direction, "Cash allocations", totalAmount, actor]);
 
   return {
     ok: true,
     action: "resolve_exception",
     webhookId,
-    status: "Resolved",
+    status: complete ? "Resolved" : "Open",
     cashMovement: true,
     cashCategory: classification,
-    cashAmount: amount,
+    allocationId,
+    allocationAmount,
+    cashAmount: totalAmount,
+    cashAllocated,
+    cashRemaining,
     direction,
     transactionWritten: true,
-    ledgerControlWritten: true,
+    ledgerControlWritten: complete,
     financeWritten: Boolean(descriptor.type)
   };
 }
@@ -2000,10 +2111,12 @@ function catalogRow(row) {
   };
 }
 
-function exceptionRow(row) {
+function exceptionRow(row, cashAllocations = []) {
   const payload = json(row.original_payload, {});
   const ledgerCash = parseLedgerCashText(payload.raw_payload);
   const storageMovement = parseStorageManagerText(payload.raw_payload);
+  const cashAmount = ledgerCash?.amount || (row.proposed_event_type === "Cash Movement" ? number(row.proposed_quantity) : 0);
+  const cashAllocated = money(sum(cashAllocations, allocation => allocation.amount));
   return {
     webhookId: row.webhook_id,
     status: row.status,
@@ -2016,7 +2129,10 @@ function exceptionRow(row) {
     eventType: ledgerCash ? "Cash Movement" : row.proposed_event_type,
     direction: ledgerCash?.direction || storageMovement?.direction || row.proposed_direction,
     quantity: ledgerCash?.amount || number(row.proposed_quantity) || storageMovement?.quantity || 0,
-    cashAmount: ledgerCash?.amount || 0,
+    cashAmount,
+    cashAllocated,
+    cashRemaining: Math.max(0, money(cashAmount - cashAllocated)),
+    cashAllocations,
     cashMovement: Boolean(ledgerCash || row.proposed_event_type === "Cash Movement"),
     ledgerName: ledgerCash?.ledgerName || cleanText(payload.ledger_name, 200),
     unitPrice: number(row.proposed_unit_price),
@@ -2057,6 +2173,20 @@ function webhookEventRow(row) {
     discordChannelId: cleanText(payload.discord_channel_id, 100),
     reviewReason: cleanText(payload.review_reason, 300),
     rawText: String(payload.raw_payload || "").slice(0, 4000)
+  };
+}
+
+function cashAllocationRow(row) {
+  return {
+    id: row.allocation_id,
+    direction: row.direction,
+    category: row.classification,
+    reference: row.reference,
+    note: row.note,
+    amount: number(row.amount),
+    actorName: row.actor_name,
+    resolvedBy: row.resolved_by,
+    createdAt: iso(row.created_at)
   };
 }
 

@@ -61,6 +61,8 @@ assert(appHtml.includes('id="reviewUnitsPerPackageInput"'), "webhook review must
 assert(appHtml.includes('id="reviewActorName"'), "webhook review must expose the character responsible for storage movements");
 assert(appHtml.includes('id="reviewCashCategoryInput"'), "cash webhooks must require an operational classification");
 assert(appHtml.includes('id="reviewCashReferenceInput"'), "cash reviews must retain a counterparty or operational reference");
+assert(appHtml.includes('id="reviewCashRemaining"'), "split cash reviews must show the unassigned remainder");
+assert(appHtml.includes('id="reviewCashAllocationList"'), "split cash reviews must retain each saved allocation");
 assert(appHtml.includes('id="webhookLogBody"'), "webhook review must expose a recent delivery log");
 assert(appHtml.includes('id="webhookLogStatusFilter"'), "the webhook delivery log must filter by result");
 assert(appHtml.includes('id="workspaceSwitcherButton"'), "authenticated users must have an in-ledger business switcher");
@@ -71,6 +73,7 @@ assert(appScript.includes('addGoods(itemCatalog, "product")'), "catalog fallback
 assert(appScript.includes('addGoods(ingredientCatalog, "material")'), "catalog fallback must classify recipe ingredients as materials");
 assert(appScript.includes("function renderReviewPackageMode"), "crate conversion must preview the resulting inventory units");
 assert(appScript.includes("function resolveCashReviewException"), "cash reviews must use a dedicated ledger workflow");
+assert(appScript.includes('elements.ignoreReview.classList.toggle("hidden", cash)'), "cash webhook reviews must not be dismissible");
 assert(appScript.includes("function renderWebhookLog"), "the review workspace must render retained webhook activity");
 assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefront value must be calculated from current counts");
 assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");

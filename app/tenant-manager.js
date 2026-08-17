@@ -375,7 +375,7 @@ class TenantManager {
   async removeProvisioningWorkspace(businessId) {
     const tables = [
       "recipe_ingredients", "recipe_definitions", "catalog_items", "operation_receipts",
-      "inventory_events", "ledger_events", "finance_events", "webhook_exceptions",
+      "inventory_events", "ledger_events", "finance_events", "cash_review_allocations", "webhook_exceptions",
       "webhook_events", "item_mappings", "time_entries", "import_batches"
     ];
     await this.database.transaction(async client => {

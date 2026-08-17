@@ -911,7 +911,7 @@ Has Taken 90 Empty Crate From Van Horn Gunsmith Inventory`
 PlayerName: William Winther
 Server ID 6
 Steam ID: steam:110000103fa2447
-Deposited An Amount Of 100 To Van Horn Gunsmith Ledger`
+Deposited An Amount Of 700 To Van Horn Gunsmith Ledger`
     });
     assert.equal(cashDeposit.reviewRequired, true);
     assert.equal(cashDeposit.reviewReason, "cash_classification_required");
@@ -920,7 +920,9 @@ Deposited An Amount Of 100 To Van Horn Gunsmith Ledger`
     assert.equal(depositReview.cashMovement, true);
     assert.equal(depositReview.eventType, "Cash Movement");
     assert.equal(depositReview.direction, "Cash In");
-    assert.equal(depositReview.cashAmount, 100);
+    assert.equal(depositReview.cashAmount, 700);
+    assert.equal(depositReview.cashAllocated, 0);
+    assert.equal(depositReview.cashRemaining, 700);
     assert.equal(depositReview.actorName, "William Winther");
     assert.equal(depositReview.ledgerName, "Van Horn Gunsmith");
     assert.equal((await store.finance()).ledger.balance, cashReviewFinanceBefore.ledger.balance);
@@ -929,19 +931,73 @@ Deposited An Amount Of 100 To Van Horn Gunsmith Ledger`
       action: "resolve_exception",
       exception: {
         webhookId: "discord-ledger-cash-deposit",
-        cashCategory: "Safekeeping Deposit",
-        cashReference: "William's locked funds",
+        cashAmount: 500,
+        cashCategory: "P2P Sale",
+        allocationId: "cash-deposit-p2p-500",
+        cashReference: "Private firearm sale",
         note: "Classified from storage ledger webhook",
         resolvedBy: "Ada Lovelace"
       }
     });
     assert.equal(cashDepositResolution.cashMovement, true);
-    assert.equal(cashDepositResolution.cashAmount, 100);
-    assert.equal(cashDepositResolution.cashCategory, "Safekeeping Deposit");
+    assert.equal(cashDepositResolution.status, "Open");
+    assert.equal(cashDepositResolution.cashAmount, 700);
+    assert.equal(cashDepositResolution.allocationAmount, 500);
+    assert.equal(cashDepositResolution.cashAllocated, 500);
+    assert.equal(cashDepositResolution.cashRemaining, 200);
+    assert.equal(cashDepositResolution.cashCategory, "P2P Sale");
     let cashFinance = await store.finance();
-    assert.equal(cashFinance.ledger.balance, cashReviewFinanceBefore.ledger.balance + 100);
-    assert.equal(cashFinance.balances.safekeeping, cashReviewFinanceBefore.balances.safekeeping + 100);
-    assert.deepEqual(cashFinance.totals, cashReviewFinanceBefore.totals);
+    assert.equal(cashFinance.ledger.balance, cashReviewFinanceBefore.ledger.balance + 500);
+    assert.equal(cashFinance.totals.revenue, cashReviewFinanceBefore.totals.revenue + 500);
+    const duplicateCashDepositResolution = await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-ledger-cash-deposit",
+        cashAmount: 500,
+        cashCategory: "P2P Sale",
+        allocationId: "cash-deposit-p2p-500",
+        cashReference: "Private firearm sale",
+        resolvedBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(duplicateCashDepositResolution.duplicate, true);
+    assert.equal(duplicateCashDepositResolution.cashAllocated, 500);
+    assert.equal(duplicateCashDepositResolution.cashRemaining, 200);
+    cashFinance = await store.finance();
+    assert.equal(cashFinance.ledger.balance, cashReviewFinanceBefore.ledger.balance + 500);
+    assert.equal(cashFinance.totals.revenue, cashReviewFinanceBefore.totals.revenue + 500);
+    cashSnapshot = await store.snapshot();
+    const partialDepositReview = cashSnapshot.reviewExceptions.find(entry => entry.webhookId === "discord-ledger-cash-deposit");
+    assert.equal(partialDepositReview.status, "Open");
+    assert.equal(partialDepositReview.cashAllocations.length, 1);
+    assert.equal(partialDepositReview.cashAllocations[0].category, "P2P Sale");
+    assert.equal(partialDepositReview.cashRemaining, 200);
+    await assert.rejects(
+      store.handleGuiPayload({
+        action: "ignore_exception",
+        exception: { webhookId: "discord-ledger-cash-deposit", resolvedBy: "Ada Lovelace" }
+      }),
+      error => error.code === "cash_review_required"
+    );
+
+    const finalCashDepositResolution = await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-ledger-cash-deposit",
+        cashAmount: 200,
+        cashCategory: "Safekeeping Deposit",
+        allocationId: "cash-deposit-safekeeping-200",
+        cashReference: "William's locked funds",
+        resolvedBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(finalCashDepositResolution.status, "Resolved");
+    assert.equal(finalCashDepositResolution.cashAllocated, 700);
+    assert.equal(finalCashDepositResolution.cashRemaining, 0);
+    cashFinance = await store.finance();
+    assert.equal(cashFinance.ledger.balance, cashReviewFinanceBefore.ledger.balance + 700);
+    assert.equal(cashFinance.balances.safekeeping, cashReviewFinanceBefore.balances.safekeeping + 200);
+    assert.equal(cashFinance.totals.revenue, cashReviewFinanceBefore.totals.revenue + 500);
 
     const cashWithdrawal = await store.ingestWebhook({
       webhook_id: "discord-ledger-cash-withdrawal",
@@ -959,6 +1015,7 @@ Withdrawn An Amount Of 100 From Van Horn Gunsmith Ledger`
         action: "resolve_exception",
         exception: {
           webhookId: "discord-ledger-cash-withdrawal",
+          cashAmount: 100,
           cashCategory: "Business Income",
           resolvedBy: "Ada Lovelace"
         }
@@ -969,15 +1026,18 @@ Withdrawn An Amount Of 100 From Van Horn Gunsmith Ledger`
       action: "resolve_exception",
       exception: {
         webhookId: "discord-ledger-cash-withdrawal",
+        cashAmount: 100,
         cashCategory: "P2P Purchase",
+        allocationId: "cash-withdrawal-p2p-100",
         cashReference: "Private materials purchase",
         resolvedBy: "Ada Lovelace"
       }
     });
     cashFinance = await store.finance();
-    assert.equal(cashFinance.ledger.balance, cashReviewFinanceBefore.ledger.balance);
+    assert.equal(cashFinance.ledger.balance, cashReviewFinanceBefore.ledger.balance + 600);
+    assert.equal(cashFinance.totals.revenue, cashReviewFinanceBefore.totals.revenue + 500);
     assert.equal(cashFinance.totals.expenses, cashReviewFinanceBefore.totals.expenses + 100);
-    assert.equal(cashFinance.totals.profit, cashReviewFinanceBefore.totals.profit - 100);
+    assert.equal(cashFinance.totals.profit, cashReviewFinanceBefore.totals.profit + 400);
     assert(cashFinance.breakdown.some(row => row.category === "P2P Purchases" && row.amount === 100));
     cashSnapshot = await store.snapshot();
     assert.equal(

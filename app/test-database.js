@@ -31,7 +31,8 @@ async function run() {
       "007_storage_targets.sql",
       "008_local_identity_jobs.sql",
       "009_storage_ledger_discord_channel.sql",
-      "010_item_mapping_quantity_multiplier.sql"
+      "010_item_mapping_quantity_multiplier.sql",
+      "011_cash_review_allocations.sql"
     ]);
 
     const tables = await database.query(`
@@ -59,6 +60,7 @@ async function run() {
       "ledger_events",
       "finance_events",
       "webhook_events",
+      "cash_review_allocations",
       "time_entries"
     ]) {
       assert.equal(tableNames.has(expected), true, `${expected} was not created`);

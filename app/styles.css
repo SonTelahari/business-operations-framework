@@ -4023,6 +4023,65 @@ body.auth-page {
   font-size: 0.84rem;
 }
 
+.review-cash-balance {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid rgba(86, 65, 43, 0.28);
+}
+
+.review-cash-balance > div {
+  display: grid;
+  gap: 3px;
+  padding: 0 12px 12px 0;
+}
+
+.review-cash-balance span,
+.review-cash-allocation-list h4 {
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.review-cash-balance strong {
+  font-size: 1.2rem;
+}
+
+#reviewCashRemaining:not(.complete) {
+  color: var(--accent);
+}
+
+.review-cash-allocation-list {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+
+.review-cash-allocation-list h4,
+.review-cash-allocation-list .empty-line {
+  margin: 2px 0;
+}
+
+.review-cash-allocation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px dotted rgba(86, 65, 43, 0.32);
+}
+
+.review-cash-allocation-row span {
+  display: grid;
+  gap: 2px;
+}
+
+.review-cash-allocation-row small {
+  color: var(--ink-muted);
+}
+
 .review-correction-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5271,7 +5330,8 @@ body.auth-page {
   .review-filters,
   .review-source-grid,
   .review-correction-grid,
-  .review-cash-fields {
+  .review-cash-fields,
+  .review-cash-balance {
     grid-template-columns: 1fr;
   }
 

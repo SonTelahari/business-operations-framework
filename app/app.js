@@ -381,10 +381,14 @@ const elements = {
   reviewReportedItemTotal: document.querySelector("#reviewReportedItemTotal"),
   reviewStockVariance: document.querySelector("#reviewStockVariance"),
   reviewCashFields: document.querySelector("#reviewCashFields"),
+  reviewCashTotal: document.querySelector("#reviewCashTotal"),
+  reviewCashAllocated: document.querySelector("#reviewCashAllocated"),
+  reviewCashRemaining: document.querySelector("#reviewCashRemaining"),
   reviewCashAmount: document.querySelector("#reviewCashAmountInput"),
   reviewCashDirection: document.querySelector("#reviewCashDirectionInput"),
   reviewCashCategory: document.querySelector("#reviewCashCategoryInput"),
   reviewCashReference: document.querySelector("#reviewCashReferenceInput"),
+  reviewCashAllocationList: document.querySelector("#reviewCashAllocationList"),
   reviewItem: document.querySelector("#reviewItemInput"),
   reviewEventType: document.querySelector("#reviewEventTypeInput"),
   reviewDirection: document.querySelector("#reviewDirectionInput"),
@@ -4253,9 +4257,13 @@ function renderReviewEditor(entry) {
     elements.reviewReportedItemTotal.textContent = "-";
     elements.reviewStockVariance.textContent = "-";
     elements.reviewCashAmount.value = 0;
+    elements.reviewCashTotal.textContent = formatFinanceCurrency(0);
+    elements.reviewCashAllocated.textContent = formatFinanceCurrency(0);
+    elements.reviewCashRemaining.textContent = formatFinanceCurrency(0);
     elements.reviewCashDirection.value = "Cash In";
     elements.reviewCashCategory.value = "";
     elements.reviewCashReference.value = "";
+    elements.reviewCashAllocationList.innerHTML = "";
     elements.reviewItem.value = "";
     elements.reviewQuantity.value = 0;
     elements.reviewUnitPrice.value = 0;
@@ -4326,11 +4334,12 @@ function renderReviewEditor(entry) {
   renderReviewPackageMode(entry);
   renderReviewCashMode(entry);
   setReviewEditorDisabled(entry.status !== "Open");
-  if (entry.status === "Open" && entry.transactionWritten) setRecordedReviewMode();
+  if (entry.status === "Open" && entry.transactionWritten && !isCashReview(entry)) setRecordedReviewMode();
 }
 
 function setReviewEditorDisabled(disabled) {
   [
+    elements.reviewCashAmount,
     elements.reviewCashCategory,
     elements.reviewCashReference,
     elements.reviewItem,
@@ -4370,18 +4379,36 @@ function renderReviewCashMode(entry = reviewExceptions.find(candidate => candida
   document.querySelector(".review-mapping-option")?.classList.toggle("hidden", cash);
   document.querySelector(".review-package-conversion")?.classList.toggle("hidden", cash);
   document.querySelector(".review-new-product-option")?.classList.toggle("hidden", cash);
+  elements.ignoreReview.classList.toggle("hidden", cash);
   if (!cash) return;
 
   const direction = entry.direction === "Cash Out" ? "Cash Out" : "Cash In";
-  elements.reviewCashAmount.value = Number(entry.cashAmount || entry.quantity || 0);
+  const total = Number(entry.cashAmount || entry.quantity || 0);
+  const allocated = Number(entry.cashAllocated || 0);
+  const remaining = Math.max(0, Number(entry.cashRemaining ?? total - allocated));
+  elements.reviewCashTotal.textContent = formatFinanceCurrency(total);
+  elements.reviewCashAllocated.textContent = formatFinanceCurrency(allocated);
+  elements.reviewCashRemaining.textContent = formatFinanceCurrency(remaining);
+  elements.reviewCashRemaining.classList.toggle("complete", remaining <= 0.005);
+  elements.reviewCashAmount.value = remaining;
+  elements.reviewCashAmount.max = remaining;
   elements.reviewCashDirection.value = direction;
   elements.reviewCashReference.value = "";
   elements.reviewCashCategory.innerHTML = cashReviewOptions(direction)
     .map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
     .join("");
+  const allocations = Array.isArray(entry.cashAllocations) ? entry.cashAllocations : [];
+  elements.reviewCashAllocationList.innerHTML = allocations.length
+    ? `<h4>Saved allocations</h4>${allocations.map(allocation => `
+      <div class="review-cash-allocation-row">
+        <span><strong>${escapeHtml(allocation.category)}</strong>${allocation.reference ? `<small>${escapeHtml(allocation.reference)}</small>` : ""}</span>
+        <strong>${formatFinanceCurrency(allocation.amount)}</strong>
+      </div>
+    `).join("")}`
+    : `<p class="empty-line">No cash has been allocated yet</p>`;
   elements.reviewNewProductFields.classList.add("hidden");
   elements.reviewPackageFields.classList.add("hidden");
-  elements.resolveReview.textContent = "Classify and Apply Cash";
+  elements.resolveReview.textContent = remaining < total ? "Apply Next Allocation" : "Apply Cash Allocation";
 }
 
 function cashReviewOptions(direction) {
@@ -4594,14 +4621,21 @@ async function resolveReviewException() {
 
 async function resolveCashReviewException(entry) {
   const cashCategory = elements.reviewCashCategory.value;
-  const cashAmount = formNumber(elements.reviewCashAmount.value);
+  const allocationAmount = formNumber(elements.reviewCashAmount.value);
+  const remainingBefore = Number(entry.cashRemaining ?? entry.cashAmount ?? entry.quantity ?? 0);
   if (!cashCategory) {
     setReviewActionStatus("Choose what operation this cash movement belongs to");
     elements.reviewCashCategory.focus();
     return;
   }
-  if (!Number.isFinite(cashAmount) || cashAmount <= 0) {
-    setReviewActionStatus("The webhook did not supply a valid cash amount");
+  if (!Number.isFinite(allocationAmount) || allocationAmount <= 0) {
+    setReviewActionStatus("Enter an allocation greater than zero");
+    elements.reviewCashAmount.focus();
+    return;
+  }
+  if (allocationAmount - remainingBefore > 0.005) {
+    setReviewActionStatus(`Only ${formatFinanceCurrency(remainingBefore)} remains to be allocated`);
+    elements.reviewCashAmount.focus();
     return;
   }
 
@@ -4613,8 +4647,9 @@ async function resolveCashReviewException(entry) {
       webhookId: entry.webhookId,
       eventType: "Cash Movement",
       direction: elements.reviewCashDirection.value,
-      cashAmount,
+      cashAmount: allocationAmount,
       cashCategory,
+      allocationId: crypto.randomUUID(),
       cashReference: elements.reviewCashReference.value.trim(),
       note: elements.reviewNote.value.trim()
     }
@@ -4624,8 +4659,14 @@ async function resolveCashReviewException(entry) {
     setReviewEditorDisabled(false);
     return;
   }
-  activeReviewExceptionId = "";
+  const complete = result.status === "Resolved" || Number(result.cashRemaining || 0) <= 0.005;
+  if (complete) activeReviewExceptionId = "";
   await loadBackendSnapshot({ silent: true });
+  if (!complete) {
+    setReviewActionStatus(
+      `${formatFinanceCurrency(result.allocationAmount || allocationAmount)} allocated; ${formatFinanceCurrency(result.cashRemaining)} remains`
+    );
+  }
 }
 
 function setReviewActionStatus(message) {
