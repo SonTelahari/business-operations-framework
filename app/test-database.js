@@ -30,7 +30,8 @@ async function run() {
       "006_recipe_source_locations.sql",
       "007_storage_targets.sql",
       "008_local_identity_jobs.sql",
-      "009_storage_ledger_discord_channel.sql"
+      "009_storage_ledger_discord_channel.sql",
+      "010_item_mapping_quantity_multiplier.sql"
     ]);
 
     const tables = await database.query(`

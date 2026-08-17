@@ -3941,6 +3941,32 @@ body.auth-page {
   margin-top: 14px;
 }
 
+.review-package-conversion {
+  margin-top: 8px;
+}
+
+.review-package-fields {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.45fr) minmax(260px, 1fr);
+  gap: 14px;
+  align-items: end;
+  margin-top: 10px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(86, 65, 43, 0.28);
+  border-bottom: 1px solid rgba(86, 65, 43, 0.28);
+}
+
+.review-package-fields label {
+  display: grid;
+  gap: 6px;
+}
+
+.review-package-fields p {
+  margin: 0 0 9px;
+  color: var(--ink-muted);
+  font-weight: 700;
+}
+
 .review-new-product-option {
   margin-top: 8px;
 }
@@ -5156,6 +5182,10 @@ body.auth-page {
   }
 
   .review-new-product-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .review-package-fields {
     grid-template-columns: 1fr;
   }
 

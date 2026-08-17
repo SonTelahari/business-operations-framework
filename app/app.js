@@ -375,10 +375,16 @@ const elements = {
   reviewItem: document.querySelector("#reviewItemInput"),
   reviewEventType: document.querySelector("#reviewEventTypeInput"),
   reviewDirection: document.querySelector("#reviewDirectionInput"),
+  reviewQuantityLabelText: document.querySelector("#reviewQuantityLabelText"),
   reviewQuantity: document.querySelector("#reviewQuantityInput"),
+  reviewUnitPriceLabelText: document.querySelector("#reviewUnitPriceLabelText"),
   reviewUnitPrice: document.querySelector("#reviewUnitPriceInput"),
   reviewNote: document.querySelector("#reviewNoteInput"),
   reviewRememberMapping: document.querySelector("#reviewRememberMappingInput"),
+  reviewPackageConversion: document.querySelector("#reviewPackageConversionInput"),
+  reviewPackageFields: document.querySelector("#reviewPackageFields"),
+  reviewUnitsPerPackage: document.querySelector("#reviewUnitsPerPackageInput"),
+  reviewPackagePreview: document.querySelector("#reviewPackagePreview"),
   reviewCreateProduct: document.querySelector("#reviewCreateProductInput"),
   reviewNewProductFields: document.querySelector("#reviewNewProductFields"),
   reviewItemType: document.querySelector("#reviewItemTypeInput"),
@@ -1231,6 +1237,13 @@ function wireEvents() {
   elements.reviewSearch.addEventListener("input", renderReviewWorkspace);
   elements.refreshReview.addEventListener("click", () => loadBackendSnapshot({ silent: false }));
   elements.reviewCreateProduct.addEventListener("change", renderReviewProductMode);
+  elements.reviewPackageConversion.addEventListener("change", () => {
+    if (elements.reviewPackageConversion.checked) elements.reviewRememberMapping.checked = true;
+    renderReviewPackageMode();
+  });
+  elements.reviewUnitsPerPackage.addEventListener("input", renderReviewPackageMode);
+  elements.reviewQuantity.addEventListener("input", renderReviewPackageMode);
+  elements.reviewItem.addEventListener("input", renderReviewPackageMode);
   elements.reviewItemType.addEventListener("change", () => {
     elements.reviewProductCategory.value = elements.reviewItemType.value === "material"
       ? "Materials"
@@ -4166,6 +4179,8 @@ function renderReviewEditor(entry) {
     elements.reviewItem.value = "";
     elements.reviewQuantity.value = 0;
     elements.reviewUnitPrice.value = 0;
+    elements.reviewPackageConversion.checked = false;
+    elements.reviewUnitsPerPackage.value = 1;
     elements.reviewCreateProduct.checked = false;
     elements.reviewItemType.value = "product";
     elements.reviewProductLabel.value = "";
@@ -4177,6 +4192,7 @@ function renderReviewEditor(entry) {
     elements.reviewProductTarget.value = 0;
     elements.reviewRawText.textContent = "No event selected";
     renderReviewProductMode();
+    renderReviewPackageMode();
     setReviewEditorDisabled(true);
     return;
   }
@@ -4206,6 +4222,10 @@ function renderReviewEditor(entry) {
   elements.reviewUnitPrice.value = Number(entry.unitPrice || 0);
   elements.reviewNote.value = entry.note || "";
   elements.reviewRememberMapping.checked = !entry.transactionWritten;
+  elements.reviewPackageConversion.checked = !entry.transactionWritten && /\bcrate\b/i.test(
+    `${entry.discordItemName || ""} ${entry.discordItemLabel || ""}`
+  );
+  elements.reviewUnitsPerPackage.value = 1;
   elements.reviewCreateProduct.checked = false;
   elements.reviewItemType.value = "product";
   elements.reviewProductLabel.value = entry.discordItemLabel || entry.discordItemName || "";
@@ -4219,6 +4239,7 @@ function renderReviewEditor(entry) {
   elements.reviewProductTarget.value = 0;
   elements.reviewRawText.textContent = entry.rawText || "No webhook text was supplied";
   renderReviewProductMode(entry);
+  renderReviewPackageMode(entry);
   setReviewEditorDisabled(entry.status !== "Open");
   if (entry.status === "Open" && entry.transactionWritten) setRecordedReviewMode();
 }
@@ -4232,6 +4253,8 @@ function setReviewEditorDisabled(disabled) {
     elements.reviewUnitPrice,
     elements.reviewNote,
     elements.reviewRememberMapping,
+    elements.reviewPackageConversion,
+    elements.reviewUnitsPerPackage,
     elements.reviewCreateProduct,
     elements.reviewItemType,
     elements.reviewProductLabel,
@@ -4266,6 +4289,21 @@ function renderReviewProductMode(entry = reviewExceptions.find(candidate => cand
   elements.ignoreReview.textContent = entry?.transactionWritten ? "Dismiss Review" : "Ignore Event";
 }
 
+function renderReviewPackageMode(entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId)) {
+  const packaged = elements.reviewPackageConversion.checked;
+  const packageQuantity = Math.max(0, Number(elements.reviewQuantity.value || 0));
+  const unitsPerPackage = Math.max(1, Number(elements.reviewUnitsPerPackage.value || 1));
+  const totalUnits = packageQuantity * unitsPerPackage;
+  const selected = findExactStockItem(elements.reviewItem.value);
+  const itemName = selected?.label || elements.reviewItem.value.trim() || "selected good";
+  elements.reviewPackageFields.classList.toggle("hidden", !packaged);
+  elements.reviewQuantityLabelText.textContent = packaged ? "Crates or packages reported" : "Quantity";
+  elements.reviewUnitPriceLabelText.textContent = packaged ? "Price per crate or package" : "Unit Price";
+  elements.reviewPackagePreview.textContent = `${formatNumber(packageQuantity)} package${packageQuantity === 1 ? "" : "s"} x ${formatNumber(unitsPerPackage)} = ${formatNumber(totalUnits)} ${itemName} units`;
+  if (!packaged) elements.reviewUnitsPerPackage.value = 1;
+  if (entry?.transactionWritten) elements.reviewPackageFields.classList.add("hidden");
+}
+
 function setRecordedReviewMode() {
   [
     elements.reviewItem,
@@ -4274,6 +4312,8 @@ function setRecordedReviewMode() {
     elements.reviewQuantity,
     elements.reviewUnitPrice,
     elements.reviewRememberMapping,
+    elements.reviewPackageConversion,
+    elements.reviewUnitsPerPackage,
     elements.reviewCreateProduct,
     elements.reviewItemType,
     elements.reviewProductLabel,
@@ -4332,6 +4372,8 @@ async function resolveReviewException() {
   const creating = !transactionAlreadyWritten && elements.reviewCreateProduct.checked;
   const item = findExactStockItem(elements.reviewItem.value);
   const quantity = Number(elements.reviewQuantity.value);
+  const packaged = elements.reviewPackageConversion.checked;
+  const quantityMultiplier = packaged ? Number(elements.reviewUnitsPerPackage.value) : 1;
   if (!creating && !item) {
     elements.reviewDataStatus.textContent = "Select an exact catalog item or recipe material";
     elements.reviewItem.focus();
@@ -4370,6 +4412,16 @@ async function resolveReviewException() {
     elements.reviewQuantity.focus();
     return;
   }
+  if (!Number.isFinite(quantityMultiplier) || quantityMultiplier < 1 || quantityMultiplier > 1000000) {
+    elements.reviewDataStatus.textContent = "Enter between 1 and 1,000,000 units per crate";
+    elements.reviewUnitsPerPackage.focus();
+    return;
+  }
+  if (packaged && !elements.reviewRememberMapping.checked) {
+    elements.reviewDataStatus.textContent = "Keep Remember checked to save the crate conversion rule";
+    elements.reviewRememberMapping.focus();
+    return;
+  }
 
   elements.resolveReview.disabled = true;
   elements.ignoreReview.disabled = true;
@@ -4381,6 +4433,7 @@ async function resolveReviewException() {
       eventType: elements.reviewEventType.value,
       direction: elements.reviewDirection.value,
       quantity,
+      quantityMultiplier,
       unitPrice: Number(elements.reviewUnitPrice.value || 0),
       rememberMapping: !transactionAlreadyWritten && elements.reviewRememberMapping.checked,
       note: elements.reviewNote.value.trim(),

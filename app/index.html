@@ -1367,11 +1367,11 @@
                   </select>
                 </label>
                 <label>
-                  Quantity
+                  <span id="reviewQuantityLabelText">Quantity</span>
                   <input id="reviewQuantityInput" type="number" min="0" step="1" value="0">
                 </label>
                 <label>
-                  Unit Price
+                  <span id="reviewUnitPriceLabelText">Unit Price</span>
                   <input id="reviewUnitPriceInput" type="number" min="0" step="0.01" value="0">
                 </label>
                 <label class="review-note-field">
@@ -1383,6 +1383,19 @@
                 <input id="reviewRememberMappingInput" type="checkbox" checked>
                 Remember this Discord label for future events
               </label>
+              <div class="review-package-conversion">
+                <label class="checkbox-line">
+                  <input id="reviewPackageConversionInput" type="checkbox">
+                  This webhook item is a crate or package of the selected good
+                </label>
+                <div class="review-package-fields hidden" id="reviewPackageFields">
+                  <label>
+                    Units in one crate or package
+                    <input id="reviewUnitsPerPackageInput" type="number" min="1" max="1000000" step="1" value="1">
+                  </label>
+                  <p id="reviewPackagePreview">1 crate will record 1 unit</p>
+                </div>
+              </div>
               <label class="checkbox-line review-new-product-option">
                 <input id="reviewCreateProductInput" type="checkbox">
                 Add as a new catalog good

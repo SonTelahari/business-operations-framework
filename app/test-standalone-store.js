@@ -671,6 +671,93 @@ async function run() {
     assert.equal(storageSnapshot.inventory.ledger.balance, 275);
     assert.deepEqual((await store.finance()).totals, storageFinanceBefore.totals);
 
+    const rawTobaccoStorageBefore = storageSnapshot.inventory.storage
+      .find(item => item.ingredient === "Raw Tobacco").storageCount;
+    const crateReview = await store.ingestWebhook({
+      webhook_id: "discord-raw-tobacco-crate-1",
+      discord_channel_type: "storage-ledger",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      discord_item_name: "CRATE_RAW_TOBACCO",
+      discord_item_label: "Crate of Raw Tobacco",
+      item_name: "Crate of Raw Tobacco",
+      quantity: 2,
+      unit_price: 60,
+      review_required: true,
+      review_reason: "unknown_item",
+      occurred_at: "2026-08-01T15:10:00.000Z"
+    });
+    assert.equal(crateReview.reviewRequired, true);
+    const crateResolution = await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-raw-tobacco-crate-1",
+        itemName: "Raw Tobacco",
+        quantity: 2,
+        quantityMultiplier: 120,
+        unitPrice: 60,
+        eventType: "Stocking Movement",
+        direction: "Stock In",
+        rememberMapping: true,
+        resolvedBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(crateResolution.packageQuantity, 2);
+    assert.equal(crateResolution.quantityMultiplier, 120);
+    assert.equal(crateResolution.quantity, 240);
+    storageSnapshot = await store.snapshot();
+    assert.equal(
+      storageSnapshot.inventory.storage.find(item => item.ingredient === "Raw Tobacco").storageCount,
+      rawTobaccoStorageBefore + 240
+    );
+    const crateMapping = await database.query(`
+      SELECT canonical_item_name, quantity_multiplier
+      FROM item_mappings
+      WHERE business_id = $1 AND discord_item_name = 'CRATE_RAW_TOBACCO'
+    `, [store.businessId]);
+    assert.equal(crateMapping.rows[0].canonical_item_name, "Raw Tobacco");
+    assert.equal(Number(crateMapping.rows[0].quantity_multiplier), 120);
+    const storedCrateMovement = await database.query(`
+      SELECT quantity_delta, unit_price, metadata
+      FROM inventory_events
+      WHERE business_id = $1 AND event_id = 'discord-raw-tobacco-crate-1:stock'
+    `, [store.businessId]);
+    assert.equal(Number(storedCrateMovement.rows[0].quantity_delta), 240);
+    assert.equal(Number(storedCrateMovement.rows[0].unit_price), 0.5);
+    assert.equal(Number(storedCrateMovement.rows[0].metadata.quantityMultiplier), 120);
+
+    const mappedCrate = await store.ingestWebhook({
+      webhook_id: "discord-raw-tobacco-crate-2",
+      discord_channel_type: "storage-ledger",
+      event_type: "Stocking Movement",
+      direction: "Stock Out",
+      discord_item_name: "CRATE_RAW_TOBACCO",
+      discord_item_label: "Crate of Raw Tobacco",
+      item_name: "Crate of Raw Tobacco",
+      quantity: 1,
+      unit_price: 60,
+      review_required: true,
+      review_reason: "unknown_item",
+      occurred_at: "2026-08-01T15:15:00.000Z"
+    });
+    assert.equal(mappedCrate.reviewRequired, undefined);
+    assert.equal(mappedCrate.appInventoryTotal, rawTobaccoStorageBefore + 120);
+
+    const looseTobacco = await store.ingestWebhook({
+      webhook_id: "discord-raw-tobacco-loose-1",
+      discord_channel_type: "storage-ledger",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      discord_item_name: "raw_tobacco",
+      discord_item_label: "Crate of Raw Tobacco",
+      item_name: "Raw Tobacco",
+      quantity: 1,
+      occurred_at: "2026-08-01T15:20:00.000Z"
+    });
+    assert.equal(looseTobacco.reviewRequired, undefined);
+    assert.equal(looseTobacco.appInventoryTotal, rawTobaccoStorageBefore + 121);
+    assert.deepEqual((await store.finance()).totals, storageFinanceBefore.totals);
+
     console.log("Standalone PostgreSQL workflow tests passed.");
   } finally {
     await database.close();

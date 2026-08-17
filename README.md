@@ -94,6 +94,8 @@ Keep `CAPTURE_ONLY=1` until the target server's real Discord messages pass parse
 
 For one shared hosted bridge, set `SHARED_BUSINESS_MODE=1` and leave `DISCORD_CHANNEL_ID` blank. An admin connects each business's storefront event channel and optional storage/ledger event channel in **Business Settings**. The app routes incoming events by the registered channel and rejects channels assigned to another business. Storefront events affect storefront stock and storefront P&L; storage/ledger events affect storage counts and authoritative ledger balances without creating duplicate sales or purchase finance entries.
 
+Crated or packaged goods are resolved once in the webhook Review ledger. Select the canonical catalog good, mark the event as a crate/package, enter the units held by one package, and keep the Discord mapping enabled. The recorded movement and every later matching webhook are converted into loose inventory units while the original package count and price remain in event metadata for audit. Exact Discord item-name mappings take priority over shared display labels, so loose goods cannot accidentally inherit a crate conversion.
+
 ## Hosted Workspaces
 
 Use these additional GUI/API variables when offering the app as a shared service:

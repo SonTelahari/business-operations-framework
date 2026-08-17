@@ -1027,8 +1027,15 @@ class StandaloneStore {
       if (stored.status !== "Open") {
         return { ok: true, duplicate: true, action: "resolve_exception", webhookId, status: stored.status };
       }
-      const quantity = number(correction.quantity);
-      if (!(quantity > 0)) throw storeError("Resolving an exception requires a positive quantity", 400, "invalid_quantity");
+      const packageQuantity = number(correction.quantity);
+      if (!(packageQuantity > 0)) throw storeError("Resolving an exception requires a positive quantity", 400, "invalid_quantity");
+      const quantityMultiplier = correction.quantityMultiplier === undefined
+        ? 1
+        : number(correction.quantityMultiplier);
+      if (quantityMultiplier < 1 || quantityMultiplier > 1000000) {
+        throw storeError("Units per crate must be between 1 and 1,000,000", 400, "invalid_quantity_multiplier");
+      }
+      const quantity = packageQuantity * quantityMultiplier;
       let itemName = cleanText(correction.itemName, 150);
       let catalogItemCreated = false;
       let createdCatalogItem = null;
@@ -1050,6 +1057,10 @@ class StandaloneStore {
       const payload = json(stored.payload, {});
       const historyPreserved = payload.importedFromArchive === true;
       const transactionAlreadyWritten = Boolean(stored.transaction_written);
+      const packageUnitPrice = correction.unitPrice === "" || correction.unitPrice === undefined
+        ? number(stored.proposed_unit_price)
+        : number(correction.unitPrice);
+      const reportedItemTotal = nullableNumber(firstValue(payload, ["current_item_total", "current_stock", "stock_total"]));
       const event = normalizeWebhook({
         ...payload,
         webhook_id: webhookId,
@@ -1057,15 +1068,17 @@ class StandaloneStore {
         direction: correction.direction || stored.proposed_direction,
         item_name: itemName,
         quantity,
-        unit_price: correction.unitPrice === "" || correction.unitPrice === undefined
-          ? stored.proposed_unit_price
-          : correction.unitPrice,
+        unit_price: packageUnitPrice / quantityMultiplier,
+        current_item_total: reportedItemTotal === null ? null : reportedItemTotal * quantityMultiplier,
         occurred_at: stored.occurred_at,
         actor: stored.actor_name,
         order_id: stored.order_id,
         review_required: false,
         review_reason: ""
       });
+      event.packageQuantity = packageQuantity;
+      event.quantityMultiplier = quantityMultiplier;
+      event.packageUnitPrice = packageUnitPrice;
       const applied = historyPreserved || transactionAlreadyWritten
         ? { stockControlWritten: false, ledgerControlWritten: false }
         : await applyWebhookEvent(client, this.businessId, event, { applyLedger: false });
@@ -1075,6 +1088,7 @@ class StandaloneStore {
           discordItemName: stored.discord_item_name,
           discordItemLabel: stored.discord_item_label,
           itemName,
+          quantityMultiplier,
           resolvedBy,
           webhookId
         });
@@ -1098,6 +1112,9 @@ class StandaloneStore {
       `, [this.businessId, webhookId, historyPreserved ? "ignored" : "applied", itemName, quantity, event.unitPrice]);
       return {
         ok: true, action: "resolve_exception", webhookId, status: "Resolved", itemName,
+        packageQuantity,
+        quantityMultiplier,
+        quantity,
         catalogItemCreated,
         catalogItem: createdCatalogItem,
         productCreated: catalogItemCreated && isSellableCatalogItem(createdCatalogItem),
@@ -1258,7 +1275,10 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
     orderId: event.orderId,
     listingItemTotal: event.currentItemTotal,
     discordChannelType: event.channelType,
-    location: event.location
+    location: event.location,
+    packageQuantity: event.packageQuantity || event.quantity,
+    quantityMultiplier: event.quantityMultiplier || 1,
+    packageUnitPrice: event.packageUnitPrice ?? event.unitPrice
   };
   const quantityDelta = event.type === "Sale" || event.direction === "Stock Out"
     ? -event.quantity
@@ -1336,17 +1356,33 @@ async function currentInventoryQuantity(client, businessId, location, item) {
 }
 
 async function applyStoredMapping(client, businessId, event) {
-  if (!event.reviewRequired || !event.reviewReason.split(",").includes("unknown_item")) return event;
+  if (!event.discordItemName && !event.discordItemLabel) return event;
   const result = await client.query(`
-    SELECT canonical_item_name FROM item_mappings
+    SELECT canonical_item_name, quantity_multiplier FROM item_mappings
     WHERE business_id = $1 AND (
       ($2 <> '' AND lower(discord_item_name) = $2) OR
-      ($3 <> '' AND lower(discord_item_label) = $3)
-    ) ORDER BY created_at DESC LIMIT 1
+      ($3 <> '' AND lower(discord_item_label) = $3 AND (discord_item_name = '' OR $2 = ''))
+    )
+    ORDER BY CASE WHEN $2 <> '' AND lower(discord_item_name) = $2 THEN 0 ELSE 1 END, created_at DESC
+    LIMIT 1
   `, [businessId, inventoryKey(event.discordItemName), inventoryKey(event.discordItemLabel)]);
   if (!result.rowCount) return event;
+  const quantityMultiplier = Math.max(1, number(result.rows[0].quantity_multiplier) || 1);
+  const packageQuantity = event.quantity;
+  const packageUnitPrice = event.unitPrice;
   const reasons = event.reviewReason.split(",").filter(reason => reason && reason !== "unknown_item" && reason !== "missing_item");
-  return { ...event, item: result.rows[0].canonical_item_name, reviewReason: reasons.join(","), reviewRequired: reasons.length > 0 };
+  return {
+    ...event,
+    item: result.rows[0].canonical_item_name,
+    packageQuantity,
+    quantityMultiplier,
+    packageUnitPrice,
+    quantity: packageQuantity * quantityMultiplier,
+    unitPrice: packageUnitPrice / quantityMultiplier,
+    currentItemTotal: event.currentItemTotal === null ? null : event.currentItemTotal * quantityMultiplier,
+    reviewReason: reasons.join(","),
+    reviewRequired: reasons.length > 0
+  };
 }
 
 async function resolveAgainstCatalog(client, businessId, event) {
@@ -1386,24 +1422,26 @@ async function rememberMapping(client, businessId, mapping) {
   const existing = await client.query(`
     SELECT id FROM item_mappings WHERE business_id = $1 AND (
       ($2 <> '' AND lower(discord_item_name) = $2) OR
-      ($3 <> '' AND lower(discord_item_label) = $3)
+      ($3 <> '' AND lower(discord_item_label) = $3 AND (discord_item_name = '' OR $2 = ''))
     ) LIMIT 1
   `, [businessId, inventoryKey(mapping.discordItemName), inventoryKey(mapping.discordItemLabel)]);
   const id = existing.rows[0]?.id || crypto.randomUUID();
   await client.query(`
     INSERT INTO item_mappings (
-      business_id, id, discord_item_name, discord_item_label, canonical_item_name, created_by, source_webhook_id
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      business_id, id, discord_item_name, discord_item_label, canonical_item_name,
+      quantity_multiplier, created_by, source_webhook_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     ON CONFLICT (business_id, id) DO UPDATE SET
       discord_item_name = EXCLUDED.discord_item_name,
       discord_item_label = EXCLUDED.discord_item_label,
       canonical_item_name = EXCLUDED.canonical_item_name,
+      quantity_multiplier = EXCLUDED.quantity_multiplier,
       created_by = EXCLUDED.created_by,
       source_webhook_id = EXCLUDED.source_webhook_id,
       created_at = now()
   `, [
     businessId, id, mapping.discordItemName || "", mapping.discordItemLabel || "", mapping.itemName,
-    mapping.resolvedBy || "", mapping.webhookId || ""
+    Math.max(1, number(mapping.quantityMultiplier) || 1), mapping.resolvedBy || "", mapping.webhookId || ""
   ]);
 }
 
