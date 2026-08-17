@@ -1340,18 +1340,40 @@
                 <div><dt>Received</dt><dd id="reviewReceivedAt">-</dd></div>
                 <div><dt>Reason</dt><dd id="reviewReason">-</dd></div>
                 <div><dt>Character</dt><dd id="reviewActorName">-</dd></div>
-                <div><dt>Discord Name</dt><dd id="reviewDiscordName">-</dd></div>
-                <div><dt>Discord Label</dt><dd id="reviewDiscordLabel">-</dd></div>
-                <div><dt>App Count</dt><dd id="reviewAppInventoryTotal">-</dd></div>
-                <div><dt>Webhook Remainder</dt><dd id="reviewReportedItemTotal">-</dd></div>
-                <div><dt>Variance</dt><dd id="reviewStockVariance">-</dd></div>
+                <div class="review-cash-summary hidden"><dt>Ledger</dt><dd id="reviewLedgerName">-</dd></div>
+                <div class="review-stock-summary"><dt>Discord Name</dt><dd id="reviewDiscordName">-</dd></div>
+                <div class="review-stock-summary"><dt>Discord Label</dt><dd id="reviewDiscordLabel">-</dd></div>
+                <div class="review-stock-summary"><dt>App Count</dt><dd id="reviewAppInventoryTotal">-</dd></div>
+                <div class="review-stock-summary"><dt>Webhook Remainder</dt><dd id="reviewReportedItemTotal">-</dd></div>
+                <div class="review-stock-summary"><dt>Variance</dt><dd id="reviewStockVariance">-</dd></div>
               </dl>
+              <div class="review-cash-fields hidden" id="reviewCashFields">
+                <label>
+                  Cash Amount
+                  <input id="reviewCashAmountInput" type="number" min="0" step="0.01" value="0" readonly>
+                </label>
+                <label>
+                  Direction
+                  <input id="reviewCashDirectionInput" type="text" value="Cash In" readonly>
+                </label>
+                <label>
+                  Operation
+                  <select id="reviewCashCategoryInput">
+                    <option value="">Choose operation</option>
+                  </select>
+                </label>
+                <label>
+                  Reference or Counterparty
+                  <input id="reviewCashReferenceInput" type="text" autocomplete="off" placeholder="Customer, supplier, payroll period, or purpose">
+                </label>
+                <p>Classification determines whether this affects profit, owner funds, safekeeping, or only ledger cash.</p>
+              </div>
               <div class="review-correction-grid">
-                <label class="review-item-field">
+                <label class="review-item-field review-stock-field">
                   Catalog Item or Product Name
                   <input id="reviewItemInput" list="stockOptions" autocomplete="off" placeholder="Canonical item, material, or new product">
                 </label>
-                <label>
+                <label class="review-stock-field">
                   Event
                   <select id="reviewEventTypeInput">
                     <option value="Sale">Sale</option>
@@ -1359,7 +1381,7 @@
                     <option value="Stocking Movement">Stocking Movement</option>
                   </select>
                 </label>
-                <label>
+                <label class="review-stock-field">
                   Direction
                   <select id="reviewDirectionInput">
                     <option value="Stock In">Stock In</option>
@@ -1367,11 +1389,11 @@
                     <option value="Purchase">Purchase</option>
                   </select>
                 </label>
-                <label>
+                <label class="review-stock-field">
                   <span id="reviewQuantityLabelText">Quantity</span>
                   <input id="reviewQuantityInput" type="number" min="0" step="1" value="0">
                 </label>
-                <label>
+                <label class="review-stock-field">
                   <span id="reviewUnitPriceLabelText">Unit Price</span>
                   <input id="reviewUnitPriceInput" type="number" min="0" step="0.01" value="0">
                 </label>

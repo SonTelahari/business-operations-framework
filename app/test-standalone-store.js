@@ -897,6 +897,94 @@ Has Taken 90 Empty Crate From Van Horn Gunsmith Inventory`
     assert.equal(looseTobacco.appInventoryTotal, rawTobaccoStorageBefore + 121);
     assert.deepEqual((await store.finance()).totals, storageFinanceBefore.totals);
 
+    const cashReviewFinanceBefore = await store.finance();
+    const cashDeposit = await store.ingestWebhook({
+      webhook_id: "discord-ledger-cash-deposit",
+      discord_channel_type: "storefront",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      proposed_item_name: "",
+      proposed_quantity: 0,
+      review_required: true,
+      review_reason: "missing_item,missing_quantity",
+      raw_payload: `Steam name : Son Telahari
+PlayerName: William Winther
+Server ID 6
+Steam ID: steam:110000103fa2447
+Deposited An Amount Of 100 To Van Horn Gunsmith Ledger`
+    });
+    assert.equal(cashDeposit.reviewRequired, true);
+    assert.equal(cashDeposit.reviewReason, "cash_classification_required");
+    let cashSnapshot = await store.snapshot();
+    const depositReview = cashSnapshot.reviewExceptions.find(entry => entry.webhookId === "discord-ledger-cash-deposit");
+    assert.equal(depositReview.cashMovement, true);
+    assert.equal(depositReview.eventType, "Cash Movement");
+    assert.equal(depositReview.direction, "Cash In");
+    assert.equal(depositReview.cashAmount, 100);
+    assert.equal(depositReview.actorName, "William Winther");
+    assert.equal(depositReview.ledgerName, "Van Horn Gunsmith");
+    assert.equal((await store.finance()).ledger.balance, cashReviewFinanceBefore.ledger.balance);
+
+    const cashDepositResolution = await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-ledger-cash-deposit",
+        cashCategory: "Safekeeping Deposit",
+        cashReference: "William's locked funds",
+        note: "Classified from storage ledger webhook",
+        resolvedBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(cashDepositResolution.cashMovement, true);
+    assert.equal(cashDepositResolution.cashAmount, 100);
+    assert.equal(cashDepositResolution.cashCategory, "Safekeeping Deposit");
+    let cashFinance = await store.finance();
+    assert.equal(cashFinance.ledger.balance, cashReviewFinanceBefore.ledger.balance + 100);
+    assert.equal(cashFinance.balances.safekeeping, cashReviewFinanceBefore.balances.safekeeping + 100);
+    assert.deepEqual(cashFinance.totals, cashReviewFinanceBefore.totals);
+
+    const cashWithdrawal = await store.ingestWebhook({
+      webhook_id: "discord-ledger-cash-withdrawal",
+      discord_channel_type: "storage-ledger",
+      raw_payload: `Steam name : Son Telahari
+PlayerName: William Winther
+Server ID 6
+Steam ID: steam:110000103fa2447
+Withdrawn An Amount Of 100 From Van Horn Gunsmith Ledger`
+    });
+    assert.equal(cashWithdrawal.reviewRequired, true);
+    assert.equal(cashWithdrawal.reviewReason, "cash_classification_required");
+    await assert.rejects(
+      store.handleGuiPayload({
+        action: "resolve_exception",
+        exception: {
+          webhookId: "discord-ledger-cash-withdrawal",
+          cashCategory: "Business Income",
+          resolvedBy: "Ada Lovelace"
+        }
+      }),
+      error => error.code === "cash_direction_mismatch"
+    );
+    await store.handleGuiPayload({
+      action: "resolve_exception",
+      exception: {
+        webhookId: "discord-ledger-cash-withdrawal",
+        cashCategory: "P2P Purchase",
+        cashReference: "Private materials purchase",
+        resolvedBy: "Ada Lovelace"
+      }
+    });
+    cashFinance = await store.finance();
+    assert.equal(cashFinance.ledger.balance, cashReviewFinanceBefore.ledger.balance);
+    assert.equal(cashFinance.totals.expenses, cashReviewFinanceBefore.totals.expenses + 100);
+    assert.equal(cashFinance.totals.profit, cashReviewFinanceBefore.totals.profit - 100);
+    assert(cashFinance.breakdown.some(row => row.category === "P2P Purchases" && row.amount === 100));
+    cashSnapshot = await store.snapshot();
+    assert.equal(
+      cashSnapshot.reviewExceptions.find(entry => entry.webhookId === "discord-ledger-cash-withdrawal").status,
+      "Resolved"
+    );
+
     console.log("Standalone PostgreSQL workflow tests passed.");
   } finally {
     await database.close();

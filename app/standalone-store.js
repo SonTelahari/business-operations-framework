@@ -1,5 +1,5 @@
 const crypto = require("node:crypto");
-const { parseStorageManagerText } = require("../discord-bridge/parser");
+const { parseStorageManagerText, parseLedgerCashText } = require("../discord-bridge/parser");
 
 const BUSINESS_ID = "primary";
 
@@ -1126,6 +1126,17 @@ class StandaloneStore {
       if (stored.status !== "Open") {
         return { ok: true, duplicate: true, action: "resolve_exception", webhookId, status: stored.status };
       }
+      const payload = json(stored.payload, {});
+      const ledgerCash = parseLedgerCashText(payload.raw_payload);
+      if (ledgerCash || stored.proposed_event_type === "Cash Movement") {
+        return resolveCashException(client, this.businessId, {
+          webhookId,
+          stored,
+          payload,
+          correction,
+          ledgerCash
+        });
+      }
       const packageQuantity = number(correction.quantity);
       if (!(packageQuantity > 0)) throw storeError("Resolving an exception requires a positive quantity", 400, "invalid_quantity");
       const quantityMultiplier = correction.quantityMultiplier === undefined
@@ -1153,7 +1164,6 @@ class StandaloneStore {
         catalogItemCreated = true;
       }
       requireItem(itemName);
-      const payload = json(stored.payload, {});
       const storageMovement = parseStorageManagerText(payload.raw_payload);
       const historyPreserved = payload.importedFromArchive === true;
       const transactionAlreadyWritten = Boolean(stored.transaction_written);
@@ -1340,6 +1350,122 @@ async function insertFinance(client, businessId, event) {
     businessId, event.eventId, event.occurredAt, event.type, event.category, event.label,
     event.source, event.direction || "", number(event.amount), JSON.stringify(event.metadata || {})
   ]);
+}
+
+const CASH_CLASSIFICATIONS = Object.freeze({
+  "Business Income": {
+    direction: "Cash In", type: "Revenue", category: "Other Income", label: "Business Income"
+  },
+  "P2P Sale": {
+    direction: "Cash In", type: "Revenue", category: "P2P Sales", label: "P2P Sale"
+  },
+  "Owner Capital Deposit": {
+    direction: "Cash In", type: "Owner Capital", category: "Owner Funds", label: "Owner Capital"
+  },
+  "Safekeeping Deposit": {
+    direction: "Cash In", type: "Safekeeping", category: "Safekeeping", label: "Safekeeping Funds"
+  },
+  "Cash Transfer In": {
+    direction: "Cash In", type: "", category: "", label: "Cash Transfer"
+  },
+  "Business Expense": {
+    direction: "Cash Out", type: "Expense", category: "Other Expenses", label: "Business Expense"
+  },
+  "P2P Purchase": {
+    direction: "Cash Out", type: "Expense", category: "P2P Purchases", label: "P2P Purchase"
+  },
+  "Supplier Purchase": {
+    direction: "Cash Out", type: "Expense", category: "Supplier Purchases", label: "Supplier Purchase"
+  },
+  "Payroll Payment": {
+    direction: "Cash Out", type: "Expense", category: "Payroll", label: "Payroll Payment"
+  },
+  "Owner Withdrawal": {
+    direction: "Cash Out", type: "Owner Capital", category: "Owner Funds", label: "Owner Capital"
+  },
+  "Safekeeping Withdrawal": {
+    direction: "Cash Out", type: "Safekeeping", category: "Safekeeping", label: "Safekeeping Funds"
+  },
+  "Cash Transfer Out": {
+    direction: "Cash Out", type: "", category: "", label: "Cash Transfer"
+  }
+});
+
+async function resolveCashException(client, businessId, { webhookId, stored, payload, correction, ledgerCash }) {
+  const direction = ledgerCash?.direction || cleanText(stored.proposed_direction, 30);
+  const amount = ledgerCash?.amount || number(stored.proposed_quantity) || number(payload.cash_amount);
+  if (!(amount > 0)) throw storeError("Cash review requires a positive amount", 400, "invalid_cash_amount");
+  const classification = cleanText(correction.cashCategory, 100);
+  const descriptor = CASH_CLASSIFICATIONS[classification];
+  if (!descriptor) throw storeError("Choose what operation this cash movement belongs to", 400, "cash_classification_required");
+  if (descriptor.direction !== direction) {
+    throw storeError(`${classification} cannot be used for ${direction || "this cash direction"}`, 400, "cash_direction_mismatch");
+  }
+
+  const actor = cleanText(stored.actor_name, 150) || cleanText(ledgerCash?.actor, 150);
+  const resolvedBy = cleanText(correction.resolvedBy, 100) || "Manager";
+  const reference = cleanText(correction.cashReference, 250);
+  const note = cleanText(correction.note, 2500);
+  const metadata = {
+    webhookId,
+    actor,
+    resolvedBy,
+    classification,
+    reference,
+    note,
+    ledgerName: cleanText(ledgerCash?.ledgerName || payload.ledger_name, 200)
+  };
+
+  await insertLedger(client, businessId, {
+    eventId: `${webhookId}:ledger`,
+    occurredAt: stored.occurred_at,
+    source: "Discord Review",
+    kind: classification,
+    amountDelta: direction === "Cash In" ? amount : -amount,
+    actor,
+    metadata
+  });
+  if (descriptor.type) {
+    await insertFinance(client, businessId, {
+      eventId: `${webhookId}:finance`,
+      occurredAt: stored.occurred_at,
+      type: descriptor.type,
+      category: descriptor.category,
+      label: reference || descriptor.label,
+      source: "Discord Review",
+      direction,
+      amount,
+      metadata
+    });
+  }
+
+  await client.query(`
+    UPDATE webhook_exceptions SET
+      status = 'Resolved', resolved_item_name = $3, resolved_at = now(), resolved_by = $4,
+      resolution_note = $5, transaction_written = true,
+      proposed_event_type = 'Cash Movement', proposed_direction = $6, proposed_quantity = $7
+    WHERE business_id = $1 AND webhook_id = $2
+  `, [businessId, webhookId, classification, resolvedBy, note, direction, amount]);
+  await client.query(`
+    UPDATE webhook_events SET
+      status = 'applied', event_type = 'Cash Movement', direction = $3,
+      item_name = $4, quantity = $5, unit_price = 0, actor_name = $6
+    WHERE business_id = $1 AND webhook_id = $2
+  `, [businessId, webhookId, direction, classification, amount, actor]);
+
+  return {
+    ok: true,
+    action: "resolve_exception",
+    webhookId,
+    status: "Resolved",
+    cashMovement: true,
+    cashCategory: classification,
+    cashAmount: amount,
+    direction,
+    transactionWritten: true,
+    ledgerControlWritten: true,
+    financeWritten: Boolean(descriptor.type)
+  };
 }
 
 async function insertWebhook(client, businessId, event, payload, status) {
@@ -1629,35 +1755,42 @@ function normalizeWebhook(payload) {
   const reviewRequested = payload?.review_required === true || String(payload?.review_required || "").toLowerCase() === "true";
   const suppliedReviewReason = cleanText(firstValue(payload, ["review_reason"]), 300);
   const channelType = cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) || "storefront";
+  const ledgerCash = parseLedgerCashText(firstValue(payload, ["raw_payload"]));
   const storageMovement = parseStorageManagerText(firstValue(payload, ["raw_payload"]));
-  const effectiveChannelType = storageMovement ? "storage-ledger" : channelType;
+  const effectiveChannelType = storageMovement || ledgerCash ? "storage-ledger" : channelType;
   const rawType = firstValue(payload, ["event_type", "type", "action", "event"]);
-  const type = storageMovement ? "Stocking Movement" : normalizeType(rawType);
-  const direction = storageMovement?.direction
+  const type = ledgerCash ? "Cash Movement" : storageMovement ? "Stocking Movement" : normalizeType(rawType);
+  const direction = ledgerCash?.direction || storageMovement?.direction
     || normalizeDirection(firstValue(payload, ["direction", "movement", "stock_direction"]), type);
   const structuredItem = cleanText(firstValue(payload, reviewRequested
     ? ["proposed_item_name", "item_name", "item", "name", "product", "product_name"]
     : ["item_name", "item", "name", "product", "product_name"]), 150);
-  const item = structuredItem || cleanText(storageMovement?.itemName, 150);
+  const item = ledgerCash ? "" : structuredItem || cleanText(storageMovement?.itemName, 150);
   const structuredQuantity = number(firstValue(payload, reviewRequested
     ? ["proposed_quantity", "qty", "quantity", "count", "amount"]
     : ["qty", "quantity", "count", "amount"]));
-  const quantity = structuredQuantity > 0 ? structuredQuantity : storageMovement?.quantity || 0;
-  const discordItemName = cleanText(firstValue(payload, ["discord_item_name"]) || storageMovement?.itemName, 200);
-  const discordItemLabel = cleanText(firstValue(payload, ["discord_item_label"]) || storageMovement?.itemName, 200);
+  const quantity = ledgerCash?.amount || (structuredQuantity > 0 ? structuredQuantity : storageMovement?.quantity || 0);
+  const discordItemName = ledgerCash ? "" : cleanText(firstValue(payload, ["discord_item_name"]) || storageMovement?.itemName, 200);
+  const discordItemLabel = ledgerCash ? "" : cleanText(firstValue(payload, ["discord_item_label"]) || storageMovement?.itemName, 200);
   const ledgerBalance = nullableNumber(firstValue(payload, ["shop_ledger", "ledger_balance", "current_ledger"]));
   let reasons = suppliedReviewReason.split(",").map(value => value.trim()).filter(Boolean);
   if (storageMovement) {
     reasons = reasons.filter(reason => reason !== "missing_item" && reason !== "missing_quantity");
   }
-  if (!item && !discordItemName && !discordItemLabel && !reasons.includes("missing_item")) reasons.push("missing_item");
-  if (!(quantity > 0) && !reasons.includes("missing_quantity")) reasons.push("missing_quantity");
-  const hasItemIdentity = Boolean(item || discordItemName || discordItemLabel);
+  if (ledgerCash) {
+    reasons = reasons.filter(reason => reason !== "missing_item" && reason !== "missing_quantity");
+    if (!reasons.includes("cash_classification_required")) reasons.push("cash_classification_required");
+  }
+  if (!ledgerCash && !item && !discordItemName && !discordItemLabel && !reasons.includes("missing_item")) reasons.push("missing_item");
+  if (!ledgerCash && !(quantity > 0) && !reasons.includes("missing_quantity")) reasons.push("missing_quantity");
+  const hasItemIdentity = !ledgerCash && Boolean(item || discordItemName || discordItemLabel);
   const ledgerOnly = effectiveChannelType === "storage-ledger" && ledgerBalance !== null && !hasItemIdentity;
   if (ledgerOnly) {
     reasons = reasons.filter(reason => reason !== "missing_item" && reason !== "missing_quantity");
   }
-  const location = effectiveChannelType === "storage-ledger"
+  const location = ledgerCash
+    ? "ledger"
+    : effectiveChannelType === "storage-ledger"
     ? hasItemIdentity ? "storage" : "ledger"
     : "sales";
   return {
@@ -1670,13 +1803,15 @@ function normalizeWebhook(payload) {
     currentItemTotal: nullableNumber(firstValue(payload, ["current_item_total", "current_stock", "stock_total"])),
     ledgerBalance,
     occurredAt: validDate(firstValue(payload, ["timestamp", "occurred_at", "created_at"])),
-    actor: cleanText(storageMovement?.actor || firstValue(payload, ["actor", "customer", "buyer", "seller", "player"]), 150),
+    actor: cleanText(ledgerCash?.actor || storageMovement?.actor || firstValue(payload, ["actor", "customer", "buyer", "seller", "player"]), 150),
     orderId: cleanText(firstValue(payload, ["order_id", "buy_order_id", "receipt_id", "transaction_id"]), 150),
     discordTitle: cleanText(firstValue(payload, ["discord_title", "title"]), 200),
     discordItemName,
     discordItemLabel,
     channelType: effectiveChannelType,
     location,
+    cashAmount: ledgerCash?.amount || 0,
+    ledgerName: cleanText(ledgerCash?.ledgerName || firstValue(payload, ["ledger_name"]), 200),
     reviewRequired: reasons.length > 0 || (reviewRequested && !suppliedReviewReason && !ledgerOnly),
     reviewReason: reasons.join(",")
   };
@@ -1867,19 +2002,23 @@ function catalogRow(row) {
 
 function exceptionRow(row) {
   const payload = json(row.original_payload, {});
+  const ledgerCash = parseLedgerCashText(payload.raw_payload);
   const storageMovement = parseStorageManagerText(payload.raw_payload);
   return {
     webhookId: row.webhook_id,
     status: row.status,
-    reason: row.reason,
+    reason: ledgerCash ? "cash_classification_required" : row.reason,
     receivedAt: iso(row.created_at),
     discordTitle: row.discord_title,
     discordItemName: row.discord_item_name || storageMovement?.itemName || "",
     discordItemLabel: row.discord_item_label || storageMovement?.itemName || "",
-    actorName: row.actor_name || cleanText(payload.actor, 150) || storageMovement?.actor || "",
-    eventType: row.proposed_event_type,
-    direction: storageMovement?.direction || row.proposed_direction,
-    quantity: number(row.proposed_quantity) || storageMovement?.quantity || 0,
+    actorName: row.actor_name || cleanText(payload.actor, 150) || ledgerCash?.actor || storageMovement?.actor || "",
+    eventType: ledgerCash ? "Cash Movement" : row.proposed_event_type,
+    direction: ledgerCash?.direction || storageMovement?.direction || row.proposed_direction,
+    quantity: ledgerCash?.amount || number(row.proposed_quantity) || storageMovement?.quantity || 0,
+    cashAmount: ledgerCash?.amount || 0,
+    cashMovement: Boolean(ledgerCash || row.proposed_event_type === "Cash Movement"),
+    ledgerName: ledgerCash?.ledgerName || cleanText(payload.ledger_name, 200),
     unitPrice: number(row.proposed_unit_price),
     ledgerBalance: nullableNumber(row.ledger_balance),
     currentItemTotal: nullableNumber(row.current_item_total),
@@ -1896,22 +2035,23 @@ function exceptionRow(row) {
 
 function webhookEventRow(row) {
   const payload = json(row.payload, {});
+  const ledgerCash = parseLedgerCashText(payload.raw_payload);
   const storageMovement = parseStorageManagerText(payload.raw_payload);
   return {
     webhookId: row.webhook_id,
     occurredAt: iso(row.occurred_at),
     receivedAt: iso(row.recorded_at),
-    eventType: row.event_type,
-    direction: storageMovement?.direction || row.direction,
-    itemName: row.item_name || storageMovement?.itemName || "",
+    eventType: ledgerCash ? "Cash Movement" : row.event_type,
+    direction: ledgerCash?.direction || storageMovement?.direction || row.direction,
+    itemName: row.item_name || storageMovement?.itemName || (ledgerCash ? "Cash movement" : ""),
     discordItemName: cleanText(payload.discord_item_name, 200) || storageMovement?.itemName || "",
     discordItemLabel: cleanText(payload.discord_item_label, 200) || storageMovement?.itemName || "",
-    quantity: number(row.quantity) || storageMovement?.quantity || 0,
+    quantity: ledgerCash?.amount || number(row.quantity) || storageMovement?.quantity || 0,
     unitPrice: number(row.unit_price),
-    actorName: row.actor_name || storageMovement?.actor || "",
+    actorName: row.actor_name || ledgerCash?.actor || storageMovement?.actor || "",
     orderId: row.order_id,
     status: row.status,
-    channelType: storageMovement
+    channelType: storageMovement || ledgerCash
       ? "storage-ledger"
       : cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) || "storefront",
     discordChannelId: cleanText(payload.discord_channel_id, 100),

@@ -4006,6 +4006,23 @@ body.auth-page {
   overflow-wrap: anywhere;
 }
 
+.review-cash-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(86, 65, 43, 0.28);
+  border-bottom: 1px solid rgba(86, 65, 43, 0.28);
+}
+
+.review-cash-fields p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.84rem;
+}
+
 .review-correction-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5184,7 +5201,8 @@ body.auth-page {
     padding: 18px 0 0;
   }
 
-  .review-correction-grid {
+  .review-correction-grid,
+  .review-cash-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -5252,7 +5270,8 @@ body.auth-page {
 
   .review-filters,
   .review-source-grid,
-  .review-correction-grid {
+  .review-correction-grid,
+  .review-cash-fields {
     grid-template-columns: 1fr;
   }
 

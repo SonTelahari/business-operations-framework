@@ -4,6 +4,52 @@ const { parseStillWaterEmbed } = require('./parser');
 
 const cases = [
   {
+    name: 'storage ledger cash withdrawal',
+    input: {
+      id: 'storage-cash-withdrawal',
+      title: 'Withdraw Cash',
+      description: `Steam name : Son Telahari
+PlayerName: William Winther
+Server ID 6
+Steam ID: steam:110000103fa2447
+Withdrawn An Amount Of 100 From Van Horn Gunsmith Ledger`
+    },
+    expected: {
+      event_type: 'Cash Movement',
+      direction: 'Cash Out',
+      item_name: '',
+      quantity: 100,
+      cash_amount: 100,
+      actor: 'William Winther',
+      ledger_name: 'Van Horn Gunsmith',
+      review_required: true,
+      review_reason: 'cash_classification_required'
+    }
+  },
+  {
+    name: 'storage ledger cash deposit',
+    input: {
+      id: 'storage-cash-deposit',
+      title: 'Deposit Cash',
+      description: `Steam name : Son Telahari
+PlayerName: William Winther
+Server ID 6
+Steam ID: steam:110000103fa2447
+Deposited An Amount Of 1,250.50 To Van Horn Gunsmith Ledger`
+    },
+    expected: {
+      event_type: 'Cash Movement',
+      direction: 'Cash In',
+      item_name: '',
+      quantity: 1250.5,
+      cash_amount: 1250.5,
+      actor: 'William Winther',
+      ledger_name: 'Van Horn Gunsmith',
+      review_required: true,
+      review_reason: 'cash_classification_required'
+    }
+  },
+  {
     name: 'storage refined oil withdrawal with Discord whitespace',
     input: {
       id: 'storage-refined-oil-withdrawal',

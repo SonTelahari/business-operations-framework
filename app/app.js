@@ -374,11 +374,17 @@ const elements = {
   reviewReceivedAt: document.querySelector("#reviewReceivedAt"),
   reviewReason: document.querySelector("#reviewReason"),
   reviewActorName: document.querySelector("#reviewActorName"),
+  reviewLedgerName: document.querySelector("#reviewLedgerName"),
   reviewDiscordName: document.querySelector("#reviewDiscordName"),
   reviewDiscordLabel: document.querySelector("#reviewDiscordLabel"),
   reviewAppInventoryTotal: document.querySelector("#reviewAppInventoryTotal"),
   reviewReportedItemTotal: document.querySelector("#reviewReportedItemTotal"),
   reviewStockVariance: document.querySelector("#reviewStockVariance"),
+  reviewCashFields: document.querySelector("#reviewCashFields"),
+  reviewCashAmount: document.querySelector("#reviewCashAmountInput"),
+  reviewCashDirection: document.querySelector("#reviewCashDirectionInput"),
+  reviewCashCategory: document.querySelector("#reviewCashCategoryInput"),
+  reviewCashReference: document.querySelector("#reviewCashReferenceInput"),
   reviewItem: document.querySelector("#reviewItemInput"),
   reviewEventType: document.querySelector("#reviewEventTypeInput"),
   reviewDirection: document.querySelector("#reviewDirectionInput"),
@@ -4240,11 +4246,16 @@ function renderReviewEditor(entry) {
     elements.reviewReceivedAt.textContent = "-";
     elements.reviewReason.textContent = "-";
     elements.reviewActorName.textContent = "-";
+    elements.reviewLedgerName.textContent = "-";
     elements.reviewDiscordName.textContent = "-";
     elements.reviewDiscordLabel.textContent = "-";
     elements.reviewAppInventoryTotal.textContent = "-";
     elements.reviewReportedItemTotal.textContent = "-";
     elements.reviewStockVariance.textContent = "-";
+    elements.reviewCashAmount.value = 0;
+    elements.reviewCashDirection.value = "Cash In";
+    elements.reviewCashCategory.value = "";
+    elements.reviewCashReference.value = "";
     elements.reviewItem.value = "";
     elements.reviewQuantity.value = 0;
     elements.reviewUnitPrice.value = 0;
@@ -4262,6 +4273,7 @@ function renderReviewEditor(entry) {
     elements.reviewRawText.textContent = "No event selected";
     renderReviewProductMode();
     renderReviewPackageMode();
+    renderReviewCashMode();
     setReviewEditorDisabled(true);
     return;
   }
@@ -4274,6 +4286,7 @@ function renderReviewEditor(entry) {
   elements.reviewReceivedAt.textContent = formatDateTime(entry.receivedAt);
   elements.reviewReason.textContent = reviewReasonText(entry.reason);
   elements.reviewActorName.textContent = entry.actorName || "Not supplied";
+  elements.reviewLedgerName.textContent = entry.ledgerName || "Business Ledger";
   elements.reviewDiscordName.textContent = entry.discordItemName || "Not supplied";
   elements.reviewDiscordLabel.textContent = entry.discordItemLabel || "Not supplied";
   elements.reviewAppInventoryTotal.textContent = reviewCountText(entry.appInventoryTotal);
@@ -4311,12 +4324,15 @@ function renderReviewEditor(entry) {
   elements.reviewRawText.textContent = entry.rawText || "No webhook text was supplied";
   renderReviewProductMode(entry);
   renderReviewPackageMode(entry);
+  renderReviewCashMode(entry);
   setReviewEditorDisabled(entry.status !== "Open");
   if (entry.status === "Open" && entry.transactionWritten) setRecordedReviewMode();
 }
 
 function setReviewEditorDisabled(disabled) {
   [
+    elements.reviewCashCategory,
+    elements.reviewCashReference,
     elements.reviewItem,
     elements.reviewEventType,
     elements.reviewDirection,
@@ -4338,6 +4354,56 @@ function setReviewEditorDisabled(disabled) {
     elements.resolveReview,
     elements.ignoreReview
   ].forEach(element => { element.disabled = disabled; });
+}
+
+function isCashReview(entry) {
+  return Boolean(entry?.cashMovement || entry?.eventType === "Cash Movement"
+    || String(entry?.reason || "").split(",").includes("cash_classification_required"));
+}
+
+function renderReviewCashMode(entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId)) {
+  const cash = isCashReview(entry);
+  elements.reviewCashFields.classList.toggle("hidden", !cash);
+  document.querySelectorAll(".review-cash-summary").forEach(field => field.classList.toggle("hidden", !cash));
+  document.querySelectorAll(".review-stock-summary").forEach(field => field.classList.toggle("hidden", cash));
+  document.querySelectorAll(".review-stock-field").forEach(field => field.classList.toggle("hidden", cash));
+  document.querySelector(".review-mapping-option")?.classList.toggle("hidden", cash);
+  document.querySelector(".review-package-conversion")?.classList.toggle("hidden", cash);
+  document.querySelector(".review-new-product-option")?.classList.toggle("hidden", cash);
+  if (!cash) return;
+
+  const direction = entry.direction === "Cash Out" ? "Cash Out" : "Cash In";
+  elements.reviewCashAmount.value = Number(entry.cashAmount || entry.quantity || 0);
+  elements.reviewCashDirection.value = direction;
+  elements.reviewCashReference.value = "";
+  elements.reviewCashCategory.innerHTML = cashReviewOptions(direction)
+    .map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+    .join("");
+  elements.reviewNewProductFields.classList.add("hidden");
+  elements.reviewPackageFields.classList.add("hidden");
+  elements.resolveReview.textContent = "Classify and Apply Cash";
+}
+
+function cashReviewOptions(direction) {
+  const incoming = [
+    { value: "", label: "Choose incoming operation" },
+    { value: "Business Income", label: "Business Income (P&L)" },
+    { value: "P2P Sale", label: "P2P Sale (P&L)" },
+    { value: "Owner Capital Deposit", label: "Owner Capital Deposit" },
+    { value: "Safekeeping Deposit", label: "Safekeeping Deposit" },
+    { value: "Cash Transfer In", label: "Cash Transfer In (not P&L)" }
+  ];
+  const outgoing = [
+    { value: "", label: "Choose outgoing operation" },
+    { value: "Business Expense", label: "Business Expense (P&L)" },
+    { value: "P2P Purchase", label: "P2P Purchase (P&L)" },
+    { value: "Supplier Purchase", label: "Supplier Purchase (P&L)" },
+    { value: "Payroll Payment", label: "Payroll Payment (P&L)" },
+    { value: "Owner Withdrawal", label: "Owner Withdrawal" },
+    { value: "Safekeeping Withdrawal", label: "Safekeeping Withdrawal" },
+    { value: "Cash Transfer Out", label: "Cash Transfer Out (not P&L)" }
+  ];
+  return direction === "Cash Out" ? outgoing : incoming;
 }
 
 function renderReviewProductMode(entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId)) {
@@ -4423,7 +4489,8 @@ function reviewReasonText(value) {
     unknown_item: "Unknown item label",
     missing_item: "Item missing",
     missing_quantity: "Quantity missing",
-    stock_count_mismatch: "Storefront count discrepancy"
+    stock_count_mismatch: "Storefront count discrepancy",
+    cash_classification_required: "Cash operation needs classification"
   };
   return String(value || "Review required")
     .split(",")
@@ -4439,6 +4506,10 @@ function reviewCountText(value) {
 async function resolveReviewException() {
   const entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId);
   if (!entry || entry.status !== "Open") return;
+  if (isCashReview(entry)) {
+    await resolveCashReviewException(entry);
+    return;
+  }
   const transactionAlreadyWritten = Boolean(entry.transactionWritten);
   const creating = !transactionAlreadyWritten && elements.reviewCreateProduct.checked;
   const item = findExactStockItem(elements.reviewItem.value);
@@ -4510,6 +4581,42 @@ async function resolveReviewException() {
       rememberMapping: !transactionAlreadyWritten && elements.reviewRememberMapping.checked,
       note: elements.reviewNote.value.trim(),
       newItem
+    }
+  });
+  if (!result.ok) {
+    setReviewActionStatus(`Resolution failed: ${result.error || "data sync failed"}`);
+    setReviewEditorDisabled(false);
+    return;
+  }
+  activeReviewExceptionId = "";
+  await loadBackendSnapshot({ silent: true });
+}
+
+async function resolveCashReviewException(entry) {
+  const cashCategory = elements.reviewCashCategory.value;
+  const cashAmount = formNumber(elements.reviewCashAmount.value);
+  if (!cashCategory) {
+    setReviewActionStatus("Choose what operation this cash movement belongs to");
+    elements.reviewCashCategory.focus();
+    return;
+  }
+  if (!Number.isFinite(cashAmount) || cashAmount <= 0) {
+    setReviewActionStatus("The webhook did not supply a valid cash amount");
+    return;
+  }
+
+  elements.resolveReview.disabled = true;
+  elements.ignoreReview.disabled = true;
+  setReviewActionStatus("Classifying cash and updating the ledger...");
+  const result = await syncToBackend("resolve_exception", {
+    exception: {
+      webhookId: entry.webhookId,
+      eventType: "Cash Movement",
+      direction: elements.reviewCashDirection.value,
+      cashAmount,
+      cashCategory,
+      cashReference: elements.reviewCashReference.value.trim(),
+      note: elements.reviewNote.value.trim()
     }
   });
   if (!result.ok) {

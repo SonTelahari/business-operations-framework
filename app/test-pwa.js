@@ -59,6 +59,8 @@ assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create
 assert(appHtml.includes('id="reviewPackageConversionInput"'), "webhook review must identify crated goods");
 assert(appHtml.includes('id="reviewUnitsPerPackageInput"'), "webhook review must capture units per crate");
 assert(appHtml.includes('id="reviewActorName"'), "webhook review must expose the character responsible for storage movements");
+assert(appHtml.includes('id="reviewCashCategoryInput"'), "cash webhooks must require an operational classification");
+assert(appHtml.includes('id="reviewCashReferenceInput"'), "cash reviews must retain a counterparty or operational reference");
 assert(appHtml.includes('id="webhookLogBody"'), "webhook review must expose a recent delivery log");
 assert(appHtml.includes('id="webhookLogStatusFilter"'), "the webhook delivery log must filter by result");
 assert(appHtml.includes('id="workspaceSwitcherButton"'), "authenticated users must have an in-ledger business switcher");
@@ -68,6 +70,7 @@ const appScript = fs.readFileSync(path.join(root, "app.js"), "utf8");
 assert(appScript.includes('addGoods(itemCatalog, "product")'), "catalog fallback must classify sellable goods as products");
 assert(appScript.includes('addGoods(ingredientCatalog, "material")'), "catalog fallback must classify recipe ingredients as materials");
 assert(appScript.includes("function renderReviewPackageMode"), "crate conversion must preview the resulting inventory units");
+assert(appScript.includes("function resolveCashReviewException"), "cash reviews must use a dedicated ledger workflow");
 assert(appScript.includes("function renderWebhookLog"), "the review workspace must render retained webhook activity");
 assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefront value must be calculated from current counts");
 assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");

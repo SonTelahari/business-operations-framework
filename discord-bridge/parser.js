@@ -5,6 +5,30 @@ function parseStillWaterEmbed(message) {
   const title = message.title || message.embeds?.[0]?.title || '';
   const description = message.description || message.embeds?.[0]?.description || '';
   const text = normalizeText(description);
+  const ledgerCash = parseLedgerCashText(text);
+  if (ledgerCash) {
+    return {
+      event_type: 'Cash Movement',
+      direction: ledgerCash.direction,
+      discord_title: title,
+      discord_item_name: '',
+      discord_item_label: '',
+      item_name: '',
+      quantity: ledgerCash.amount,
+      cash_amount: ledgerCash.amount,
+      unit_price: 0,
+      shop_ledger: null,
+      current_item_total: null,
+      buy_order_id: '',
+      webhook_id: message.id || '',
+      raw_payload: description,
+      actor: ledgerCash.actor,
+      ledger_name: ledgerCash.ledgerName,
+      catalog_matched: true,
+      review_required: true,
+      review_reason: 'cash_classification_required'
+    };
+  }
   const storageMovement = parseStorageManagerText(text);
   if (storageMovement) {
     return {
@@ -103,6 +127,20 @@ function parseStorageManagerText(value) {
   if (!movement) return null;
   return {
     ...movement,
+    actor: matchLine(text, 'PlayerName')
+  };
+}
+
+function parseLedgerCashText(value) {
+  const text = normalizeText(value);
+  const match = text.match(
+    /\b(Withdrawn|Deposited)\s+An\s+Amount\s+Of\s+\$?([\d,]+(?:\.\d+)?)\s+(?:From|To)\s+(.+?)\s+Ledger\b/i
+  );
+  if (!match) return null;
+  return {
+    direction: /^deposited$/i.test(match[1]) ? 'Cash In' : 'Cash Out',
+    amount: Number(String(match[2]).replace(/,/g, '')),
+    ledgerName: String(match[3] || '').trim(),
     actor: matchLine(text, 'PlayerName')
   };
 }
@@ -230,5 +268,6 @@ const LABEL_PATTERNS = [];
 
 module.exports = {
   parseStillWaterEmbed,
-  parseStorageManagerText
+  parseStorageManagerText,
+  parseLedgerCashText
 };

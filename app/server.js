@@ -3207,13 +3207,16 @@ async function auditGuiPayload(payload, user, syncResult) {
       actorId: user.id,
       actorName: user.fullName,
       subjectId: payload.exception.webhookId,
-      subjectName: payload.exception.itemName || payload.exception.discordItemLabel || "Webhook event",
+      subjectName: payload.exception.cashCategory || payload.exception.itemName || payload.exception.discordItemLabel || "Webhook event",
       fingerprint: `${payload.action}:${payload.exception.webhookId}`,
       details: {
         item: payload.exception.itemName,
         quantity: payload.exception.quantity,
         eventType: payload.exception.eventType,
         direction: payload.exception.direction,
+        cashAmount: payload.exception.cashAmount,
+        cashCategory: payload.exception.cashCategory,
+        cashReference: payload.exception.cashReference,
         rememberMapping: payload.exception.rememberMapping,
         catalogItem: payload.exception.newItem?.enabled ? {
           type: payload.exception.newItem.type,
