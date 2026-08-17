@@ -134,11 +134,11 @@ function parseStorageManagerText(value) {
 function parseLedgerCashText(value) {
   const text = normalizeText(value);
   const match = text.match(
-    /\b(Withdrawn|Deposited)\s+An\s+Amount\s+Of\s+\$?([\d,]+(?:\.\d+)?)\s+(?:From|To)\s+(.+?)\s+Ledger\b/i
+    /\b(Withdraw(?:n)?|Deposit(?:ed)?)\s+An\s+Amount\s+Of\s+\$?([\d,]+(?:\.\d+)?)\s+(?:From|To)\s+(.+?)\s+Ledger\b/i
   );
   if (!match) return null;
   return {
-    direction: /^deposited$/i.test(match[1]) ? 'Cash In' : 'Cash Out',
+    direction: /^deposit/i.test(match[1]) ? 'Cash In' : 'Cash Out',
     amount: Number(String(match[2]).replace(/,/g, '')),
     ledgerName: String(match[3] || '').trim(),
     actor: matchLine(text, 'PlayerName')

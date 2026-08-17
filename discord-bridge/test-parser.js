@@ -12,7 +12,7 @@ const cases = [
 PlayerName: William Winther
 Server ID 6
 Steam ID: steam:110000103fa2447
-Withdrawn An Amount Of 100 From Van Horn Gunsmith Ledger`
+Withdraw An Amount Of 100 From Van Horn Gunsmith Ledger`
     },
     expected: {
       event_type: 'Cash Movement',

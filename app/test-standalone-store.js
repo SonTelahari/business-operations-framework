@@ -1006,7 +1006,7 @@ Deposited An Amount Of 700 To Van Horn Gunsmith Ledger`
 PlayerName: William Winther
 Server ID 6
 Steam ID: steam:110000103fa2447
-Withdrawn An Amount Of 100 From Van Horn Gunsmith Ledger`
+Withdraw An Amount Of 100 From Van Horn Gunsmith Ledger`
     });
     assert.equal(cashWithdrawal.reviewRequired, true);
     assert.equal(cashWithdrawal.reviewReason, "cash_classification_required");
