@@ -3593,6 +3593,7 @@ async function getBootstrapData(user) {
   if (sheetSnapshot?.inventory) delete sheetSnapshot.inventory.buyOrderPurchases;
   if (!canManage && sheetSnapshot) {
     delete sheetSnapshot.reviewExceptions;
+    delete sheetSnapshot.webhookLog;
     if (sheetSnapshot.inventory) delete sheetSnapshot.inventory.ledger;
   }
   const allDailyCloses = businessStore.listDailyCloses();

@@ -1450,6 +1450,48 @@
             </div>
           </div>
         </section>
+
+        <section class="panel webhook-log-panel">
+          <div class="panel-header webhook-log-heading">
+            <div>
+              <p class="eyebrow">Delivery Trace</p>
+              <h3>Recent Webhook Log</h3>
+              <p id="webhookLogStatus">Loading recent webhook activity</p>
+            </div>
+            <div class="webhook-log-filters">
+              <label>
+                Result
+                <select id="webhookLogStatusFilter">
+                  <option value="all">All</option>
+                  <option value="applied">Applied</option>
+                  <option value="review">Review</option>
+                  <option value="ignored">Ignored</option>
+                </select>
+              </label>
+              <label>
+                Search
+                <input id="webhookLogSearchInput" type="search" autocomplete="off" placeholder="Item, character, channel, or ID">
+              </label>
+            </div>
+          </div>
+          <div class="line-table-wrap webhook-log-table-wrap">
+            <table class="line-table webhook-log-table">
+              <thead>
+                <tr>
+                  <th>Received</th>
+                  <th>Result</th>
+                  <th>Channel</th>
+                  <th>Event</th>
+                  <th>Item</th>
+                  <th>Qty</th>
+                  <th>Character</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody id="webhookLogBody"></tbody>
+            </table>
+          </div>
+        </section>
       </main>
 
       <main class="daily-close workspace-section hidden management-only" id="dailyCloseSection">

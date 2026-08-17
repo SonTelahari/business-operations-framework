@@ -3,6 +3,7 @@ const { once } = require("node:events");
 const http = require("node:http");
 const { newDb } = require("pg-mem");
 const { version: packageVersion } = require("../package.json");
+const { parseStillWaterEmbed } = require("../discord-bridge/parser");
 const { defaultSetupConfiguration } = require("./setup-config");
 
 const memory = newDb({ autoCreateForeignKeyIndices: true, noAstCoverageCheck: true });
@@ -277,6 +278,28 @@ async function run() {
     assert.equal(secondSnapshot.body.inventory.products[0].currentStock, 9);
 
     await forwardDeposit("first-storage-deposit", "423456789012345671", 6);
+    const parsedStorageManagerDeposit = parseStillWaterEmbed({
+      id: "first-storage-manager-deposit",
+      title: "Move to container Log",
+      description: `Deposited
+Steam name : Hosted Steam User
+PlayerName: William Winther
+Server ID 6
+Steam ID: steam:hosted
+Deposited 2 Hosted Product To Van Horn Gunsmith Inventory
+Deposited · 08/17/26 09:04:36 AM`
+    });
+    const storageManagerForward = await bridgeRequest("/api/integrations/discord/events", {
+      method: "POST",
+      body: {
+        ...parsedStorageManagerDeposit,
+        discord_message_id: "first-storage-manager-deposit",
+        discord_channel_id: "423456789012345671",
+        occurred_at: "2026-08-02T10:02:00.000Z"
+      }
+    });
+    assert.equal(storageManagerForward.status, 200, JSON.stringify(storageManagerForward.body));
+    assert.equal(storageManagerForward.body.transactionWritten, true);
     const ledgerControl = await bridgeRequest("/api/integrations/discord/events", {
       method: "POST",
       body: {
@@ -295,13 +318,23 @@ async function run() {
       firstBootstrapAfterStorage.body.sheet.inventory.storage.find(item =>
         (item.ingredient || item.itemName) === "Hosted Product"
       ).storageCount,
-      6
+      8
     );
     assert.equal(
       firstBootstrapAfterStorage.body.sheet.inventory.products.find(item => item.itemName === "Hosted Product").currentStock,
       4
     );
     assert.equal(firstBootstrapAfterStorage.body.sheet.inventory.ledger.balance, 321);
+    const storageManagerLog = firstBootstrapAfterStorage.body.sheet.webhookLog.find(entry =>
+      entry.webhookId === "first-storage-manager-deposit"
+    );
+    assert.equal(storageManagerLog.status, "applied");
+    assert.equal(storageManagerLog.channelType, "storage-ledger");
+    assert.equal(storageManagerLog.itemName, "Hosted Product");
+    assert.equal(storageManagerLog.quantity, 2);
+    assert.equal(storageManagerLog.actorName, "William Winther");
+    const employeeBootstrapAfterStorage = await request("/api/bootstrap", { cookie: membershipSelect.cookie });
+    assert.equal(employeeBootstrapAfterStorage.body.sheet.webhookLog, undefined);
     assert.equal((await database.query(
       "SELECT COUNT(*)::int AS count FROM finance_events WHERE business_id = $1",
       [first.body.workspace.id]

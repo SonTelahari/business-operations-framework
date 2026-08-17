@@ -657,6 +657,12 @@ async function run() {
     let storageSnapshot = await store.snapshot();
     assert.equal(storageSnapshot.inventory.storage.find(item => item.ingredient === "Iron Widget").storageCount, 3);
     assert.equal(storageSnapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 8);
+    const storageWebhookLog = storageSnapshot.webhookLog.find(entry => entry.webhookId === "discord-storage-widget-1");
+    assert.equal(storageWebhookLog.status, "applied");
+    assert.equal(storageWebhookLog.channelType, "storage-ledger");
+    assert.equal(storageWebhookLog.direction, "Stock In");
+    assert.equal(storageWebhookLog.quantity, 3);
+    assert.equal(storageWebhookLog.actorName, "William Winther");
     const storedStorageMovement = await database.query(`
       SELECT actor_name FROM inventory_events
       WHERE business_id = $1 AND event_id = 'discord-storage-widget-1:stock'

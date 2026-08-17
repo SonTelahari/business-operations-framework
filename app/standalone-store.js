@@ -319,7 +319,7 @@ class StandaloneStore {
   }
 
   async snapshot() {
-    const [catalogResult, recipeResult, ingredientResult, inventoryResult, ledgerResult, exceptionResult, purchaseResult] = await Promise.all([
+    const [catalogResult, recipeResult, ingredientResult, inventoryResult, ledgerResult, exceptionResult, webhookResult, purchaseResult] = await Promise.all([
       this.database.query(`
         SELECT * FROM catalog_items WHERE business_id = $1 ORDER BY item_type, category, label
       `, [this.businessId]),
@@ -349,6 +349,14 @@ class StandaloneStore {
         LEFT JOIN webhook_events w USING (business_id, webhook_id)
         WHERE e.business_id = $1
         ORDER BY e.created_at DESC
+        LIMIT 250
+      `, [this.businessId]),
+      this.database.query(`
+        SELECT webhook_id, occurred_at, recorded_at, event_type, direction, item_name,
+          quantity, unit_price, actor_name, order_id, status, payload
+        FROM webhook_events
+        WHERE business_id = $1
+        ORDER BY recorded_at DESC, webhook_id DESC
         LIMIT 250
       `, [this.businessId]),
       this.database.query(`
@@ -467,6 +475,7 @@ class StandaloneStore {
       generatedAt: new Date().toISOString(),
       sheets: [],
       reviewExceptions: exceptionResult.rows.map(exceptionRow),
+      webhookLog: webhookResult.rows.map(webhookEventRow),
       catalog,
       recipes,
       inventory: {
@@ -1757,6 +1766,29 @@ function exceptionRow(row) {
     note: row.resolution_note,
     rawText: String(payload.raw_payload || "").slice(0, 4000),
     transactionWritten: Boolean(row.transaction_written)
+  };
+}
+
+function webhookEventRow(row) {
+  const payload = json(row.payload, {});
+  return {
+    webhookId: row.webhook_id,
+    occurredAt: iso(row.occurred_at),
+    receivedAt: iso(row.recorded_at),
+    eventType: row.event_type,
+    direction: row.direction,
+    itemName: row.item_name,
+    discordItemName: cleanText(payload.discord_item_name, 200),
+    discordItemLabel: cleanText(payload.discord_item_label, 200),
+    quantity: number(row.quantity),
+    unitPrice: number(row.unit_price),
+    actorName: row.actor_name,
+    orderId: row.order_id,
+    status: row.status,
+    channelType: cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) || "storefront",
+    discordChannelId: cleanText(payload.discord_channel_id, 100),
+    reviewReason: cleanText(payload.review_reason, 300),
+    rawText: String(payload.raw_payload || "").slice(0, 4000)
   };
 }
 

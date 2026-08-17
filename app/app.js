@@ -145,6 +145,7 @@ let supplyOrders = [];
 let storefrontBuyOrders = [];
 let suppliers = [];
 let reviewExceptions = [];
+let webhookLog = [];
 let productionBatches = [];
 let dailyCloses = [];
 let currentUser = null;
@@ -363,6 +364,10 @@ const elements = {
   reviewSearch: document.querySelector("#reviewSearchInput"),
   reviewEventList: document.querySelector("#reviewEventList"),
   refreshReview: document.querySelector("#refreshReviewButton"),
+  webhookLogStatus: document.querySelector("#webhookLogStatus"),
+  webhookLogStatusFilter: document.querySelector("#webhookLogStatusFilter"),
+  webhookLogSearch: document.querySelector("#webhookLogSearchInput"),
+  webhookLogBody: document.querySelector("#webhookLogBody"),
   reviewEditorTitle: document.querySelector("#reviewEditorTitle"),
   reviewEditorStatus: document.querySelector("#reviewEditorStatus"),
   reviewReceivedAt: document.querySelector("#reviewReceivedAt"),
@@ -1237,6 +1242,8 @@ function wireEvents() {
   elements.reviewStatusFilter.addEventListener("change", renderReviewWorkspace);
   elements.reviewSearch.addEventListener("input", renderReviewWorkspace);
   elements.refreshReview.addEventListener("click", () => loadBackendSnapshot({ silent: false }));
+  elements.webhookLogStatusFilter.addEventListener("change", renderWebhookLog);
+  elements.webhookLogSearch.addEventListener("input", renderWebhookLog);
   elements.reviewCreateProduct.addEventListener("change", renderReviewProductMode);
   elements.reviewPackageConversion.addEventListener("change", () => {
     if (elements.reviewPackageConversion.checked) elements.reviewRememberMapping.checked = true;
@@ -4114,10 +4121,11 @@ function renderReviewIndicators() {
 function renderReviewWorkspace() {
   if (!elements.reviewSection) return;
   renderReviewIndicators();
+  renderWebhookLog();
   const openCount = reviewExceptions.filter(entry => entry.status === "Open").length;
   const generatedAt = backendSnapshot?.sheet?.generatedAt;
   elements.reviewDataStatus.textContent = generatedAt
-    ? `${openCount} open / data synced ${formatDateTime(generatedAt)}`
+    ? `${openCount} open / ${webhookLog.length} recent webhooks / data synced ${formatDateTime(generatedAt)}`
     : `${openCount} open / shared data unavailable`;
 
   const filter = elements.reviewStatusFilter.value || "Open";
@@ -4164,6 +4172,54 @@ function renderReviewWorkspace() {
   });
 
   renderReviewEditor(reviewExceptions.find(entry => entry.webhookId === activeReviewExceptionId));
+}
+
+function renderWebhookLog() {
+  if (!elements.webhookLogBody) return;
+  const status = elements.webhookLogStatusFilter.value || "all";
+  const query = normalize(elements.webhookLogSearch.value);
+  const visible = webhookLog.filter(entry => {
+    if (status !== "all" && entry.status !== status) return false;
+    if (!query) return true;
+    return normalize([
+      entry.webhookId,
+      entry.status,
+      entry.channelType,
+      entry.discordChannelId,
+      entry.eventType,
+      entry.direction,
+      entry.itemName,
+      entry.discordItemName,
+      entry.discordItemLabel,
+      entry.actorName,
+      entry.reviewReason,
+      entry.rawText
+    ].join(" ")).includes(query);
+  });
+  elements.webhookLogStatus.textContent = `${visible.length} of ${webhookLog.length} retained events shown`;
+  elements.webhookLogBody.innerHTML = visible.length
+    ? visible.map(entry => {
+        const channelLabel = entry.channelType === "storage-ledger" ? "Storage / Ledger" : "Storefront";
+        const itemLabel = entry.itemName || entry.discordItemLabel || entry.discordItemName || "Unidentified";
+        return `
+          <tr>
+            <td>${escapeHtml(formatDateTime(entry.receivedAt || entry.occurredAt))}</td>
+            <td><span class="webhook-log-result ${escapeHtml(entry.status)}">${escapeHtml(entry.status || "unknown")}</span></td>
+            <td>${escapeHtml(channelLabel)}<span>${escapeHtml(entry.discordChannelId || "No channel ID")}</span></td>
+            <td>${escapeHtml(entry.eventType || "Event")}<span>${escapeHtml(entry.direction || "No direction")}</span></td>
+            <td>${escapeHtml(itemLabel)}${entry.discordItemLabel && entry.discordItemLabel !== itemLabel ? `<span>${escapeHtml(entry.discordItemLabel)}</span>` : ""}</td>
+            <td>${escapeHtml(formatNumber(entry.quantity || 0))}</td>
+            <td>${escapeHtml(entry.actorName || "Not supplied")}</td>
+            <td>
+              <code>${escapeHtml(entry.webhookId || "Unknown")}</code>
+              <details class="webhook-log-raw">
+                <summary>Raw text</summary>
+                <pre>${escapeHtml(entry.rawText || "No raw webhook text retained")}</pre>
+              </details>
+            </td>
+          </tr>`;
+      }).join("")
+    : `<tr><td class="empty-line" colspan="8">No retained webhooks match this view</td></tr>`;
 }
 
 function renderReviewEditor(entry) {
@@ -6179,6 +6235,9 @@ async function performBackendRefresh({ silent = false } = {}) {
     if (isManagement()) {
       reviewExceptions = Array.isArray(nextSnapshot.sheet?.reviewExceptions)
         ? nextSnapshot.sheet.reviewExceptions
+        : [];
+      webhookLog = Array.isArray(nextSnapshot.sheet?.webhookLog)
+        ? nextSnapshot.sheet.webhookLog
         : [];
     }
     if (isManagement() && Array.isArray(nextSnapshot.storefrontBuyOrders)) {

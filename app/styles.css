@@ -3804,6 +3804,86 @@ body.auth-page {
   padding: 18px;
 }
 
+.webhook-log-panel {
+  padding: 18px;
+}
+
+.webhook-log-heading {
+  align-items: end;
+}
+
+.webhook-log-filters {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.55fr) minmax(220px, 1fr);
+  gap: 10px;
+  width: min(100%, 520px);
+}
+
+.webhook-log-table-wrap {
+  max-height: 520px;
+  margin-top: 14px;
+  overflow: auto;
+}
+
+.webhook-log-table {
+  min-width: 1080px;
+}
+
+.webhook-log-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--paper);
+}
+
+.webhook-log-table code {
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.webhook-log-result {
+  display: inline-block;
+  margin: 0;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.webhook-log-result.applied {
+  color: #3f704f;
+}
+
+.webhook-log-result.review {
+  color: var(--red);
+}
+
+.webhook-log-result.ignored {
+  color: var(--muted);
+}
+
+.webhook-log-raw {
+  margin-top: 7px;
+}
+
+.webhook-log-raw summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.webhook-log-raw pre {
+  width: min(460px, 70vw);
+  max-height: 220px;
+  margin: 7px 0 0;
+  padding: 9px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: rgba(255, 252, 239, 0.65);
+  border: 1px solid rgba(86, 65, 43, 0.32);
+  font-size: 0.7rem;
+}
+
 .review-stats {
   grid-template-columns: repeat(3, minmax(0, 180px));
 }
