@@ -296,7 +296,9 @@ Deposited · 08/17/26 09:04:36 AM`
       body: {
         webhook_id: "first-storage-manager-deposit",
         discord_message_id: "first-storage-manager-deposit",
-        discord_channel_id: "423456789012345671",
+        // The movement text remains authoritative even if the channel was assigned
+        // to the storefront field instead of the storage field.
+        discord_channel_id: "223456789012345671",
         event_type: "Stocking Movement",
         direction: "Stock In",
         proposed_item_name: "",

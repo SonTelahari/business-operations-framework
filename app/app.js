@@ -4280,7 +4280,8 @@ function renderReviewEditor(entry) {
   elements.reviewQuantity.value = Number(entry.quantity || 0);
   elements.reviewUnitPrice.value = Number(entry.unitPrice || 0);
   elements.reviewNote.value = entry.note || "";
-  elements.reviewRememberMapping.checked = !entry.transactionWritten;
+  elements.reviewRememberMapping.checked = !entry.transactionWritten
+    && Boolean(entry.discordItemName || entry.discordItemLabel);
   elements.reviewPackageConversion.checked = !entry.transactionWritten && /\bcrate\b/i.test(
     `${entry.discordItemName || ""} ${entry.discordItemLabel || ""}`
   );

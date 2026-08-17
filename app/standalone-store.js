@@ -693,7 +693,6 @@ class StandaloneStore {
       const enriched = [];
       for (const stored of result.rows) {
         const payload = json(stored.payload, {});
-        if (cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) !== "storage-ledger") continue;
         const movement = parseStorageManagerText(payload.raw_payload);
         if (!movement) continue;
         let event = normalizeWebhook({
@@ -707,6 +706,7 @@ class StandaloneStore {
         event = await resolveAgainstCatalog(client, this.businessId, event);
         const correctedPayload = {
           ...payload,
+          discord_channel_type: "storage-ledger",
           event_type: event.type,
           direction: event.direction,
           item_name: event.item,
@@ -1154,6 +1154,7 @@ class StandaloneStore {
       }
       requireItem(itemName);
       const payload = json(stored.payload, {});
+      const storageMovement = parseStorageManagerText(payload.raw_payload);
       const historyPreserved = payload.importedFromArchive === true;
       const transactionAlreadyWritten = Boolean(stored.transaction_written);
       const packageUnitPrice = correction.unitPrice === "" || correction.unitPrice === undefined
@@ -1184,8 +1185,8 @@ class StandaloneStore {
       const resolvedBy = cleanText(correction.resolvedBy, 100) || "Manager";
       if (correction.rememberMapping !== false) {
         await rememberMapping(client, this.businessId, {
-          discordItemName: stored.discord_item_name,
-          discordItemLabel: stored.discord_item_label,
+          discordItemName: stored.discord_item_name || storageMovement?.itemName || cleanText(correction.discordItemLabel, 200),
+          discordItemLabel: stored.discord_item_label || storageMovement?.itemName || cleanText(correction.discordItemLabel, 200),
           itemName,
           quantityMultiplier,
           resolvedBy,
@@ -1605,19 +1606,20 @@ function normalizeWebhook(payload) {
   const reviewRequested = payload?.review_required === true || String(payload?.review_required || "").toLowerCase() === "true";
   const suppliedReviewReason = cleanText(firstValue(payload, ["review_reason"]), 300);
   const channelType = cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) || "storefront";
-  const storageMovement = channelType === "storage-ledger"
-    ? parseStorageManagerText(firstValue(payload, ["raw_payload"]))
-    : null;
+  const storageMovement = parseStorageManagerText(firstValue(payload, ["raw_payload"]));
+  const effectiveChannelType = storageMovement ? "storage-ledger" : channelType;
   const rawType = firstValue(payload, ["event_type", "type", "action", "event"]);
   const type = storageMovement ? "Stocking Movement" : normalizeType(rawType);
   const direction = storageMovement?.direction
     || normalizeDirection(firstValue(payload, ["direction", "movement", "stock_direction"]), type);
-  const item = cleanText(storageMovement?.itemName || firstValue(payload, reviewRequested
+  const structuredItem = cleanText(firstValue(payload, reviewRequested
     ? ["proposed_item_name", "item_name", "item", "name", "product", "product_name"]
     : ["item_name", "item", "name", "product", "product_name"]), 150);
-  const quantity = storageMovement?.quantity || number(firstValue(payload, reviewRequested
+  const item = structuredItem || cleanText(storageMovement?.itemName, 150);
+  const structuredQuantity = number(firstValue(payload, reviewRequested
     ? ["proposed_quantity", "qty", "quantity", "count", "amount"]
     : ["qty", "quantity", "count", "amount"]));
+  const quantity = structuredQuantity > 0 ? structuredQuantity : storageMovement?.quantity || 0;
   const discordItemName = cleanText(firstValue(payload, ["discord_item_name"]) || storageMovement?.itemName, 200);
   const discordItemLabel = cleanText(firstValue(payload, ["discord_item_label"]) || storageMovement?.itemName, 200);
   const ledgerBalance = nullableNumber(firstValue(payload, ["shop_ledger", "ledger_balance", "current_ledger"]));
@@ -1628,11 +1630,11 @@ function normalizeWebhook(payload) {
   if (!item && !discordItemName && !discordItemLabel && !reasons.includes("missing_item")) reasons.push("missing_item");
   if (!(quantity > 0) && !reasons.includes("missing_quantity")) reasons.push("missing_quantity");
   const hasItemIdentity = Boolean(item || discordItemName || discordItemLabel);
-  const ledgerOnly = channelType === "storage-ledger" && ledgerBalance !== null && !hasItemIdentity;
+  const ledgerOnly = effectiveChannelType === "storage-ledger" && ledgerBalance !== null && !hasItemIdentity;
   if (ledgerOnly) {
     reasons = reasons.filter(reason => reason !== "missing_item" && reason !== "missing_quantity");
   }
-  const location = channelType === "storage-ledger"
+  const location = effectiveChannelType === "storage-ledger"
     ? hasItemIdentity ? "storage" : "ledger"
     : "sales";
   return {
@@ -1650,7 +1652,7 @@ function normalizeWebhook(payload) {
     discordTitle: cleanText(firstValue(payload, ["discord_title", "title"]), 200),
     discordItemName,
     discordItemLabel,
-    channelType,
+    channelType: effectiveChannelType,
     location,
     reviewRequired: reasons.length > 0 || (reviewRequested && !suppliedReviewReason && !ledgerOnly),
     reviewReason: reasons.join(",")
@@ -1839,18 +1841,19 @@ function catalogRow(row) {
 
 function exceptionRow(row) {
   const payload = json(row.original_payload, {});
+  const storageMovement = parseStorageManagerText(payload.raw_payload);
   return {
     webhookId: row.webhook_id,
     status: row.status,
     reason: row.reason,
     receivedAt: iso(row.created_at),
     discordTitle: row.discord_title,
-    discordItemName: row.discord_item_name,
-    discordItemLabel: row.discord_item_label,
-    actorName: row.actor_name || cleanText(payload.actor, 150),
+    discordItemName: row.discord_item_name || storageMovement?.itemName || "",
+    discordItemLabel: row.discord_item_label || storageMovement?.itemName || "",
+    actorName: row.actor_name || cleanText(payload.actor, 150) || storageMovement?.actor || "",
     eventType: row.proposed_event_type,
-    direction: row.proposed_direction,
-    quantity: number(row.proposed_quantity),
+    direction: storageMovement?.direction || row.proposed_direction,
+    quantity: number(row.proposed_quantity) || storageMovement?.quantity || 0,
     unitPrice: number(row.proposed_unit_price),
     ledgerBalance: nullableNumber(row.ledger_balance),
     currentItemTotal: nullableNumber(row.current_item_total),
@@ -1867,21 +1870,24 @@ function exceptionRow(row) {
 
 function webhookEventRow(row) {
   const payload = json(row.payload, {});
+  const storageMovement = parseStorageManagerText(payload.raw_payload);
   return {
     webhookId: row.webhook_id,
     occurredAt: iso(row.occurred_at),
     receivedAt: iso(row.recorded_at),
     eventType: row.event_type,
-    direction: row.direction,
-    itemName: row.item_name,
-    discordItemName: cleanText(payload.discord_item_name, 200),
-    discordItemLabel: cleanText(payload.discord_item_label, 200),
-    quantity: number(row.quantity),
+    direction: storageMovement?.direction || row.direction,
+    itemName: row.item_name || storageMovement?.itemName || "",
+    discordItemName: cleanText(payload.discord_item_name, 200) || storageMovement?.itemName || "",
+    discordItemLabel: cleanText(payload.discord_item_label, 200) || storageMovement?.itemName || "",
+    quantity: number(row.quantity) || storageMovement?.quantity || 0,
     unitPrice: number(row.unit_price),
-    actorName: row.actor_name,
+    actorName: row.actor_name || storageMovement?.actor || "",
     orderId: row.order_id,
     status: row.status,
-    channelType: cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) || "storefront",
+    channelType: storageMovement
+      ? "storage-ledger"
+      : cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) || "storefront",
     discordChannelId: cleanText(payload.discord_channel_id, 100),
     reviewReason: cleanText(payload.review_reason, 300),
     rawText: String(payload.raw_payload || "").slice(0, 4000)

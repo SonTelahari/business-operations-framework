@@ -672,7 +672,7 @@ async function run() {
 
     const staleStoragePayload = {
       webhook_id: "discord-stale-storage-withdrawal",
-      discord_channel_type: "storage-ledger",
+      discord_channel_type: "storefront",
       event_type: "Stocking Movement",
       direction: "Stock In",
       proposed_item_name: "",

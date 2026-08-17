@@ -4,6 +4,30 @@ const { parseStillWaterEmbed } = require('./parser');
 
 const cases = [
   {
+    name: 'storage refined oil withdrawal with Discord whitespace',
+    input: {
+      id: 'storage-refined-oil-withdrawal',
+      title: 'Has Taken',
+      description: `Steam name : Son Telahari
+PlayerName\u200b: William Winther
+Server ID 6
+Steam ID: steam:110000103fa2447
+Has\u00a0Taken 53 Refined\u202fOil From Van Horn Gunsmith Inventory`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock Out',
+      discord_item_name: 'Refined Oil',
+      discord_item_label: 'Refined Oil',
+      item_name: 'Refined Oil',
+      quantity: 53,
+      actor: 'William Winther',
+      container_name: 'Van Horn Gunsmith',
+      catalog_matched: true,
+      review_required: false
+    }
+  },
+  {
     name: 'storage container withdrawal',
     input: {
       id: 'storage-pistol-chamber-withdrawal',

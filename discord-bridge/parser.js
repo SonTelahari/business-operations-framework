@@ -111,11 +111,11 @@ function parseStorageContainerMovement(text) {
   const movements = [
     {
       direction: 'Stock Out',
-      pattern: /^Has Taken\s+(\d+(?:\.\d+)?)\s+(.+?)\s+From\s+(.+?)\s+Inventory\s*$/im
+      pattern: /\bHas\s+Taken\s+([\d,]+(?:\.\d+)?)\s+(.+?)\s+From\s+(.+?)\s+Inventory\b/i
     },
     {
       direction: 'Stock In',
-      pattern: /^Deposited\s+(\d+(?:\.\d+)?)\s+(.+?)\s+To\s+(.+?)\s+Inventory\s*$/im
+      pattern: /\bDeposited\s+([\d,]+(?:\.\d+)?)\s+(.+?)\s+To\s+(.+?)\s+Inventory\b/i
     }
   ];
   for (const movement of movements) {
@@ -123,7 +123,7 @@ function parseStorageContainerMovement(text) {
     if (!match) continue;
     return {
       direction: movement.direction,
-      quantity: Number(match[1]),
+      quantity: Number(String(match[1]).replace(/,/g, '')),
       itemName: String(match[2] || '').trim(),
       containerName: String(match[3] || '').trim()
     };
@@ -134,13 +134,15 @@ function parseStorageContainerMovement(text) {
 function normalizeText(value) {
   return String(value || '')
     .replace(/\*\*/g, '')
-    .replace(/\r\n/g, '\n')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\u00A0\u202F]/g, ' ')
+    .replace(/\r\n?/g, '\n')
     .trim();
 }
 
 function matchLine(text, label) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = text.match(new RegExp(`^${escaped}:[ \\t]*(.*)$`, 'im'));
+  const match = text.match(new RegExp(`^${escaped}[ \\t]*:[ \\t]*(.*)$`, 'im'));
   return match ? String(match[1] || '').trim() : '';
 }
 
