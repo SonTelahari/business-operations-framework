@@ -375,12 +375,47 @@ Deposited · 08/17/26 09:04:36 AM`
     const catalogBootstrap = await request("/api/bootstrap", { cookie: first.cookie });
     assert.equal(catalogBootstrap.body.materials.find(item => item.name === "Hosted Iron").price, 2);
 
+    const hostedSupplyOrder = await request("/api/supply-orders", {
+      method: "POST",
+      cookie: first.cookie,
+      body: {
+        id: "hosted-supply-order",
+        producer: "Hosted Supplier",
+        status: "Ordered",
+        lines: [{
+          id: "hosted-component-line",
+          name: "Hosted Component",
+          label: "Hosted Component",
+          quantity: 3,
+          unitPrice: 2
+        }]
+      }
+    });
+    assert.equal(hostedSupplyOrder.status, 200, JSON.stringify(hostedSupplyOrder.body));
+    await forwardStorageMovement({
+      id: "hosted-supply-physically-received",
+      channelId: "423456789012345671",
+      direction: "Stock In",
+      itemName: "Hosted Component",
+      quantity: 3
+    });
+    const hostedSupplyReceipt = await request("/api/supply-orders/hosted-supply-order/receive", {
+      method: "POST",
+      cookie: first.cookie,
+      body: { receipts: [{ lineId: "hosted-component-line", quantity: 3 }] }
+    });
+    assert.equal(hostedSupplyReceipt.status, 200, JSON.stringify(hostedSupplyReceipt.body));
+    assert.equal(hostedSupplyReceipt.body.order.status, "Received");
+    assert.equal(hostedSupplyReceipt.body.receipts[0].inventoryManagedExternally, true);
+    const afterHostedSupplyReceipt = await request("/api/bootstrap", { cookie: first.cookie });
+    assert.equal(storageCount(afterHostedSupplyReceipt.body, "Hosted Component"), 3);
+
     await forwardStorageMovement({
       id: "production-component-received",
       channelId: "423456789012345671",
       direction: "Stock In",
       itemName: "Hosted Component",
-      quantity: 10
+      quantity: 7
     });
     const productionOrder = await request("/api/sales-orders", {
       method: "POST",

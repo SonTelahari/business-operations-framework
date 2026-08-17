@@ -2809,6 +2809,8 @@ async function reconcileStorefrontBuyOrdersFromSheet(sheetSnapshot = null) {
 }
 
 async function receiveSupplyOrder(orderId, payload, user) {
+  const webhookManagedLocations = await getWebhookManagedInventoryLocations();
+  const storageManagedExternally = webhookManagedLocations.has("Storage");
   const requestedReceipts = Array.isArray(payload.receipts) ? payload.receipts.slice(0, 100) : [];
   if (!requestedReceipts.length) {
     throw supplyOrderError("Enter at least one quantity to receive", 400, "receipts_required");
@@ -2837,14 +2839,16 @@ async function receiveSupplyOrder(orderId, payload, user) {
   });
 
   const sheetSnapshot = await readSheetSnapshot();
-  if (!sheetSnapshot?.ok || !Array.isArray(sheetSnapshot.inventory?.materials)) {
+  if ((!sheetSnapshot?.ok || !Array.isArray(sheetSnapshot.inventory?.materials)) && !storageManagedExternally) {
     throw supplyOrderError(
       `Storage could not be read from the shared data service${sheetSnapshot?.error ? `: ${sheetSnapshot.error}` : ""}`,
       502,
       "storage_snapshot_unavailable"
     );
   }
-  const storage = materialStorageCounts(sheetSnapshot.inventory.materials);
+  const storage = materialStorageCounts(
+    Array.isArray(sheetSnapshot?.inventory?.materials) ? sheetSnapshot.inventory.materials : []
+  );
   const processed = [];
   let updatedOrder = order;
 
@@ -2856,31 +2860,33 @@ async function receiveSupplyOrder(orderId, payload, user) {
     const cumulativeReceived = previouslyReceived + quantity;
     const key = inventoryKey(line.name || line.label);
     const currentStorage = storage.get(key) || { quantity: 0, name: canonicalInventoryName(line.name || line.label) };
-    const absoluteCount = Number(currentStorage.quantity || 0) + quantity;
+    const absoluteCount = Number(currentStorage.quantity || 0) + (storageManagedExternally ? 0 : quantity);
     const operationId = `supply-receipt:${orderId}:${line.id}:${cumulativeReceived}`;
     const itemName = currentStorage.name || canonicalInventoryName(line.name || line.label);
-    const syncResult = await syncGuiPayload({
-      action: "manual_operation",
-      entry: {
-        id: operationId,
-        createdAt: new Date().toISOString(),
-        kind: "Stock Count",
-        location: "Storage",
-        itemName,
-        itemLabel: itemName,
-        itemTag: "",
-        quantity: absoluteCount,
-        employee: user.fullName,
-        amount: "",
-        note: `Received ${quantity} from ${currentOrder.producer} / supply order ${currentOrder.id}`
+    if (!storageManagedExternally) {
+      const syncResult = await syncGuiPayload({
+        action: "manual_operation",
+        entry: {
+          id: operationId,
+          createdAt: new Date().toISOString(),
+          kind: "Stock Count",
+          location: "Storage",
+          itemName,
+          itemLabel: itemName,
+          itemTag: "",
+          quantity: absoluteCount,
+          employee: user.fullName,
+          amount: "",
+          note: `Received ${quantity} from ${currentOrder.producer} / supply order ${currentOrder.id}`
+        }
+      });
+      if (!syncResult?.ok) {
+        throw supplyOrderError(
+          `Storage update failed for ${line.label || line.name}: ${syncResult?.error || "The data service rejected the receipt"}`,
+          502,
+          "supply_receipt_sync_failed"
+        );
       }
-    });
-    if (!syncResult?.ok) {
-      throw supplyOrderError(
-        `Storage update failed for ${line.label || line.name}: ${syncResult?.error || "The data service rejected the receipt"}`,
-        502,
-        "supply_receipt_sync_failed"
-      );
     }
 
     updatedOrder = await businessStore.receiveSupplyLine(orderId, line.id, quantity, user, {
@@ -2895,7 +2901,8 @@ async function receiveSupplyOrder(orderId, payload, user) {
       itemName,
       quantity,
       receivedQuantity: cumulativeReceived,
-      storageCount: absoluteCount
+      storageCount: absoluteCount,
+      inventoryManagedExternally: storageManagedExternally
     };
     processed.push(receipt);
     await recordSupplyReceiptAudit(updatedOrder, line, receipt, user);
@@ -3121,7 +3128,8 @@ async function recordSupplyReceiptAudit(order, line, receipt, user) {
       unitPrice: line.unitPrice,
       amount: roundFinanceMoney(Number(receipt.quantity || 0) * Number(line.unitPrice || 0)),
       receivedQuantity: receipt.receivedQuantity,
-      storageCount: receipt.storageCount
+      storageCount: receipt.storageCount,
+      inventoryManagedExternally: receipt.inventoryManagedExternally === true
     }
   });
 }
