@@ -670,6 +670,54 @@ async function run() {
     assert.equal(storedStorageMovement.rows[0].actor_name, "William Winther");
     assert.deepEqual((await store.finance()).totals, storageFinanceBefore.totals);
 
+    const staleStoragePayload = {
+      webhook_id: "discord-stale-storage-withdrawal",
+      discord_channel_type: "storage-ledger",
+      event_type: "Stocking Movement",
+      direction: "Stock In",
+      proposed_item_name: "",
+      proposed_quantity: 0,
+      item_name: "",
+      quantity: 0,
+      review_required: true,
+      review_reason: "missing_item,missing_quantity",
+      discord_title: "Has Taken",
+      raw_payload: `Steam name : Son Telahari
+PlayerName: William Winther
+Server ID 6
+Steam ID: steam:110000103fa2447
+Has Taken 2 Iron Widget From Van Horn Gunsmith Inventory`
+    };
+    await database.query(`
+      INSERT INTO webhook_events (
+        business_id, webhook_id, occurred_at, event_type, direction, item_name,
+        quantity, unit_price, actor_name, order_id, status, payload
+      ) VALUES ($1, $2, $3, 'Stocking Movement', 'Stock In', '', 0, 0, '', '', 'review', $4::jsonb)
+    `, [store.businessId, staleStoragePayload.webhook_id, "2026-08-01T15:01:00.000Z", JSON.stringify(staleStoragePayload)]);
+    await database.query(`
+      INSERT INTO webhook_exceptions (
+        business_id, webhook_id, status, reason, discord_title,
+        proposed_event_type, proposed_direction, proposed_quantity, original_payload
+      ) VALUES ($1, $2, 'Open', 'missing_item,missing_quantity', 'Has Taken',
+        'Stocking Movement', 'Stock In', 0, $3::jsonb)
+    `, [store.businessId, staleStoragePayload.webhook_id, JSON.stringify(staleStoragePayload)]);
+    const staleRepair = await store.reconcileStorageManagerExceptions();
+    assert.deepEqual(staleRepair.repaired, ["discord-stale-storage-withdrawal"]);
+    storageSnapshot = await store.snapshot();
+    assert.equal(storageSnapshot.inventory.storage.find(item => item.ingredient === "Iron Widget").storageCount, 1);
+    const repairedStorageLog = storageSnapshot.webhookLog.find(entry =>
+      entry.webhookId === "discord-stale-storage-withdrawal"
+    );
+    assert.equal(repairedStorageLog.status, "applied");
+    assert.equal(repairedStorageLog.itemName, "Iron Widget");
+    assert.equal(repairedStorageLog.direction, "Stock Out");
+    assert.equal(repairedStorageLog.quantity, 2);
+    assert.equal(repairedStorageLog.actorName, "William Winther");
+    assert.equal(
+      storageSnapshot.reviewExceptions.find(entry => entry.webhookId === "discord-stale-storage-withdrawal").status,
+      "Resolved"
+    );
+
     const storageLedgerControl = await store.ingestWebhook({
       webhook_id: "discord-storage-ledger-control-1",
       discord_channel_type: "storage-ledger",

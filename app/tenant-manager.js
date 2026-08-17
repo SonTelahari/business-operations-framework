@@ -362,6 +362,7 @@ class TenantManager {
       standaloneStore.reconcileCatalogPricesFromWebhooks(),
       standaloneStore.reconcileImportedExceptions()
     ]);
+    await standaloneStore.reconcileStorageManagerExceptions();
     return {
       business,
       businessId: business.id,

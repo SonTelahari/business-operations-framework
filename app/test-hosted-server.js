@@ -289,12 +289,24 @@ Steam ID: steam:hosted
 Deposited 2 Hosted Product To Van Horn Gunsmith Inventory
 Deposited · 08/17/26 09:04:36 AM`
     });
+    assert.equal(parsedStorageManagerDeposit.item_name, "Hosted Product");
+    assert.equal(parsedStorageManagerDeposit.quantity, 2);
     const storageManagerForward = await bridgeRequest("/api/integrations/discord/events", {
       method: "POST",
       body: {
-        ...parsedStorageManagerDeposit,
+        webhook_id: "first-storage-manager-deposit",
         discord_message_id: "first-storage-manager-deposit",
         discord_channel_id: "423456789012345671",
+        event_type: "Stocking Movement",
+        direction: "Stock In",
+        proposed_item_name: "",
+        proposed_quantity: 0,
+        item_name: "",
+        quantity: 0,
+        review_required: true,
+        review_reason: "missing_item,missing_quantity",
+        discord_title: parsedStorageManagerDeposit.discord_title,
+        raw_payload: parsedStorageManagerDeposit.raw_payload,
         occurred_at: "2026-08-02T10:02:00.000Z"
       }
     });

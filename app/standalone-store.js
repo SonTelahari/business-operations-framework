@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const { parseStorageManagerText } = require("../discord-bridge/parser");
 
 const BUSINESS_ID = "primary";
 
@@ -678,6 +679,93 @@ class StandaloneStore {
     });
   }
 
+  async reconcileStorageManagerExceptions() {
+    return this.database.transaction(async client => {
+      const result = await client.query(`
+        SELECT e.*, w.payload, w.occurred_at, w.actor_name, w.order_id
+        FROM webhook_exceptions e
+        JOIN webhook_events w USING (business_id, webhook_id)
+        WHERE e.business_id = $1 AND e.status = 'Open' AND e.transaction_written = false
+        ORDER BY e.created_at, e.webhook_id
+        FOR UPDATE
+      `, [this.businessId]);
+      const repaired = [];
+      const enriched = [];
+      for (const stored of result.rows) {
+        const payload = json(stored.payload, {});
+        if (cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) !== "storage-ledger") continue;
+        const movement = parseStorageManagerText(payload.raw_payload);
+        if (!movement) continue;
+        let event = normalizeWebhook({
+          ...payload,
+          webhook_id: stored.webhook_id,
+          occurred_at: stored.occurred_at,
+          actor: movement.actor || stored.actor_name,
+          order_id: stored.order_id
+        });
+        event = await applyStoredMapping(client, this.businessId, event);
+        event = await resolveAgainstCatalog(client, this.businessId, event);
+        const correctedPayload = {
+          ...payload,
+          event_type: event.type,
+          direction: event.direction,
+          item_name: event.item,
+          proposed_item_name: event.item,
+          discord_item_name: event.discordItemName,
+          discord_item_label: event.discordItemLabel,
+          quantity: event.quantity,
+          proposed_quantity: event.quantity,
+          actor: event.actor,
+          review_required: event.reviewRequired,
+          review_reason: event.reviewReason
+        };
+        await client.query(`
+          UPDATE webhook_events SET
+            event_type = $3, direction = $4, item_name = $5, quantity = $6,
+            actor_name = $7, status = $8, payload = $9::jsonb
+          WHERE business_id = $1 AND webhook_id = $2
+        `, [
+          this.businessId, event.webhookId, event.type, event.direction, event.item,
+          event.quantity, event.actor, event.reviewRequired ? "review" : "applied",
+          JSON.stringify(correctedPayload)
+        ]);
+        if (event.reviewRequired) {
+          await client.query(`
+            UPDATE webhook_exceptions SET
+              reason = $3, discord_item_name = $4, discord_item_label = $5,
+              proposed_event_type = $6, proposed_direction = $7,
+              proposed_quantity = $8, original_payload = $9::jsonb
+            WHERE business_id = $1 AND webhook_id = $2
+          `, [
+            this.businessId, event.webhookId, event.reviewReason,
+            event.discordItemName, event.discordItemLabel, event.type, event.direction,
+            event.quantity, JSON.stringify(correctedPayload)
+          ]);
+          enriched.push(event.webhookId);
+          continue;
+        }
+        await applyWebhookEvent(client, this.businessId, event, { applyLedger: true });
+        await client.query(`
+          UPDATE webhook_exceptions SET
+            status = 'Resolved', reason = '', resolved_item_name = $3,
+            resolved_at = now(), resolved_by = 'Storage parser reconciliation',
+            resolution_note = 'Recovered item, quantity, direction, and character from retained raw webhook text',
+            transaction_written = true,
+            discord_item_name = $4, discord_item_label = $5,
+            proposed_event_type = $6, proposed_direction = $7,
+            proposed_quantity = $8, original_payload = $9::jsonb
+          WHERE business_id = $1 AND webhook_id = $2
+        `, [
+          this.businessId, event.webhookId, event.item,
+          event.discordItemName, event.discordItemLabel, event.type, event.direction,
+          event.quantity, JSON.stringify(correctedPayload)
+        ]);
+        repaired.push(event.webhookId);
+      }
+      return { ok: true, repaired, enriched };
+    });
+  }
+
   async handleGuiPayload(payload) {
     const action = String(payload?.action || "");
     if (action === "catalog_item") return this.createCatalogItem(payload.item || {});
@@ -1333,6 +1421,7 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
       });
     }
   }
+
   const total = money(event.quantity * event.unitPrice);
   if (event.location === "sales" && (event.type === "Sale" || event.type === "Purchase") && total > 0) {
     await insertFinance(client, businessId, {
@@ -1516,19 +1605,26 @@ function normalizeWebhook(payload) {
   const reviewRequested = payload?.review_required === true || String(payload?.review_required || "").toLowerCase() === "true";
   const suppliedReviewReason = cleanText(firstValue(payload, ["review_reason"]), 300);
   const channelType = cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) || "storefront";
+  const storageMovement = channelType === "storage-ledger"
+    ? parseStorageManagerText(firstValue(payload, ["raw_payload"]))
+    : null;
   const rawType = firstValue(payload, ["event_type", "type", "action", "event"]);
-  const type = normalizeType(rawType);
-  const direction = normalizeDirection(firstValue(payload, ["direction", "movement", "stock_direction"]), type);
-  const item = cleanText(firstValue(payload, reviewRequested
+  const type = storageMovement ? "Stocking Movement" : normalizeType(rawType);
+  const direction = storageMovement?.direction
+    || normalizeDirection(firstValue(payload, ["direction", "movement", "stock_direction"]), type);
+  const item = cleanText(storageMovement?.itemName || firstValue(payload, reviewRequested
     ? ["proposed_item_name", "item_name", "item", "name", "product", "product_name"]
     : ["item_name", "item", "name", "product", "product_name"]), 150);
-  const quantity = number(firstValue(payload, reviewRequested
+  const quantity = storageMovement?.quantity || number(firstValue(payload, reviewRequested
     ? ["proposed_quantity", "qty", "quantity", "count", "amount"]
     : ["qty", "quantity", "count", "amount"]));
-  const discordItemName = cleanText(firstValue(payload, ["discord_item_name"]), 200);
-  const discordItemLabel = cleanText(firstValue(payload, ["discord_item_label"]), 200);
+  const discordItemName = cleanText(firstValue(payload, ["discord_item_name"]) || storageMovement?.itemName, 200);
+  const discordItemLabel = cleanText(firstValue(payload, ["discord_item_label"]) || storageMovement?.itemName, 200);
   const ledgerBalance = nullableNumber(firstValue(payload, ["shop_ledger", "ledger_balance", "current_ledger"]));
   let reasons = suppliedReviewReason.split(",").map(value => value.trim()).filter(Boolean);
+  if (storageMovement) {
+    reasons = reasons.filter(reason => reason !== "missing_item" && reason !== "missing_quantity");
+  }
   if (!item && !discordItemName && !discordItemLabel && !reasons.includes("missing_item")) reasons.push("missing_item");
   if (!(quantity > 0) && !reasons.includes("missing_quantity")) reasons.push("missing_quantity");
   const hasItemIdentity = Boolean(item || discordItemName || discordItemLabel);
@@ -1549,7 +1645,7 @@ function normalizeWebhook(payload) {
     currentItemTotal: nullableNumber(firstValue(payload, ["current_item_total", "current_stock", "stock_total"])),
     ledgerBalance,
     occurredAt: validDate(firstValue(payload, ["timestamp", "occurred_at", "created_at"])),
-    actor: cleanText(firstValue(payload, ["actor", "customer", "buyer", "seller", "player"]), 150),
+    actor: cleanText(storageMovement?.actor || firstValue(payload, ["actor", "customer", "buyer", "seller", "player"]), 150),
     orderId: cleanText(firstValue(payload, ["order_id", "buy_order_id", "receipt_id", "transaction_id"]), 150),
     discordTitle: cleanText(firstValue(payload, ["discord_title", "title"]), 200),
     discordItemName,

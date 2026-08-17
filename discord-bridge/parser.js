@@ -5,7 +5,7 @@ function parseStillWaterEmbed(message) {
   const title = message.title || message.embeds?.[0]?.title || '';
   const description = message.description || message.embeds?.[0]?.description || '';
   const text = normalizeText(description);
-  const storageMovement = parseStorageContainerMovement(text);
+  const storageMovement = parseStorageManagerText(text);
   if (storageMovement) {
     return {
       event_type: 'Stocking Movement',
@@ -21,7 +21,7 @@ function parseStillWaterEmbed(message) {
       buy_order_id: '',
       webhook_id: message.id || '',
       raw_payload: description,
-      actor: matchLine(text, 'PlayerName'),
+      actor: storageMovement.actor,
       container_name: storageMovement.containerName,
       catalog_matched: true,
       review_required: false,
@@ -94,6 +94,16 @@ function parseStillWaterEmbed(message) {
     catalog_matched: resolvedItem.matched,
     review_required: reviewReasons.length > 0,
     review_reason: reviewReasons.join(',')
+  };
+}
+
+function parseStorageManagerText(value) {
+  const text = normalizeText(value);
+  const movement = parseStorageContainerMovement(text);
+  if (!movement) return null;
+  return {
+    ...movement,
+    actor: matchLine(text, 'PlayerName')
   };
 }
 
@@ -217,5 +227,6 @@ const MATERIAL_MAP = Object.keys(pricingCatalog.materials || {}).reduce((map, ma
 const LABEL_PATTERNS = [];
 
 module.exports = {
-  parseStillWaterEmbed
+  parseStillWaterEmbed,
+  parseStorageManagerText
 };

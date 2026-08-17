@@ -3528,6 +3528,7 @@ async function startServer() {
         defaultContext.standaloneStore.reconcileCatalogPricesFromWebhooks(),
         defaultContext.standaloneStore.reconcileImportedExceptions()
       ]);
+      await defaultContext.standaloneStore.reconcileStorageManagerExceptions();
     }
   }
   server.listen(port, () => {
