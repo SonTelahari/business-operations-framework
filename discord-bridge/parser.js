@@ -5,6 +5,29 @@ function parseStillWaterEmbed(message) {
   const title = message.title || message.embeds?.[0]?.title || '';
   const description = message.description || message.embeds?.[0]?.description || '';
   const text = normalizeText(description);
+  const storageMovement = parseStorageContainerMovement(text);
+  if (storageMovement) {
+    return {
+      event_type: 'Stocking Movement',
+      direction: storageMovement.direction,
+      discord_title: title,
+      discord_item_name: storageMovement.itemName,
+      discord_item_label: storageMovement.itemName,
+      item_name: storageMovement.itemName,
+      quantity: storageMovement.quantity,
+      unit_price: 0,
+      shop_ledger: null,
+      current_item_total: null,
+      buy_order_id: '',
+      webhook_id: message.id || '',
+      raw_payload: description,
+      actor: matchLine(text, 'PlayerName'),
+      container_name: storageMovement.containerName,
+      catalog_matched: true,
+      review_required: false,
+      review_reason: ''
+    };
+  }
 
   const itemName = matchLine(text, 'Item name');
   const itemLabel = matchLine(text, 'Item label');
@@ -72,6 +95,30 @@ function parseStillWaterEmbed(message) {
     review_required: reviewReasons.length > 0,
     review_reason: reviewReasons.join(',')
   };
+}
+
+function parseStorageContainerMovement(text) {
+  const movements = [
+    {
+      direction: 'Stock Out',
+      pattern: /^Has Taken\s+(\d+(?:\.\d+)?)\s+(.+?)\s+From\s+(.+?)\s+Inventory\s*$/im
+    },
+    {
+      direction: 'Stock In',
+      pattern: /^Deposited\s+(\d+(?:\.\d+)?)\s+(.+?)\s+To\s+(.+?)\s+Inventory\s*$/im
+    }
+  ];
+  for (const movement of movements) {
+    const match = text.match(movement.pattern);
+    if (!match) continue;
+    return {
+      direction: movement.direction,
+      quantity: Number(match[1]),
+      itemName: String(match[2] || '').trim(),
+      containerName: String(match[3] || '').trim()
+    };
+  }
+  return null;
 }
 
 function normalizeText(value) {

@@ -367,6 +367,7 @@ const elements = {
   reviewEditorStatus: document.querySelector("#reviewEditorStatus"),
   reviewReceivedAt: document.querySelector("#reviewReceivedAt"),
   reviewReason: document.querySelector("#reviewReason"),
+  reviewActorName: document.querySelector("#reviewActorName"),
   reviewDiscordName: document.querySelector("#reviewDiscordName"),
   reviewDiscordLabel: document.querySelector("#reviewDiscordLabel"),
   reviewAppInventoryTotal: document.querySelector("#reviewAppInventoryTotal"),
@@ -4171,6 +4172,7 @@ function renderReviewEditor(entry) {
     elements.reviewEditorStatus.textContent = "-";
     elements.reviewReceivedAt.textContent = "-";
     elements.reviewReason.textContent = "-";
+    elements.reviewActorName.textContent = "-";
     elements.reviewDiscordName.textContent = "-";
     elements.reviewDiscordLabel.textContent = "-";
     elements.reviewAppInventoryTotal.textContent = "-";
@@ -4204,6 +4206,7 @@ function renderReviewEditor(entry) {
   elements.reviewEditorStatus.textContent = entry.status;
   elements.reviewReceivedAt.textContent = formatDateTime(entry.receivedAt);
   elements.reviewReason.textContent = reviewReasonText(entry.reason);
+  elements.reviewActorName.textContent = entry.actorName || "Not supplied";
   elements.reviewDiscordName.textContent = entry.discordItemName || "Not supplied";
   elements.reviewDiscordLabel.textContent = entry.discordItemLabel || "Not supplied";
   elements.reviewAppInventoryTotal.textContent = reviewCountText(entry.appInventoryTotal);

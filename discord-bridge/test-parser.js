@@ -4,6 +4,58 @@ const { parseStillWaterEmbed } = require('./parser');
 
 const cases = [
   {
+    name: 'storage container withdrawal',
+    input: {
+      id: 'storage-pistol-chamber-withdrawal',
+      title: 'Take from container Log',
+      description: `Has Taken
+Steam name : Son Telahari
+PlayerName: William Winther
+Server ID 6
+Steam ID: steam:110000103fa2447
+Has Taken 3 Pistol Chamber From Van Horn Gunsmith Inventory
+Has Taken · 08/17/26 09:03:55 AM`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock Out',
+      discord_item_name: 'Pistol Chamber',
+      discord_item_label: 'Pistol Chamber',
+      item_name: 'Pistol Chamber',
+      quantity: 3,
+      actor: 'William Winther',
+      container_name: 'Van Horn Gunsmith',
+      catalog_matched: true,
+      review_required: false
+    }
+  },
+  {
+    name: 'storage container deposit',
+    input: {
+      id: 'storage-pistol-chamber-deposit',
+      title: 'Move to container Log',
+      description: `Deposited
+Steam name : Son Telahari
+PlayerName: William Winther
+Server ID 6
+Steam ID: steam:110000103fa2447
+Deposited 3 Pistol Chamber To Van Horn Gunsmith Inventory
+Deposited · 08/17/26 09:04:36 AM`
+    },
+    expected: {
+      event_type: 'Stocking Movement',
+      direction: 'Stock In',
+      discord_item_name: 'Pistol Chamber',
+      discord_item_label: 'Pistol Chamber',
+      item_name: 'Pistol Chamber',
+      quantity: 3,
+      actor: 'William Winther',
+      container_name: 'Van Horn Gunsmith',
+      catalog_matched: true,
+      review_required: false
+    }
+  },
+  {
     name: 'deposit',
     input: {
       id: 'deposit-example',

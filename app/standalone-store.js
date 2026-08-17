@@ -344,9 +344,11 @@ class StandaloneStore {
         ORDER BY occurred_at, recorded_at, event_id
       `, [this.businessId]),
       this.database.query(`
-        SELECT * FROM webhook_exceptions
-        WHERE business_id = $1
-        ORDER BY created_at DESC
+        SELECT e.*, w.actor_name
+        FROM webhook_exceptions e
+        LEFT JOIN webhook_events w USING (business_id, webhook_id)
+        WHERE e.business_id = $1
+        ORDER BY e.created_at DESC
         LIMIT 250
       `, [this.businessId]),
       this.database.query(`
@@ -1740,6 +1742,7 @@ function exceptionRow(row) {
     discordTitle: row.discord_title,
     discordItemName: row.discord_item_name,
     discordItemLabel: row.discord_item_label,
+    actorName: row.actor_name || cleanText(payload.actor, 150),
     eventType: row.proposed_event_type,
     direction: row.proposed_direction,
     quantity: number(row.proposed_quantity),

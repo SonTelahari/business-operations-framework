@@ -58,6 +58,7 @@ assert(appHtml.includes('<option value="Cancelled" data-management-only-option>'
 assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
 assert(appHtml.includes('id="reviewPackageConversionInput"'), "webhook review must identify crated goods");
 assert(appHtml.includes('id="reviewUnitsPerPackageInput"'), "webhook review must capture units per crate");
+assert(appHtml.includes('id="reviewActorName"'), "webhook review must expose the character responsible for storage movements");
 assert(appHtml.includes('id="workspaceSwitcherButton"'), "authenticated users must have an in-ledger business switcher");
 assert(appHtml.includes('id="workspaceDialog"'), "the business switcher must expose linked and pending jobs");
 assert(appHtml.includes('id="linkJobWorkspaceInput"'), "password users must be able to link an approved job explicitly");

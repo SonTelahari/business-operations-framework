@@ -649,6 +649,7 @@ async function run() {
       quantity: 3,
       current_item_total: 3,
       unit_price: 25,
+      actor: "William Winther",
       occurred_at: "2026-08-01T15:00:00.000Z"
     });
     assert.equal(storageMovement.reviewRequired, undefined);
@@ -656,6 +657,11 @@ async function run() {
     let storageSnapshot = await store.snapshot();
     assert.equal(storageSnapshot.inventory.storage.find(item => item.ingredient === "Iron Widget").storageCount, 3);
     assert.equal(storageSnapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 8);
+    const storedStorageMovement = await database.query(`
+      SELECT actor_name FROM inventory_events
+      WHERE business_id = $1 AND event_id = 'discord-storage-widget-1:stock'
+    `, [store.businessId]);
+    assert.equal(storedStorageMovement.rows[0].actor_name, "William Winther");
     assert.deepEqual((await store.finance()).totals, storageFinanceBefore.totals);
 
     const storageLedgerControl = await store.ingestWebhook({
