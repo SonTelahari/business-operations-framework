@@ -163,6 +163,7 @@ let productionActionPending = false;
 let salesOrderSavePending = false;
 let dailyCloseActionPending = false;
 let activeOrderDirty = false;
+let storefrontBuyOrderDirty = false;
 let dailyCloseDirty = false;
 let activeOrder = newOrder();
 let activeSupplyOrder = newSupplyOrder();
@@ -170,6 +171,8 @@ let activeStorefrontBuyOrder = newStorefrontBuyOrder();
 let activeDailyClose = newDailyClose();
 let activeSupplier = newSupplier();
 let activeReviewExceptionId = "";
+let renderedReviewExceptionId = "";
+let reviewEditorDirty = false;
 let activeProductionBatchId = "";
 let activeView = "quote";
 let activeSection = "dashboard";
@@ -1250,9 +1253,9 @@ function wireEvents() {
   elements.auditActionFilter.addEventListener("change", renderAudit);
   elements.auditSearch.addEventListener("input", renderAudit);
   elements.refreshAudit.addEventListener("click", loadAuditEvents);
-  elements.reviewStatusFilter.addEventListener("change", renderReviewWorkspace);
-  elements.reviewSearch.addEventListener("input", renderReviewWorkspace);
-  elements.refreshReview.addEventListener("click", () => loadBackendSnapshot({ silent: false }));
+  elements.reviewStatusFilter.addEventListener("change", () => renderReviewWorkspace({ preserveEditor: true }));
+  elements.reviewSearch.addEventListener("input", () => renderReviewWorkspace({ preserveEditor: true }));
+  elements.refreshReview.addEventListener("click", () => loadBackendSnapshot({ silent: false, preserveReviewEditor: true }));
   elements.webhookLogStatusFilter.addEventListener("change", renderWebhookLog);
   elements.webhookLogSearch.addEventListener("input", renderWebhookLog);
   elements.reviewCreateProduct.addEventListener("change", renderReviewProductMode);
@@ -1268,6 +1271,32 @@ function wireEvents() {
       ? "Materials"
       : suggestProductCategory(elements.reviewProductLabel.value || elements.reviewItem.value);
     renderReviewProductMode();
+  });
+  [
+    elements.reviewCashAmount,
+    elements.reviewCashCategory,
+    elements.reviewCashReference,
+    elements.reviewItem,
+    elements.reviewEventType,
+    elements.reviewDirection,
+    elements.reviewQuantity,
+    elements.reviewUnitPrice,
+    elements.reviewNote,
+    elements.reviewRememberMapping,
+    elements.reviewPackageConversion,
+    elements.reviewUnitsPerPackage,
+    elements.reviewCreateProduct,
+    elements.reviewItemType,
+    elements.reviewProductLabel,
+    elements.reviewProductTag,
+    elements.reviewProductCategory,
+    elements.reviewItemUnit,
+    elements.reviewItemUnitCost,
+    elements.reviewProductPrice,
+    elements.reviewProductTarget
+  ].forEach(element => {
+    element.addEventListener("input", markReviewEditorDirty);
+    element.addEventListener("change", markReviewEditorDirty);
   });
   elements.resolveReview.addEventListener("click", resolveReviewException);
   elements.ignoreReview.addEventListener("click", ignoreReviewException);
@@ -1462,7 +1491,9 @@ function wireEvents() {
         loadSuppliers({ silent: true });
       }
       if (activeSection === "buy-orders" && isManagement()) loadStorefrontBuyOrders({ silent: true });
-      if (activeSection === "review" && isManagement()) loadBackendSnapshot({ silent: true });
+      if (activeSection === "review" && isManagement()) {
+        loadBackendSnapshot({ silent: true, preserveReviewEditor: true });
+      }
       if (activeSection === "catalog" && isManagement()) renderCatalogLedger();
       if (activeSection === "finance" && isAdmin()) loadFinance();
       if (activeSection === "business-settings" && isAdmin()) {
@@ -1897,6 +1928,7 @@ async function loadSupplyOrders({ silent = false } = {}) {
 
 function startNewStorefrontBuyOrder() {
   activeStorefrontBuyOrder = newStorefrontBuyOrder();
+  storefrontBuyOrderDirty = false;
   renderStorefrontBuyOrderWorkspace();
   elements.buyOrderItem.focus();
 }
@@ -1911,6 +1943,7 @@ function updateStorefrontBuyOrderFromInputs() {
     || activeStorefrontBuyOrder.postedAt;
   activeStorefrontBuyOrder.status = elements.buyOrderStatus.value;
   activeStorefrontBuyOrder.notes = elements.buyOrderNotes.value.trim();
+  storefrontBuyOrderDirty = true;
 }
 
 function updateStorefrontBuyOrderItemDefaults() {
@@ -1938,7 +1971,7 @@ async function loadStorefrontBuyOrders({ silent = false } = {}) {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     storefrontBuyOrders = Array.isArray(result.orders) ? result.orders : [];
     const refreshed = storefrontBuyOrders.find(order => order.id === activeStorefrontBuyOrder.id);
-    if (refreshed) activeStorefrontBuyOrder = structuredClone(refreshed);
+    if (refreshed && !storefrontBuyOrderDirty) activeStorefrontBuyOrder = structuredClone(refreshed);
     elements.buyOrderDataStatus.textContent = `${storefrontBuyOrders.length} shared buy ${storefrontBuyOrders.length === 1 ? "order" : "orders"} loaded`;
     renderStorefrontBuyOrderWorkspace();
   } catch (error) {
@@ -1964,6 +1997,7 @@ async function saveStorefrontBuyOrder() {
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     activeStorefrontBuyOrder = structuredClone(result.order);
+    storefrontBuyOrderDirty = false;
     storefrontBuyOrders = result.orders || [];
     elements.buyOrderDataStatus.textContent = `${activeStorefrontBuyOrder.itemLabel} saved as ${activeStorefrontBuyOrder.status}`;
     renderStorefrontBuyOrderWorkspace();
@@ -1988,6 +2022,7 @@ async function adjustStorefrontBuyOrderFill() {
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     activeStorefrontBuyOrder = structuredClone(result.order);
+    storefrontBuyOrderDirty = false;
     storefrontBuyOrders = result.orders || [];
     elements.buyOrderDataStatus.textContent = `Fill adjusted to ${formatNumber(activeStorefrontBuyOrder.filledQuantity)}`;
     renderStorefrontBuyOrderWorkspace();
@@ -2011,6 +2046,7 @@ async function removeActiveStorefrontBuyOrder() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     storefrontBuyOrders = result.orders || [];
     activeStorefrontBuyOrder = newStorefrontBuyOrder();
+    storefrontBuyOrderDirty = false;
     elements.buyOrderDataStatus.textContent = "Buy order removed";
     renderStorefrontBuyOrderWorkspace();
   } catch (error) {
@@ -2022,6 +2058,7 @@ function loadStorefrontBuyOrder(orderId) {
   const order = storefrontBuyOrders.find(candidate => candidate.id === orderId);
   if (!order) return;
   activeStorefrontBuyOrder = structuredClone(order);
+  storefrontBuyOrderDirty = false;
   renderStorefrontBuyOrderWorkspace();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -4138,7 +4175,7 @@ function renderReviewIndicators() {
   elements.exceptionNavCount.classList.toggle("hidden", openCount === 0);
 }
 
-function renderReviewWorkspace() {
+function renderReviewWorkspace({ preserveEditor = false } = {}) {
   if (!elements.reviewSection) return;
   renderReviewIndicators();
   renderWebhookLog();
@@ -4187,11 +4224,23 @@ function renderReviewWorkspace() {
   elements.reviewEventList.querySelectorAll("[data-review-id]").forEach(button => {
     button.addEventListener("click", () => {
       activeReviewExceptionId = button.dataset.reviewId;
+      reviewEditorDirty = false;
       renderReviewWorkspace();
     });
   });
 
-  renderReviewEditor(reviewExceptions.find(entry => entry.webhookId === activeReviewExceptionId));
+  const activeEntry = reviewExceptions.find(entry => entry.webhookId === activeReviewExceptionId);
+  const keepDraft = preserveEditor
+    && reviewEditorDirty
+    && activeEntry?.status === "Open"
+    && renderedReviewExceptionId === activeReviewExceptionId;
+  if (!keepDraft) renderReviewEditor(activeEntry);
+}
+
+function markReviewEditorDirty() {
+  if (activeReviewExceptionId && renderedReviewExceptionId === activeReviewExceptionId) {
+    reviewEditorDirty = true;
+  }
 }
 
 function renderWebhookLog() {
@@ -4243,6 +4292,8 @@ function renderWebhookLog() {
 }
 
 function renderReviewEditor(entry) {
+  renderedReviewExceptionId = entry?.webhookId || "";
+  reviewEditorDirty = false;
   elements.reviewActionStatus.textContent = "";
   if (!entry) {
     elements.reviewEditorTitle.textContent = "No event selected";
@@ -4615,6 +4666,7 @@ async function resolveReviewException() {
     setReviewEditorDisabled(false);
     return;
   }
+  reviewEditorDirty = false;
   activeReviewExceptionId = "";
   await loadBackendSnapshot({ silent: true });
 }
@@ -4660,6 +4712,7 @@ async function resolveCashReviewException(entry) {
     return;
   }
   const complete = result.status === "Resolved" || Number(result.cashRemaining || 0) <= 0.005;
+  reviewEditorDirty = false;
   if (complete) activeReviewExceptionId = "";
   await loadBackendSnapshot({ silent: true });
   if (!complete) {
@@ -4692,6 +4745,7 @@ async function ignoreReviewException() {
     setReviewEditorDisabled(false);
     return;
   }
+  reviewEditorDirty = false;
   activeReviewExceptionId = "";
   await loadBackendSnapshot({ silent: true });
 }
@@ -6342,7 +6396,9 @@ async function syncToBackend(action, payload) {
 function startBackendRefreshLoop() {
   if (backendRefreshTimer) return;
   backendRefreshTimer = window.setInterval(() => {
-    if (document.visibilityState === "visible") loadBackendSnapshot({ silent: true });
+    if (document.visibilityState === "visible") {
+      loadBackendSnapshot({ silent: true, preserveReviewEditor: true });
+    }
   }, BACKEND_REFRESH_INTERVAL_MS);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") refreshBackendIfStale();
@@ -6352,7 +6408,7 @@ function startBackendRefreshLoop() {
 
 function refreshBackendIfStale() {
   if (!currentUser || Date.now() - lastBackendRefreshAt < FOCUS_REFRESH_STALE_MS) return;
-  loadBackendSnapshot({ silent: true });
+  loadBackendSnapshot({ silent: true, preserveReviewEditor: true });
   if (isManagement()) {
     loadSupplyOrders({ silent: true });
   }
@@ -6369,7 +6425,7 @@ async function loadBackendSnapshot(options = {}) {
   }
 }
 
-async function performBackendRefresh({ silent = false } = {}) {
+async function performBackendRefresh({ silent = false, preserveReviewEditor = false } = {}) {
   const previousSnapshot = backendSnapshot;
   try {
     if (legacyOrdersPendingMigration.length) await migrateLegacySalesOrders();
@@ -6409,7 +6465,9 @@ async function performBackendRefresh({ silent = false } = {}) {
     if (isManagement() && Array.isArray(nextSnapshot.storefrontBuyOrders)) {
       storefrontBuyOrders = nextSnapshot.storefrontBuyOrders;
       const refreshedBuyOrder = storefrontBuyOrders.find(order => order.id === activeStorefrontBuyOrder.id);
-      if (refreshedBuyOrder) activeStorefrontBuyOrder = structuredClone(refreshedBuyOrder);
+      if (refreshedBuyOrder && !storefrontBuyOrderDirty) {
+        activeStorefrontBuyOrder = structuredClone(refreshedBuyOrder);
+      }
       elements.buyOrderDataStatus.textContent = `${storefrontBuyOrders.length} shared buy ${storefrontBuyOrders.length === 1 ? "order" : "orders"} loaded`;
     }
     lastBackendRefreshAt = Date.now();
@@ -6426,7 +6484,7 @@ async function performBackendRefresh({ silent = false } = {}) {
       renderOperations();
       renderSupplyWorkspace();
       renderStorefrontBuyOrderWorkspace();
-      renderReviewWorkspace();
+      renderReviewWorkspace({ preserveEditor: preserveReviewEditor });
       if (activeSection === "finance" && isAdmin()) loadFinance({ silent: true });
       if (!silent) retryPendingSyncs();
     } else {

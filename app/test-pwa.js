@@ -75,6 +75,11 @@ assert(appScript.includes("function renderReviewPackageMode"), "crate conversion
 assert(appScript.includes("function resolveCashReviewException"), "cash reviews must use a dedicated ledger workflow");
 assert(appScript.includes('elements.ignoreReview.classList.toggle("hidden", cash)'), "cash webhook reviews must not be dismissible");
 assert(appScript.includes("function renderWebhookLog"), "the review workspace must render retained webhook activity");
+assert(appScript.includes("let reviewEditorDirty = false"), "webhook review must track unsaved editor changes");
+assert(appScript.includes("preserveReviewEditor: true"), "background refreshes must preserve unsaved webhook review input");
+assert(appScript.includes("if (!keepDraft) renderReviewEditor(activeEntry)"), "review refreshes must not overwrite a dirty active editor");
+assert(appScript.includes("let storefrontBuyOrderDirty = false"), "storefront buy orders must track unsaved editor changes");
+assert(appScript.includes("refreshed && !storefrontBuyOrderDirty"), "buy-order refreshes must preserve unsaved input");
 assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefront value must be calculated from current counts");
 assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");
 assert(appScript.includes('function completeActiveOrder()'), "customer-order completion must respect linked production");
