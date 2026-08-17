@@ -2545,6 +2545,7 @@ function finishedStockReservations(excludeOrderId = "") {
 }
 
 async function syncCustomerOrderFulfillment(order, batch, user) {
+  const webhookManagedLocations = await getWebhookManagedInventoryLocations();
   const movements = new Map();
   const addMovement = (location, itemName, itemLabel, quantity) => {
     const amount = Number(quantity || 0);
@@ -2570,6 +2571,7 @@ async function syncCustomerOrderFulfillment(order, batch, user) {
   for (const movement of [...movements.values()].sort((left, right) =>
     left.location.localeCompare(right.location) || left.itemName.localeCompare(right.itemName)
   )) {
+    if (webhookManagedLocations.has(movement.location)) continue;
     const fingerprint = `${order.id}:${batch.id}:${movement.location}:${inventoryKey(movement.itemName)}`;
     const entry = {
       id: `fulfillment-${crypto.createHash("sha256").update(fingerprint).digest("hex").slice(0, 28)}`,
@@ -2651,6 +2653,7 @@ async function recordProductionProgress(batchId, payload, user) {
 }
 
 async function prepareProductionProgress(batch, payload, user) {
+  const webhookManagedLocations = await getWebhookManagedInventoryLocations();
   const requested = new Map((Array.isArray(payload.completions) ? payload.completions : [])
     .map(completion => [String(completion.lineId || ""), Number(completion.completedCrafts)]));
   const targets = [];
@@ -2678,20 +2681,22 @@ async function prepareProductionProgress(batch, payload, user) {
         sourceLocation,
         quantity: Number(requiredMaterials.get(key)?.quantity || 0) + quantity
       });
-      operations.push(productionOperation({
-        batch,
-        line,
-        previousCrafts,
-        completedCrafts,
-        suffix: `use:${key}`,
-        kind: "Production Use",
-        itemName,
-        quantity,
-        location: sourceLocation,
-        employee: user.fullName
-      }));
+      if (!webhookManagedLocations.has(sourceLocation)) {
+        operations.push(productionOperation({
+          batch,
+          line,
+          previousCrafts,
+          completedCrafts,
+          suffix: `use:${key}`,
+          kind: "Production Use",
+          itemName,
+          quantity,
+          location: sourceLocation,
+          employee: user.fullName
+        }));
+      }
     });
-    if (batch.sourceType !== "Storefront Restock") {
+    if (batch.sourceType !== "Storefront Restock" && !webhookManagedLocations.has("Storage")) {
       operations.push(productionOperation({
         batch,
         line,
@@ -2724,7 +2729,9 @@ async function prepareProductionProgress(batch, payload, user) {
   const storage = materialStorageCounts(snapshot.inventory.materials);
   const storefront = storefrontInventoryCounts(storefrontRows);
   const reservedBefore = productionReservationsBefore(batch.id);
-  const shortages = [...requiredMaterials.entries()].map(([key, requirement]) => ({
+  const shortages = [...requiredMaterials.entries()].filter(([, requirement]) =>
+    !webhookManagedLocations.has(requirement.sourceLocation)
+  ).map(([key, requirement]) => ({
     ...requirement,
     available: Math.max(0,
       Number((requirement.sourceLocation === "Storefront" ? storefront : storage).get(inventoryKey(requirement.itemName))?.quantity || 0)
@@ -2740,9 +2747,19 @@ async function prepareProductionProgress(batch, payload, user) {
     id: crypto.randomUUID(),
     targets,
     operations,
+    inventoryManagedExternally: operations.length === 0 && webhookManagedLocations.size > 0,
     createdAt: new Date().toISOString(),
     createdBy: user.fullName
   };
+}
+
+async function getWebhookManagedInventoryLocations() {
+  const locations = new Set();
+  if (!hostedMode || !tenantManager) return locations;
+  const integration = await tenantManager.getDiscordIntegration(currentTenantContext().businessId);
+  if (integration?.eventChannelId) locations.add("Storefront");
+  if (integration?.storageLedgerChannelId) locations.add("Storage");
+  return locations;
 }
 
 function productionReservationsBefore(batchId) {

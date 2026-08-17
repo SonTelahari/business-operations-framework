@@ -1029,11 +1029,15 @@ function cleanPendingProductionProgress(progress, batch) {
       employee: cleanText(operation.employee, 100)
     };
   }).filter(operation => operation && operation.id && operation.itemName && operation.quantity > 0);
-  if (!operations.length) throw businessError("Production progress has no stock movements", 400, "production_operations_required");
+  const inventoryManagedExternally = progress.inventoryManagedExternally === true;
+  if (!operations.length && !inventoryManagedExternally) {
+    throw businessError("Production progress has no stock movements", 400, "production_operations_required");
+  }
   return {
     id: cleanText(progress.id, 100) || crypto.randomUUID(),
     targets,
     operations,
+    inventoryManagedExternally,
     createdAt: cleanDateTime(progress.createdAt) || new Date().toISOString(),
     createdBy: cleanText(progress.createdBy, 100)
   };

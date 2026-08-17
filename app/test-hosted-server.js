@@ -375,6 +375,98 @@ Deposited · 08/17/26 09:04:36 AM`
     const catalogBootstrap = await request("/api/bootstrap", { cookie: first.cookie });
     assert.equal(catalogBootstrap.body.materials.find(item => item.name === "Hosted Iron").price, 2);
 
+    await forwardStorageMovement({
+      id: "production-component-received",
+      channelId: "423456789012345671",
+      direction: "Stock In",
+      itemName: "Hosted Component",
+      quantity: 10
+    });
+    const productionOrder = await request("/api/sales-orders", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: {
+        id: "hosted-production-order",
+        customer: "Hosted Customer",
+        handler: "Arthur Morgan",
+        status: "Draft",
+        priority: "Normal",
+        lines: [{
+          id: "hosted-product-line",
+          name: "Hosted Product",
+          label: "Hosted Product",
+          category: "Products",
+          quantity: 2,
+          unitPrice: 20
+        }]
+      }
+    });
+    assert.equal(productionOrder.status, 200, JSON.stringify(productionOrder.body));
+    const productionBatch = await request("/api/production-batches", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: {
+        id: "hosted-production-batch",
+        sourceType: "Customer Order",
+        sourceId: productionOrder.body.order.id,
+        reference: "Hosted webhook production",
+        lines: [{ itemName: "Hosted Product", quantity: 2 }]
+      }
+    });
+    assert.equal(productionBatch.status, 200, JSON.stringify(productionBatch.body));
+    const productionLineId = productionBatch.body.batch.lines[0].id;
+    await request("/api/production-batches/hosted-production-batch/start", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: {}
+    });
+    await forwardStorageMovement({
+      id: "production-component-withdrawn",
+      channelId: "423456789012345671",
+      direction: "Stock Out",
+      itemName: "Hosted Component",
+      quantity: 4
+    });
+    const afterPhysicalMaterialWithdrawal = await request("/api/bootstrap", { cookie: first.cookie });
+    assert.equal(storageCount(afterPhysicalMaterialWithdrawal.body, "Hosted Component"), 6);
+    const completedHostedProduction = await request("/api/production-batches/hosted-production-batch/progress", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: { completions: [{ lineId: productionLineId, completedCrafts: 2 }] }
+    });
+    assert.equal(completedHostedProduction.status, 200, JSON.stringify(completedHostedProduction.body));
+    assert.equal(completedHostedProduction.body.batch.status, "Completed");
+    assert.equal(completedHostedProduction.body.order.status, "Ready");
+    const afterProductionCompletion = await request("/api/bootstrap", { cookie: first.cookie });
+    assert.equal(storageCount(afterProductionCompletion.body, "Hosted Component"), 6);
+    assert.equal(storageCount(afterProductionCompletion.body, "Hosted Product"), 8);
+
+    await forwardStorageMovement({
+      id: "production-output-deposited",
+      channelId: "423456789012345671",
+      direction: "Stock In",
+      itemName: "Hosted Product",
+      quantity: 2
+    });
+    await forwardStorageMovement({
+      id: "production-output-delivered",
+      channelId: "423456789012345671",
+      direction: "Stock Out",
+      itemName: "Hosted Product",
+      quantity: 2
+    });
+    const readyHostedOrder = completedHostedProduction.body.order;
+    const deliveredHostedOrder = await request("/api/sales-orders", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: { ...readyHostedOrder, status: "Completed" }
+    });
+    assert.equal(deliveredHostedOrder.status, 200, JSON.stringify(deliveredHostedOrder.body));
+    assert.equal(deliveredHostedOrder.body.order.status, "Completed");
+    const afterHostedDelivery = await request("/api/bootstrap", { cookie: first.cookie });
+    assert.equal(storageCount(afterHostedDelivery.body, "Hosted Component"), 6);
+    assert.equal(storageCount(afterHostedDelivery.body, "Hosted Product"), 8);
+
     const employeeProfileAttempt = await request("/api/admin/business-profile", {
       method: "PUT",
       cookie: membershipSelect.cookie,
@@ -457,6 +549,18 @@ async function createBusiness(name, referenceId, ownerName, discordIntegration =
     target: 5,
     active: true
   }];
+  configuration.catalog.materials = [{
+    name: "Hosted Component",
+    category: "Materials",
+    unit: "unit",
+    unitCost: 2,
+    storageTarget: 0
+  }];
+  configuration.catalog.recipes = [{
+    productName: "Hosted Product",
+    yield: 1,
+    ingredients: [{ name: "Hosted Component", quantity: 2, sourceLocation: "Storage" }]
+  }];
   const response = await request("/api/setup/complete", {
     method: "POST",
     body: {
@@ -512,6 +616,33 @@ function bridgeRequest(path, options = {}) {
     ...options,
     headers: { ...(options.headers || {}), authorization: `Bearer ${process.env.BRIDGE_API_TOKEN}` }
   });
+}
+
+async function forwardStorageMovement({ id, channelId, direction, itemName, quantity }) {
+  const response = await bridgeRequest("/api/integrations/discord/events", {
+    method: "POST",
+    body: {
+      webhook_id: id,
+      discord_message_id: id,
+      discord_channel_id: channelId,
+      event_type: "Stocking Movement",
+      direction,
+      item_name: itemName,
+      discord_item_name: itemName,
+      discord_item_label: itemName,
+      quantity,
+      occurred_at: "2026-08-17T20:00:00.000Z"
+    }
+  });
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  assert.equal(response.body.transactionWritten, true);
+  return response.body;
+}
+
+function storageCount(bootstrap, itemName) {
+  return Number(bootstrap.sheet.inventory.storage.find(item =>
+    (item.ingredient || item.itemName) === itemName
+  )?.storageCount || 0);
 }
 
 function joinCookies(...cookies) {
