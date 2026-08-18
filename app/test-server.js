@@ -101,7 +101,14 @@ const mockReceiver = http.createServer(async (request, response) => {
       }));
       return;
     }
-    const materials = [...storageCounts.entries()].map(([key, storageCount]) => ({
+    const productOnlyStorageKeys = new Set(["navy revolver", "boltaction rifle"]);
+    const materials = [...storageCounts.entries()].filter(([key]) => !productOnlyStorageKeys.has(key)).map(([key, storageCount]) => ({
+      ingredient: key === "softwood" ? "Softwood" : key.replace(/^./, character => character.toUpperCase()),
+      storageCount
+    }));
+    const storageRows = new Map(storageCounts);
+    if (!storageRows.has("navy revolver")) storageRows.set("navy revolver", 2);
+    const storage = [...storageRows.entries()].map(([key, storageCount]) => ({
       ingredient: key === "softwood" ? "Softwood" : key.replace(/^./, character => character.toUpperCase()),
       storageCount
     }));
@@ -115,7 +122,7 @@ const mockReceiver = http.createServer(async (request, response) => {
       inventory: {
         products: inventoryProducts,
         materials,
-        storage: [...materials, { ingredient: "Navy Revolver", storageCount: 2, countedAt: "2026-07-13T03:20:00.000Z" }],
+        storage,
         ledger: {
           balance: 6025,
           countedBalance: 6000,

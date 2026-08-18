@@ -5235,8 +5235,9 @@ async function confirmProductionSourceSelection() {
   elements.productionSourceStatus.textContent = payload.sourceType === "Internal Craft"
     ? "Queuing internal stock build..."
     : "Queuing fulfillment...";
-  await createProductionBatch(payload, successMessage);
-  if (activeSection === "production") closeProductionSourceDialog();
+  elements.confirmProductionSource.disabled = true;
+  const queued = await createProductionBatch(payload, successMessage);
+  if (queued) closeProductionSourceDialog();
 }
 
 async function createProductionBatch(payload, successMessage) {
@@ -5247,7 +5248,8 @@ async function createProductionBatch(payload, successMessage) {
     const response = await fetch("/api/production-batches", {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(45000)
     });
     const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
@@ -5258,11 +5260,23 @@ async function createProductionBatch(payload, successMessage) {
     activeSection = "production";
     elements.productionActionStatus.textContent = successMessage;
     render();
+    return true;
   } catch (error) {
-    const status = activeSection === "restock" ? elements.replenishmentMeta : elements.productionMeta;
-    status.textContent = `Unable to queue production: ${error.message}`;
+    const message = error.name === "TimeoutError" || error.name === "AbortError"
+      ? "The server did not respond within 45 seconds. Check the connection and try again."
+      : error.message;
+    if (pendingProductionQueue && elements.productionSourceDialog.open) {
+      elements.productionSourceStatus.textContent = `Unable to queue production: ${message}`;
+    } else {
+      const status = activeSection === "restock" ? elements.replenishmentMeta : elements.productionMeta;
+      status.textContent = `Unable to queue production: ${message}`;
+    }
+    return false;
   } finally {
     productionActionPending = false;
+    if (pendingProductionQueue && elements.productionSourceDialog.open) {
+      elements.confirmProductionSource.disabled = false;
+    }
     renderProduction();
     renderReplenishment();
   }

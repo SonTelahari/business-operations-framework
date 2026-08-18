@@ -2487,10 +2487,11 @@ function assertProductionMatchesSalesOrder(batch, order) {
 async function assertProductionStockAvailable(batch) {
   if (!batch.stockAllocations?.length) return;
   const snapshot = await readSheetSnapshot();
+  const storageRows = storageInventoryRows(snapshot);
   const storefrontRows = Array.isArray(snapshot?.inventory?.storefront)
     ? snapshot.inventory.storefront
     : snapshot?.inventory?.products;
-  if (!snapshot?.ok || !Array.isArray(snapshot.inventory?.materials) || !Array.isArray(storefrontRows)) {
+  if (!snapshot?.ok || !Array.isArray(storageRows) || !Array.isArray(storefrontRows)) {
     throw productionError(
       `Inventory could not be checked${snapshot?.error ? `: ${snapshot.error}` : ""}`,
       502,
@@ -2498,7 +2499,7 @@ async function assertProductionStockAvailable(batch) {
     );
   }
   const counts = {
-    Storage: materialStorageCounts(snapshot.inventory.materials),
+    Storage: materialStorageCounts(storageRows),
     Storefront: storefrontInventoryCounts(storefrontRows)
   };
   const reserved = finishedStockReservations(batch.sourceId);
@@ -2716,17 +2717,18 @@ async function prepareProductionProgress(batch, payload, user) {
   }
 
   const snapshot = await readSheetSnapshot();
+  const storageRows = storageInventoryRows(snapshot);
   const storefrontRows = Array.isArray(snapshot?.inventory?.storefront)
     ? snapshot.inventory.storefront
     : snapshot?.inventory?.products;
-  if (!snapshot?.ok || !Array.isArray(snapshot.inventory?.materials) || !Array.isArray(storefrontRows)) {
+  if (!snapshot?.ok || !Array.isArray(storageRows) || !Array.isArray(storefrontRows)) {
     throw productionError(
       `Inventory could not be checked${snapshot?.error ? `: ${snapshot.error}` : ""}`,
       502,
       "production_inventory_unavailable"
     );
   }
-  const storage = materialStorageCounts(snapshot.inventory.materials);
+  const storage = materialStorageCounts(storageRows);
   const storefront = storefrontInventoryCounts(storefrontRows);
   const reservedBefore = productionReservationsBefore(batch.id);
   const shortages = [...requiredMaterials.entries()].filter(([, requirement]) =>
@@ -2839,16 +2841,15 @@ async function receiveSupplyOrder(orderId, payload, user) {
   });
 
   const sheetSnapshot = await readSheetSnapshot();
-  if ((!sheetSnapshot?.ok || !Array.isArray(sheetSnapshot.inventory?.materials)) && !storageManagedExternally) {
+  const storageRows = storageInventoryRows(sheetSnapshot);
+  if ((!sheetSnapshot?.ok || !Array.isArray(storageRows)) && !storageManagedExternally) {
     throw supplyOrderError(
       `Storage could not be read from the shared data service${sheetSnapshot?.error ? `: ${sheetSnapshot.error}` : ""}`,
       502,
       "storage_snapshot_unavailable"
     );
   }
-  const storage = materialStorageCounts(
-    Array.isArray(sheetSnapshot?.inventory?.materials) ? sheetSnapshot.inventory.materials : []
-  );
+  const storage = materialStorageCounts(Array.isArray(storageRows) ? storageRows : []);
   const processed = [];
   let updatedOrder = order;
 
@@ -3132,6 +3133,11 @@ async function recordSupplyReceiptAudit(order, line, receipt, user) {
       inventoryManagedExternally: receipt.inventoryManagedExternally === true
     }
   });
+}
+
+function storageInventoryRows(snapshot) {
+  if (Array.isArray(snapshot?.inventory?.storage)) return snapshot.inventory.storage;
+  return Array.isArray(snapshot?.inventory?.materials) ? snapshot.inventory.materials : null;
 }
 
 function requiresAdmin(payload) {

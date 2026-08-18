@@ -86,6 +86,9 @@ assert(appScript.includes('function completeActiveOrder()'), "customer-order com
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
 assert(appScript.includes('function isInternalCraftOrder(order)'), "the client must keep internal crafts distinct from customer sales");
 assert(appScript.includes('sourceType: orderProductionSourceType(activeOrder)'), "internal crafts must queue with their own production source type");
+assert(appScript.includes('signal: AbortSignal.timeout(45000)'), "production queue requests must stop waiting after a bounded timeout");
+assert(appScript.includes('elements.productionSourceStatus.textContent = `Unable to queue production:'), "production queue failures must remain visible inside the open source dialog");
+assert(appScript.includes('if (queued) closeProductionSourceDialog()'), "the source dialog must only close after a successful queue request");
 assert(appScript.includes('function switchWorkspace(event)'), "the ledger must support workspace switching without another login");
 assert(appScript.includes('function linkWorkspaceJob(event)'), "the ledger must support credential-verified local job linking");
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
