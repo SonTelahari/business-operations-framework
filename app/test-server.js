@@ -1416,6 +1416,8 @@ async function run() {
   await post(`${baseUrl}/api/production-batches/production-reserved-first/cancel`, {}, managerCookie);
   await post(`${baseUrl}/api/production-batches/production-reserved-second/cancel`, {}, managerCookie);
 
+  await runProductionCombinationMatrix({ baseUrl, managerCookie, workerCookie });
+
   const clockPayload = {
     action: "time_clock",
     entry: { id: "grace-shift", clockIn: "2026-07-13T10:30:00.000Z", clockOut: "", durationMinutes: "" }
@@ -1483,6 +1485,267 @@ async function run() {
   assert.match(logout.response.headers.get("set-cookie") || "", /Max-Age=0/);
 
   console.log("Personal accounts, manager permissions, and audit checks passed.");
+}
+
+async function runProductionCombinationMatrix({ baseUrl, managerCookie, workerCookie }) {
+  const ingredients = [
+    { name: "Iron", key: "iron" },
+    { name: "Softwood", key: "softwood" },
+    { name: "Revolver Handle", key: "revolver handle" },
+    { name: "Revolver Barrel", key: "revolver barrel" },
+    { name: "Revolver Cylinder", key: "revolver cylinder" },
+    { name: "Bolts", key: "bolts" }
+  ];
+  const originalProductStock = new Map(inventoryProducts.map(product => [product.itemName, product.currentStock]));
+  const originalStorage = new Map(storageCounts);
+  const addedStorefrontIngredients = [];
+  const navy = inventoryProducts.find(product => product.itemName === "Navy Revolver");
+  const rifle = inventoryProducts.find(product => product.itemName === "Boltaction Rifle");
+
+  try {
+    for (const ingredient of ingredients) {
+      storageCounts.set(ingredient.key, 10000);
+      let storefrontItem = inventoryProducts.find(product => mockInventoryKey(product.itemName) === ingredient.key);
+      if (!storefrontItem) {
+        storefrontItem = {
+          itemName: ingredient.name,
+          itemLabel: ingredient.name,
+          itemTag: ingredient.key.replace(/\s+/g, "_"),
+          category: "Production Components",
+          salePrice: 0,
+          target: 0,
+          currentStock: 10000,
+          active: true
+        };
+        inventoryProducts.push(storefrontItem);
+        addedStorefrontIngredients.push(storefrontItem);
+      } else {
+        storefrontItem.currentStock = 10000;
+      }
+    }
+
+    let ingredientSourceCases = 0;
+    for (let mask = 0; mask < 2 ** ingredients.length; mask += 1) {
+      const ingredientSources = Object.fromEntries(ingredients.map((ingredient, index) => [
+        ingredient.key,
+        mask & (1 << index) ? "Storefront" : "Storage"
+      ]));
+      const batchId = `production-source-matrix-${mask}`;
+      const created = await post(`${baseUrl}/api/production-batches`, {
+        id: batchId,
+        sourceType: "Manual",
+        reference: `Ingredient source matrix ${mask}`,
+        lines: [{ itemName: "Navy Revolver", quantity: 1, ingredientSources }]
+      }, managerCookie);
+      assert.equal(created.response.status, 200, `source matrix ${mask}: ${JSON.stringify(created.body)}`);
+      const line = created.body.batch.lines[0];
+      for (const component of line.recipe) {
+        assert.equal(
+          component.sourceLocation,
+          ingredientSources[mockInventoryKey(component.ingredient)],
+          `source matrix ${mask}: ${component.ingredient}`
+        );
+      }
+      const started = await post(`${baseUrl}/api/production-batches/${batchId}/start`, {}, workerCookie);
+      assert.equal(started.response.status, 200, `source matrix ${mask} start: ${JSON.stringify(started.body)}`);
+      const writesBefore = receiverPayloads.length;
+      const completed = await post(`${baseUrl}/api/production-batches/${batchId}/progress`, {
+        completions: [{ lineId: line.id, completedCrafts: 1 }]
+      }, workerCookie);
+      assert.equal(completed.response.status, 200, `source matrix ${mask} progress: ${JSON.stringify(completed.body)}`);
+      assert.equal(completed.body.batch.status, "Completed");
+      const writes = receiverPayloads.slice(writesBefore).filter(payload =>
+        payload.action === "manual_operation" && payload.entry.kind === "Production Use"
+      );
+      assert.equal(writes.length, ingredients.length, `source matrix ${mask}: one use per ingredient`);
+      for (const ingredient of ingredients) {
+        const write = writes.find(payload => mockInventoryKey(payload.entry.itemName) === ingredient.key);
+        assert(write, `source matrix ${mask}: missing ${ingredient.name} movement`);
+        assert.equal(write.entry.location, ingredientSources[ingredient.key], `source matrix ${mask}: ${ingredient.name} movement source`);
+      }
+      ingredientSourceCases += 1;
+    }
+
+    navy.currentStock = 1000;
+    rifle.currentStock = 1000;
+    storageCounts.set("navy revolver", 1000);
+    storageCounts.set("boltaction rifle", 1000);
+
+    let finishedStockCases = 0;
+    for (let storageQuantity = 0; storageQuantity <= 4; storageQuantity += 1) {
+      for (let storefrontQuantity = 0; storefrontQuantity <= 4 - storageQuantity; storefrontQuantity += 1) {
+        const productionQuantity = 4 - storageQuantity - storefrontQuantity;
+        const suffix = `${storageQuantity}-${storefrontQuantity}-${productionQuantity}`;
+        const orderId = `sales-order-finished-matrix-${suffix}`;
+        const batchId = `production-finished-matrix-${suffix}`;
+        const order = await post(`${baseUrl}/api/sales-orders`, {
+          id: orderId,
+          customer: `Matrix Customer ${suffix}`,
+          handler: "Grace Worker",
+          status: "Reserved",
+          priority: "Normal",
+          lines: [{ name: "Navy Revolver", label: "Navy Revolver", category: "Revolvers", quantity: 4, unitPrice: 105 }]
+        }, workerCookie);
+        assert.equal(order.response.status, 200, `finished matrix ${suffix} order: ${JSON.stringify(order.body)}`);
+        const queued = await post(`${baseUrl}/api/production-batches`, {
+          id: batchId,
+          sourceType: "Customer Order",
+          sourceId: orderId,
+          reference: `Finished stock matrix ${suffix}`,
+          lines: productionQuantity ? [{ itemName: "Navy Revolver", quantity: productionQuantity }] : [],
+          stockAllocations: storageQuantity + storefrontQuantity ? [{
+            itemName: "Navy Revolver",
+            storageQuantity,
+            storefrontQuantity
+          }] : []
+        }, workerCookie);
+        assert.equal(queued.response.status, 200, `finished matrix ${suffix}: ${JSON.stringify(queued.body)}`);
+        assert.equal(Number(queued.body.batch.lines[0]?.requestedQuantity || 0), productionQuantity);
+        assert.equal(Number(queued.body.batch.stockAllocations[0]?.storageQuantity || 0), storageQuantity);
+        assert.equal(Number(queued.body.batch.stockAllocations[0]?.storefrontQuantity || 0), storefrontQuantity);
+        if (productionQuantity) {
+          const cancelled = await post(`${baseUrl}/api/production-batches/${batchId}/cancel`, {}, managerCookie);
+          assert.equal(cancelled.response.status, 200, `finished matrix ${suffix} cancel: ${JSON.stringify(cancelled.body)}`);
+        } else {
+          assert.equal(queued.body.batch.status, "Completed");
+          assert.equal(queued.body.order.status, "Ready");
+          const delivered = await post(`${baseUrl}/api/sales-orders`, {
+            ...queued.body.order,
+            status: "Completed"
+          }, workerCookie);
+          assert.equal(delivered.response.status, 200, `finished matrix ${suffix} deliver: ${JSON.stringify(delivered.body)}`);
+        }
+        finishedStockCases += 1;
+      }
+    }
+
+    const rifleOrder = await post(`${baseUrl}/api/sales-orders`, {
+      id: "sales-order-no-recipe-stock-only",
+      customer: "Stock-only Customer",
+      handler: "Grace Worker",
+      status: "Reserved",
+      priority: "Normal",
+      lines: [{ name: "Boltaction Rifle", label: "BoltAction Rifle", category: "Rifles", quantity: 2, unitPrice: 80 }]
+    }, workerCookie);
+    assert.equal(rifleOrder.response.status, 200);
+    const rifleStockOnly = await post(`${baseUrl}/api/production-batches`, {
+      id: "production-no-recipe-stock-only",
+      sourceType: "Customer Order",
+      sourceId: rifleOrder.body.order.id,
+      stockAllocations: [{ itemName: "Boltaction Rifle", storageQuantity: 1, storefrontQuantity: 1 }]
+    }, workerCookie);
+    assert.equal(rifleStockOnly.response.status, 200, JSON.stringify(rifleStockOnly.body));
+    assert.equal(rifleStockOnly.body.batch.status, "Completed");
+    assert.equal(rifleStockOnly.body.order.status, "Ready");
+    const deliveredRifle = await post(`${baseUrl}/api/sales-orders`, {
+      ...rifleStockOnly.body.order,
+      status: "Completed"
+    }, workerCookie);
+    assert.equal(deliveredRifle.response.status, 200, JSON.stringify(deliveredRifle.body));
+
+    const missingRecipeOrder = await post(`${baseUrl}/api/sales-orders`, {
+      id: "sales-order-no-recipe-production",
+      customer: "Impossible Production Customer",
+      handler: "Grace Worker",
+      status: "Reserved",
+      priority: "Normal",
+      lines: [{ name: "Boltaction Rifle", label: "BoltAction Rifle", category: "Rifles", quantity: 1, unitPrice: 80 }]
+    }, workerCookie);
+    const missingRecipe = await post(`${baseUrl}/api/production-batches`, {
+      id: "production-no-recipe-rejected",
+      sourceType: "Customer Order",
+      sourceId: missingRecipeOrder.body.order.id,
+      lines: [{ itemName: "Boltaction Rifle", quantity: 1 }]
+    }, workerCookie);
+    assert.equal(missingRecipe.response.status, 400);
+    assert.equal(missingRecipe.body.code, "production_recipe_missing");
+
+    const mixedOrder = await post(`${baseUrl}/api/sales-orders`, {
+      id: "sales-order-multi-good-matrix",
+      customer: "Mixed Goods Customer",
+      handler: "Grace Worker",
+      status: "Reserved",
+      priority: "Expedite",
+      lines: [
+        { name: "Navy Revolver", label: "Navy Revolver", category: "Revolvers", quantity: 3, unitPrice: 105 },
+        { name: "Boltaction Rifle", label: "BoltAction Rifle", category: "Rifles", quantity: 2, unitPrice: 80 }
+      ]
+    }, workerCookie);
+    assert.equal(mixedOrder.response.status, 200);
+    const mixed = await post(`${baseUrl}/api/production-batches`, {
+      id: "production-multi-good-matrix",
+      sourceType: "Customer Order",
+      sourceId: mixedOrder.body.order.id,
+      lines: [{ itemName: "Navy Revolver", quantity: 1 }],
+      stockAllocations: [
+        { itemName: "Navy Revolver", storageQuantity: 1, storefrontQuantity: 1 },
+        { itemName: "Boltaction Rifle", storageQuantity: 1, storefrontQuantity: 1 }
+      ]
+    }, workerCookie);
+    assert.equal(mixed.response.status, 200, JSON.stringify(mixed.body));
+    assert.equal(mixed.body.batch.lines.length, 1);
+    assert.equal(mixed.body.batch.stockAllocations.length, 2);
+    assert.equal((await post(`${baseUrl}/api/production-batches/production-multi-good-matrix/cancel`, {}, managerCookie)).response.status, 200);
+
+    const duplicateOrder = await post(`${baseUrl}/api/sales-orders`, {
+      id: "sales-order-duplicate-lines-matrix",
+      customer: "Merged Lines Customer",
+      handler: "Grace Worker",
+      status: "Reserved",
+      priority: "Normal",
+      lines: [{ name: "Navy Revolver", label: "Navy Revolver", category: "Revolvers", quantity: 4, unitPrice: 105 }]
+    }, workerCookie);
+    const merged = await post(`${baseUrl}/api/production-batches`, {
+      id: "production-duplicate-lines-matrix",
+      sourceType: "Customer Order",
+      sourceId: duplicateOrder.body.order.id,
+      lines: [
+        { itemName: "Navy Revolver", quantity: 1 },
+        { itemName: "Navy Revolver", quantity: 1 }
+      ],
+      stockAllocations: [
+        { itemName: "Navy Revolver", storageQuantity: 1 },
+        { itemName: "Navy Revolver", storageQuantity: 1 }
+      ]
+    }, workerCookie);
+    assert.equal(merged.response.status, 200, JSON.stringify(merged.body));
+    assert.equal(merged.body.batch.lines.length, 1);
+    assert.equal(merged.body.batch.lines[0].requestedQuantity, 2);
+    assert.equal(merged.body.batch.stockAllocations.length, 1);
+    assert.equal(merged.body.batch.stockAllocations[0].storageQuantity, 2);
+    assert.equal((await post(`${baseUrl}/api/production-batches/production-duplicate-lines-matrix/cancel`, {}, managerCookie)).response.status, 200);
+
+    const fractional = await post(`${baseUrl}/api/production-batches`, {
+      id: "production-fractional-rejected",
+      sourceType: "Manual",
+      lines: [{ itemName: "Navy Revolver", quantity: 1.5 }]
+    }, managerCookie);
+    assert.equal(fractional.response.status, 400);
+    assert.equal(fractional.body.code, "invalid_production_quantity");
+
+    const unknown = await post(`${baseUrl}/api/production-batches`, {
+      id: "production-unknown-rejected",
+      sourceType: "Manual",
+      lines: [{ itemName: "Unknown Matrix Product", quantity: 1 }]
+    }, managerCookie);
+    assert.equal(unknown.response.status, 400);
+    assert.equal(unknown.body.code, "production_item_unknown");
+
+    console.log(
+      `Production combination matrix passed: ${ingredientSourceCases} ingredient-source permutations, `
+      + `${finishedStockCases} finished-stock splits, stock-only, multi-good, duplicate-line, and rejection cases.`
+    );
+  } finally {
+    for (const ingredient of addedStorefrontIngredients) {
+      const index = inventoryProducts.indexOf(ingredient);
+      if (index >= 0) inventoryProducts.splice(index, 1);
+    }
+    for (const product of inventoryProducts) {
+      if (originalProductStock.has(product.itemName)) product.currentStock = originalProductStock.get(product.itemName);
+    }
+    storageCounts.clear();
+    for (const [key, quantity] of originalStorage) storageCounts.set(key, quantity);
+  }
 }
 
 async function post(url, payload, cookie = "") {
