@@ -73,6 +73,7 @@ assert(appScript.includes('addGoods(itemCatalog, "product")'), "catalog fallback
 assert(appScript.includes('addGoods(ingredientCatalog, "material")'), "catalog fallback must classify recipe ingredients as materials");
 assert(appScript.includes("function renderReviewPackageMode"), "crate conversion must preview the resulting inventory units");
 assert(appScript.includes("function resolveCashReviewException"), "cash reviews must use a dedicated ledger workflow");
+assert(appScript.includes("function inferCashReview(entry)"), "cash review mode must recover from stale stock-movement payloads");
 assert(appScript.includes('elements.ignoreReview.classList.toggle("hidden", cash)'), "cash webhook reviews must not be dismissible");
 assert(appScript.includes("function renderWebhookLog"), "the review workspace must render retained webhook activity");
 assert(appScript.includes("let reviewEditorDirty = false"), "webhook review must track unsaved editor changes");

@@ -4418,7 +4418,26 @@ function setReviewEditorDisabled(disabled) {
 
 function isCashReview(entry) {
   return Boolean(entry?.cashMovement || entry?.eventType === "Cash Movement"
-    || String(entry?.reason || "").split(",").includes("cash_classification_required"));
+    || String(entry?.reason || "").split(",").includes("cash_classification_required")
+    || inferCashReview(entry));
+}
+
+function inferCashReview(entry) {
+  const title = String(entry?.discordTitle || "");
+  const rawText = String(entry?.rawText || "");
+  const direction = /\bwithdraw(?:al)?\s+cash\b/i.test(title)
+    || /\bwithdraw(?:n|ed)?\b[\s\S]{0,50}\bamount\b[\s\S]{0,100}\bledger\b/i.test(rawText)
+    ? "Cash Out"
+    : /\bdeposit\s+cash\b/i.test(title)
+      || /\bdeposit(?:ed)?\b[\s\S]{0,50}\bamount\b[\s\S]{0,100}\bledger\b/i.test(rawText)
+      ? "Cash In"
+      : "";
+  if (!direction) return null;
+  const amountMatch = rawText.match(/\bAmount(?:\s+Of)?\s*[:=-]?\s*\$?\s*([\d,]+(?:\.\d+)?)/i);
+  return {
+    direction,
+    amount: amountMatch ? Number(amountMatch[1].replace(/,/g, "")) : 0
+  };
 }
 
 function renderReviewCashMode(entry = reviewExceptions.find(candidate => candidate.webhookId === activeReviewExceptionId)) {
@@ -4433,8 +4452,9 @@ function renderReviewCashMode(entry = reviewExceptions.find(candidate => candida
   elements.ignoreReview.classList.toggle("hidden", cash);
   if (!cash) return;
 
-  const direction = entry.direction === "Cash Out" ? "Cash Out" : "Cash In";
-  const total = Number(entry.cashAmount || entry.quantity || 0);
+  const inferred = inferCashReview(entry);
+  const direction = entry.direction === "Cash Out" || inferred?.direction === "Cash Out" ? "Cash Out" : "Cash In";
+  const total = Number(entry.cashAmount || entry.quantity || inferred?.amount || 0);
   const allocated = Number(entry.cashAllocated || 0);
   const remaining = Math.max(0, Number(entry.cashRemaining ?? total - allocated));
   elements.reviewCashTotal.textContent = formatFinanceCurrency(total);

@@ -743,6 +743,47 @@ Has Taken 2 Iron Widget From Van Horn Gunsmith Inventory`
       "Resolved"
     );
 
+    const staleCashPayload = {
+      webhook_id: "discord-stale-cash-withdrawal",
+      discord_channel_type: "storage-ledger",
+      event_type: "Stocking Movement",
+      direction: "Stock Out",
+      proposed_item_name: "",
+      proposed_quantity: 0,
+      item_name: "",
+      quantity: 0,
+      review_required: true,
+      review_reason: "missing_item,missing_quantity",
+      discord_title: "Withdraw Cash",
+      raw_payload: `Steam name : Son Telahari
+PlayerName: William Winther
+Amount: $125 was removed From Van Horn Gunsmith Ledger`
+    };
+    await database.query(`
+      INSERT INTO webhook_events (
+        business_id, webhook_id, occurred_at, event_type, direction, item_name,
+        quantity, unit_price, actor_name, order_id, status, payload
+      ) VALUES ($1, $2, $3, 'Stocking Movement', 'Stock Out', '', 0, 0, '', '', 'review', $4::jsonb)
+    `, [store.businessId, staleCashPayload.webhook_id, "2026-08-01T15:02:00.000Z", JSON.stringify(staleCashPayload)]);
+    await database.query(`
+      INSERT INTO webhook_exceptions (
+        business_id, webhook_id, status, reason, discord_title,
+        proposed_event_type, proposed_direction, proposed_quantity, original_payload
+      ) VALUES ($1, $2, 'Open', 'missing_item,missing_quantity', 'Withdraw Cash',
+        'Stocking Movement', 'Stock Out', 0, $3::jsonb)
+    `, [store.businessId, staleCashPayload.webhook_id, JSON.stringify(staleCashPayload)]);
+    const staleCashRepair = await store.reconcileStorageManagerExceptions();
+    assert.deepEqual(staleCashRepair.enriched, ["discord-stale-cash-withdrawal"]);
+    storageSnapshot = await store.snapshot();
+    const repairedCashReview = storageSnapshot.reviewExceptions.find(entry =>
+      entry.webhookId === "discord-stale-cash-withdrawal"
+    );
+    assert.equal(repairedCashReview.status, "Open");
+    assert.equal(repairedCashReview.eventType, "Cash Movement");
+    assert.equal(repairedCashReview.direction, "Cash Out");
+    assert.equal(repairedCashReview.cashAmount, 125);
+    assert.equal(repairedCashReview.reason, "cash_classification_required");
+
     const emptyCrateReview = await store.ingestWebhook({
       webhook_id: "discord-empty-crate-withdrawal",
       discord_channel_type: "storefront",

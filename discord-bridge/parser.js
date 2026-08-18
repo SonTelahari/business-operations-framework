@@ -5,7 +5,7 @@ function parseStillWaterEmbed(message) {
   const title = message.title || message.embeds?.[0]?.title || '';
   const description = message.description || message.embeds?.[0]?.description || '';
   const text = normalizeText(description);
-  const ledgerCash = parseLedgerCashText(text);
+  const ledgerCash = parseLedgerCashText(text, title);
   if (ledgerCash) {
     return {
       event_type: 'Cash Movement',
@@ -131,16 +131,33 @@ function parseStorageManagerText(value) {
   };
 }
 
-function parseLedgerCashText(value) {
+function parseLedgerCashText(value, title = '') {
   const text = normalizeText(value);
   const match = text.match(
     /\b(Withdraw(?:n)?|Deposit(?:ed)?)\s+An\s+Amount\s+Of\s+\$?([\d,]+(?:\.\d+)?)\s+(?:From|To)\s+(.+?)\s+Ledger\b/i
   );
-  if (!match) return null;
+  if (match) {
+    return {
+      direction: /^deposit/i.test(match[1]) ? 'Cash In' : 'Cash Out',
+      amount: Number(String(match[2]).replace(/,/g, '')),
+      ledgerName: String(match[3] || '').trim(),
+      actor: matchLine(text, 'PlayerName')
+    };
+  }
+
+  const normalizedTitle = normalizeText(title);
+  const titleDirection = /\bwithdraw(?:al)?\s+cash\b/i.test(normalizedTitle)
+    ? 'Cash Out'
+    : /\bdeposit\s+cash\b/i.test(normalizedTitle) ? 'Cash In' : '';
+  if (!titleDirection) return null;
+  const amountMatch = text.match(/\bAmount(?:\s+Of)?\s*[:=-]?\s*\$?\s*([\d,]+(?:\.\d+)?)/i)
+    || text.match(/\b(?:Withdraw(?:n|ed)?|Withdrew|Deposit(?:ed)?)\s+\$?\s*([\d,]+(?:\.\d+)?)/i);
+  if (!amountMatch) return null;
+  const ledgerMatch = text.match(/\b(?:From|To)\s+(.+?)\s+Ledger\b/i);
   return {
-    direction: /^deposit/i.test(match[1]) ? 'Cash In' : 'Cash Out',
-    amount: Number(String(match[2]).replace(/,/g, '')),
-    ledgerName: String(match[3] || '').trim(),
+    direction: titleDirection,
+    amount: Number(String(amountMatch[1]).replace(/,/g, '')),
+    ledgerName: String(ledgerMatch?.[1] || '').trim(),
     actor: matchLine(text, 'PlayerName')
   };
 }

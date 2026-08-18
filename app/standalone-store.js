@@ -733,6 +733,58 @@ class StandaloneStore {
       const enriched = [];
       for (const stored of result.rows) {
         const payload = json(stored.payload, {});
+        const ledgerCash = parseLedgerCashText(payload.raw_payload, stored.discord_title || payload.discord_title);
+        if (ledgerCash) {
+          const alreadyClassified = stored.proposed_event_type === "Cash Movement"
+            && stored.proposed_direction === ledgerCash.direction
+            && number(stored.proposed_quantity) === ledgerCash.amount
+            && String(stored.reason || "") === "cash_classification_required";
+          if (alreadyClassified) continue;
+          const event = normalizeWebhook({
+            ...payload,
+            webhook_id: stored.webhook_id,
+            occurred_at: stored.occurred_at,
+            actor: ledgerCash.actor || stored.actor_name,
+            order_id: stored.order_id,
+            discord_title: stored.discord_title || payload.discord_title
+          });
+          const correctedPayload = {
+            ...payload,
+            discord_channel_type: "storage-ledger",
+            event_type: "Cash Movement",
+            direction: ledgerCash.direction,
+            item_name: "",
+            proposed_item_name: "",
+            quantity: 0,
+            proposed_quantity: ledgerCash.amount,
+            cash_amount: ledgerCash.amount,
+            actor: ledgerCash.actor || stored.actor_name,
+            ledger_name: ledgerCash.ledgerName,
+            review_required: true,
+            review_reason: "cash_classification_required"
+          };
+          await client.query(`
+            UPDATE webhook_events SET
+              event_type = 'Cash Movement', direction = $3, item_name = '', quantity = $4,
+              actor_name = $5, status = 'review', payload = $6::jsonb
+            WHERE business_id = $1 AND webhook_id = $2
+          `, [
+            this.businessId, event.webhookId, ledgerCash.direction, ledgerCash.amount,
+            event.actor, JSON.stringify(correctedPayload)
+          ]);
+          await client.query(`
+            UPDATE webhook_exceptions SET
+              reason = 'cash_classification_required', discord_item_name = '', discord_item_label = '',
+              proposed_event_type = 'Cash Movement', proposed_direction = $3,
+              proposed_quantity = $4, proposed_unit_price = 0, original_payload = $5::jsonb
+            WHERE business_id = $1 AND webhook_id = $2
+          `, [
+            this.businessId, event.webhookId, ledgerCash.direction,
+            ledgerCash.amount, JSON.stringify(correctedPayload)
+          ]);
+          enriched.push(event.webhookId);
+          continue;
+        }
         const movement = parseStorageManagerText(payload.raw_payload);
         if (!movement) continue;
         let event = normalizeWebhook({
@@ -1167,7 +1219,7 @@ class StandaloneStore {
         return { ok: true, duplicate: true, action: "resolve_exception", webhookId, status: stored.status };
       }
       const payload = json(stored.payload, {});
-      const ledgerCash = parseLedgerCashText(payload.raw_payload);
+      const ledgerCash = parseLedgerCashText(payload.raw_payload, stored.discord_title || payload.discord_title);
       if (ledgerCash || stored.proposed_event_type === "Cash Movement") {
         return resolveCashException(client, this.businessId, {
           webhookId,
@@ -1280,13 +1332,14 @@ class StandaloneStore {
     const webhookId = cleanText(correction.webhookId, 150);
     return this.database.transaction(async client => {
       const cashCheck = await client.query(`
-        SELECT e.proposed_event_type, w.payload
+        SELECT e.proposed_event_type, e.discord_title, w.payload
         FROM webhook_exceptions e
         JOIN webhook_events w USING (business_id, webhook_id)
         WHERE e.business_id = $1 AND e.webhook_id = $2
       `, [this.businessId, webhookId]);
       const cashPayload = json(cashCheck.rows[0]?.payload, {});
-      if (cashCheck.rows[0]?.proposed_event_type === "Cash Movement" || parseLedgerCashText(cashPayload.raw_payload)) {
+      if (cashCheck.rows[0]?.proposed_event_type === "Cash Movement"
+        || parseLedgerCashText(cashPayload.raw_payload, cashCheck.rows[0]?.discord_title || cashPayload.discord_title)) {
         throw storeError(
           "Cash movements must be fully allocated and cannot be ignored",
           400,
@@ -1866,7 +1919,10 @@ function normalizeWebhook(payload) {
   const reviewRequested = payload?.review_required === true || String(payload?.review_required || "").toLowerCase() === "true";
   const suppliedReviewReason = cleanText(firstValue(payload, ["review_reason"]), 300);
   const channelType = cleanText(firstValue(payload, ["discord_channel_type", "channel_type"]), 50) || "storefront";
-  const ledgerCash = parseLedgerCashText(firstValue(payload, ["raw_payload"]));
+  const ledgerCash = parseLedgerCashText(
+    firstValue(payload, ["raw_payload"]),
+    firstValue(payload, ["discord_title", "title"])
+  );
   const storageMovement = parseStorageManagerText(firstValue(payload, ["raw_payload"]));
   const effectiveChannelType = storageMovement || ledgerCash ? "storage-ledger" : channelType;
   const rawType = firstValue(payload, ["event_type", "type", "action", "event"]);
@@ -2113,7 +2169,7 @@ function catalogRow(row) {
 
 function exceptionRow(row, cashAllocations = []) {
   const payload = json(row.original_payload, {});
-  const ledgerCash = parseLedgerCashText(payload.raw_payload);
+  const ledgerCash = parseLedgerCashText(payload.raw_payload, row.discord_title || payload.discord_title);
   const storageMovement = parseStorageManagerText(payload.raw_payload);
   const cashAmount = ledgerCash?.amount || (row.proposed_event_type === "Cash Movement" ? number(row.proposed_quantity) : 0);
   const cashAllocated = money(sum(cashAllocations, allocation => allocation.amount));
@@ -2151,7 +2207,7 @@ function exceptionRow(row, cashAllocations = []) {
 
 function webhookEventRow(row) {
   const payload = json(row.payload, {});
-  const ledgerCash = parseLedgerCashText(payload.raw_payload);
+  const ledgerCash = parseLedgerCashText(payload.raw_payload, payload.discord_title);
   const storageMovement = parseStorageManagerText(payload.raw_payload);
   return {
     webhookId: row.webhook_id,

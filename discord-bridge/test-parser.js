@@ -50,6 +50,26 @@ Deposited An Amount Of 1,250.50 To Van Horn Gunsmith Ledger`
     }
   },
   {
+    name: 'storage cash title with alternate administrator wording',
+    input: {
+      id: 'storage-cash-title-fallback',
+      title: 'Withdraw Cash',
+      description: `Steam name : Son Telahari
+PlayerName: William Winther
+Amount: $225 was removed From Van Horn Gunsmith Ledger`
+    },
+    expected: {
+      event_type: 'Cash Movement',
+      direction: 'Cash Out',
+      quantity: 225,
+      cash_amount: 225,
+      actor: 'William Winther',
+      ledger_name: 'Van Horn Gunsmith',
+      review_required: true,
+      review_reason: 'cash_classification_required'
+    }
+  },
+  {
     name: 'storage refined oil withdrawal with Discord whitespace',
     input: {
       id: 'storage-refined-oil-withdrawal',
