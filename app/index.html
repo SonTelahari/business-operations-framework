@@ -11,7 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/operations-ledger-32.png">
     <link rel="apple-touch-icon" href="/assets/operations-ledger-192.png">
-    <link rel="stylesheet" href="styles.css?v=20260821-grouped-navigation">
+    <link rel="stylesheet" href="styles.css?v=20260821-standard-controls">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -895,7 +895,7 @@
               <h2 id="savedSalesOrderTitle">Sales Orders</h2>
               <p id="savedCount">0 active</p>
             </div>
-            <select id="filterSelect" aria-label="Filter orders">
+            <select class="record-filter" id="filterSelect" aria-label="Filter orders">
               <option value="Active">Active</option>
               <option value="All">All</option>
               <option value="Draft">Draft</option>
@@ -908,25 +908,25 @@
               <option value="Cancelled">Cancelled</option>
             </select>
           </div>
-          <div class="orders-list" id="ordersList"></div>
+          <div class="record-list orders-list" id="ordersList"></div>
         </section>
 
         <section class="panel customer-panel" id="customerPanel" aria-label="Customer register">
-          <div class="panel-header customer-panel-header">
+          <div class="panel-header directory-panel-header">
             <div>
               <p class="eyebrow">Sales Ledger</p>
               <h2>Customer Register</h2>
               <p id="customerSavedCount">0 customers</p>
             </div>
-            <div class="customer-header-actions">
+            <div class="panel-header-actions editor-actions">
               <button id="newCustomerButton" class="ghost-button" type="button">New Customer</button>
               <button id="saveCustomerButton" class="primary-button" type="button">Save Customer</button>
             </div>
           </div>
-          <p class="supply-data-status" id="customerDataStatus">Loading shared customers</p>
+          <p class="workspace-data-status" id="customerDataStatus" role="status" aria-live="polite">Loading shared customers</p>
 
-          <div class="customer-layout">
-            <div class="customer-editor">
+          <div class="directory-layout">
+            <div class="directory-editor customer-editor">
               <div class="form-grid customer-main-fields">
                 <label>
                   Customer or Business Name
@@ -981,18 +981,18 @@
                 </section>
               </div>
 
-              <div class="customer-editor-footer">
+              <div class="editor-footer">
                 <span id="customerEditMeta">New customer record</span>
                 <button id="deleteCustomerButton" class="danger-button management-only" type="button">Remove Customer</button>
               </div>
             </div>
 
-            <aside class="customer-directory" aria-label="Saved customers">
+            <aside class="record-directory customer-directory" aria-label="Saved customers">
               <label>
                 Find Customer
                 <input id="customerSearchInput" type="search" autocomplete="off" placeholder="Name, type, location, or telegram">
               </label>
-              <div class="customer-card-list" id="customerCardList"></div>
+              <div class="record-list customer-card-list" id="customerCardList"></div>
             </aside>
           </div>
         </section>
@@ -1004,7 +1004,7 @@
             <div>
               <p class="eyebrow">Production Ledger</p>
               <h2>Production Queue</h2>
-              <p id="productionDataStatus">Loading shared batches</p>
+              <p class="workspace-data-status" id="productionDataStatus" role="status" aria-live="polite">Loading shared batches</p>
             </div>
             <button class="ghost-button" id="refreshProductionButton" type="button">Refresh</button>
           </div>
@@ -1022,7 +1022,7 @@
               <h2>Batch Register</h2>
               <p>Shared work queued from customer orders, internal stock builds, and storefront targets</p>
             </div>
-            <select id="productionFilterInput" aria-label="Filter production batches">
+            <select class="record-filter" id="productionFilterInput" aria-label="Filter production batches">
               <option value="Active">Working Queue</option>
               <option value="Mine">Assigned to Me</option>
               <option value="All">All</option>
@@ -1032,7 +1032,7 @@
               <option value="Cancelled">Cancelled</option>
             </select>
           </div>
-          <div class="production-batch-list" id="productionBatchList"></div>
+          <div class="record-list production-batch-list" id="productionBatchList"></div>
         </section>
 
         <section class="panel production-detail-panel">
@@ -1151,7 +1151,7 @@
             </label>
             <button id="adjustBuyOrderFillButton" class="ghost-button" type="button">Adjust Fill</button>
           </div>
-          <p class="supply-data-status" id="buyOrderDataStatus">Loading shared buy orders</p>
+          <p class="workspace-data-status" id="buyOrderDataStatus" role="status" aria-live="polite">Loading shared buy orders</p>
         </aside>
 
         <section class="panel saved-panel buy-order-list-panel">
@@ -1160,7 +1160,7 @@
               <h2>Order Overview</h2>
               <p id="buyOrderSavedCount">0 tracked orders</p>
             </div>
-            <select id="buyOrderFilterInput" aria-label="Filter storefront buy orders">
+            <select class="record-filter" id="buyOrderFilterInput" aria-label="Filter storefront buy orders">
               <option value="Open">Open</option>
               <option value="All">All</option>
               <option value="Active">Active</option>
@@ -1169,7 +1169,7 @@
               <option value="Cancelled">Cancelled</option>
             </select>
           </div>
-          <div class="buy-order-list" id="buyOrderList"></div>
+          <div class="record-list buy-order-list" id="buyOrderList"></div>
         </section>
       </main>
 
@@ -1289,7 +1289,7 @@
               <h2>Producer Orders</h2>
               <p id="supplySavedCount">0 active</p>
             </div>
-            <select id="supplyFilterSelect" aria-label="Filter supply orders">
+            <select class="record-filter" id="supplyFilterSelect" aria-label="Filter supply orders">
               <option value="Active">Active</option>
               <option value="All">All</option>
               <option value="Draft">Draft</option>
@@ -1299,26 +1299,26 @@
               <option value="Cancelled">Cancelled</option>
             </select>
           </div>
-          <p class="supply-data-status" id="supplyDataStatus">Loading shared producer orders</p>
+          <p class="workspace-data-status" id="supplyDataStatus" role="status" aria-live="polite">Loading shared producer orders</p>
           <div class="producer-order-groups" id="supplyOrdersList"></div>
         </section>
 
         <section class="panel supplier-panel" id="supplierPanel" aria-label="Supplier directory">
-          <div class="panel-header supplier-panel-header">
+          <div class="panel-header directory-panel-header">
             <div>
               <p class="eyebrow">Trade Contacts</p>
               <h2>Supplier Directory</h2>
               <p id="supplierSavedCount">0 suppliers</p>
             </div>
-            <div class="supplier-header-actions">
+            <div class="panel-header-actions editor-actions">
               <button id="newSupplierButton" class="ghost-button" type="button">New Supplier</button>
               <button id="saveSupplierButton" class="primary-button" type="button">Save Supplier</button>
             </div>
           </div>
-          <p class="supply-data-status" id="supplierDataStatus">Loading shared suppliers</p>
+          <p class="workspace-data-status" id="supplierDataStatus" role="status" aria-live="polite">Loading shared suppliers</p>
 
-          <div class="supplier-layout">
-            <div class="supplier-editor">
+          <div class="directory-layout">
+            <div class="directory-editor supplier-editor">
               <div class="form-grid supplier-main-fields">
                 <label>
                   Supplier Name
@@ -1391,18 +1391,18 @@
                 <div class="supplier-employee-list" id="supplierEmployeeList"></div>
               </section>
 
-              <div class="supplier-editor-footer">
+              <div class="editor-footer">
                 <span id="supplierEditMeta">New supplier record</span>
                 <button id="deleteSupplierButton" class="danger-button" type="button">Remove Supplier</button>
               </div>
             </div>
 
-            <aside class="supplier-directory" aria-label="Saved suppliers">
+            <aside class="record-directory supplier-directory" aria-label="Saved suppliers">
               <label>
                 Find Supplier
                 <input id="supplierSearchInput" type="search" autocomplete="off" placeholder="Name, category, location, product">
               </label>
-              <div class="supplier-card-list" id="supplierCardList"></div>
+              <div class="record-list supplier-card-list" id="supplierCardList"></div>
             </aside>
           </div>
         </section>
@@ -2285,7 +2285,7 @@
     <script src="supply-telegram.js?v=20260714-telegram"></script>
     <script src="production-planner.js?v=20260820-multistage-production"></script>
     <script src="production-inventory.js?v=20260821-static-route"></script>
-    <script src="app.js?v=20260821-resilient-rendering"></script>
+    <script src="app.js?v=20260821-standard-controls"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

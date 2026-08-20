@@ -2289,7 +2289,7 @@ function addSupplyLine() {
 function addMissingSupplyLines() {
   const missing = getMaterialPurchasePlan(activeSupplyOrder.id).filter(line => line.missing > 0);
   if (!missing.length) {
-    elements.supplyDataStatus.textContent = "No uncovered material shortages to add";
+    setWorkspaceDataStatus(elements.supplyDataStatus, "No uncovered material shortages to add");
     return;
   }
   missing.forEach(material => {
@@ -2308,7 +2308,7 @@ function addMissingSupplyLines() {
     });
   });
   touchSupplyOrder();
-  elements.supplyDataStatus.textContent = `${missing.length} uncovered material lines added`;
+  setWorkspaceDataStatus(elements.supplyDataStatus, `${missing.length} uncovered material lines added`, "success");
   renderSupplyWorkspace();
 }
 
@@ -2341,12 +2341,12 @@ async function loadSupplyOrders({ silent = false } = {}) {
     supplyOrders = Array.isArray(result.orders) ? result.orders : [];
     const refreshed = supplyOrders.find(order => order.id === activeSupplyOrder.id);
     if (refreshed && !supplyOrderDirty) activeSupplyOrder = structuredClone(refreshed);
-    elements.supplyDataStatus.textContent = `${supplyOrders.length} shared producer orders loaded`;
+    setWorkspaceDataStatus(elements.supplyDataStatus, `${supplyOrders.length} shared producer orders loaded`);
     seedProducerOptions();
     if (activeSection === "supplies") renderSupplyWorkspace();
     if (activeSection === "dashboard") renderDashboard();
   } catch (error) {
-    if (!silent) elements.supplyDataStatus.textContent = `Unable to load producer orders: ${error.message}`;
+    if (!silent) setWorkspaceDataStatus(elements.supplyDataStatus, `Unable to load producer orders: ${error.message}`, "error");
   }
 }
 
@@ -2397,22 +2397,22 @@ async function loadStorefrontBuyOrders({ silent = false } = {}) {
     storefrontBuyOrders = Array.isArray(result.orders) ? result.orders : [];
     const refreshed = storefrontBuyOrders.find(order => order.id === activeStorefrontBuyOrder.id);
     if (refreshed && !storefrontBuyOrderDirty) activeStorefrontBuyOrder = structuredClone(refreshed);
-    elements.buyOrderDataStatus.textContent = `${storefrontBuyOrders.length} shared buy ${storefrontBuyOrders.length === 1 ? "order" : "orders"} loaded`;
+    setWorkspaceDataStatus(elements.buyOrderDataStatus, `${storefrontBuyOrders.length} shared buy ${storefrontBuyOrders.length === 1 ? "order" : "orders"} loaded`);
     renderStorefrontBuyOrderWorkspace();
   } catch (error) {
-    if (!silent) elements.buyOrderDataStatus.textContent = `Unable to load buy orders: ${error.message}`;
+    if (!silent) setWorkspaceDataStatus(elements.buyOrderDataStatus, `Unable to load buy orders: ${error.message}`, "error");
   }
 }
 
 async function saveStorefrontBuyOrder() {
   updateStorefrontBuyOrderFromInputs();
   if (!activeStorefrontBuyOrder.itemName) {
-    elements.buyOrderDataStatus.textContent = "Select a material or item";
+    setWorkspaceDataStatus(elements.buyOrderDataStatus, "Select a material or item", "error");
     elements.buyOrderItem.focus();
     return;
   }
-  elements.saveBuyOrder.disabled = true;
-  elements.buyOrderDataStatus.textContent = "Saving storefront buy order";
+  setButtonBusy(elements.saveBuyOrder, true, "Saving...");
+  setWorkspaceDataStatus(elements.buyOrderDataStatus, "Saving storefront buy order", "pending");
   try {
     const response = await fetch("/api/storefront-buy-orders", {
       method: "POST",
@@ -2424,12 +2424,12 @@ async function saveStorefrontBuyOrder() {
     activeStorefrontBuyOrder = structuredClone(result.order);
     clearDraftDirty("buy-order");
     storefrontBuyOrders = result.orders || [];
-    elements.buyOrderDataStatus.textContent = `${activeStorefrontBuyOrder.itemLabel} saved as ${activeStorefrontBuyOrder.status}`;
+    setWorkspaceDataStatus(elements.buyOrderDataStatus, `${activeStorefrontBuyOrder.itemLabel} saved as ${activeStorefrontBuyOrder.status}`, "success");
     renderStorefrontBuyOrderWorkspace();
   } catch (error) {
-    elements.buyOrderDataStatus.textContent = `Save failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.buyOrderDataStatus, `Save failed: ${error.message}`, "error");
   } finally {
-    elements.saveBuyOrder.disabled = false;
+    setButtonBusy(elements.saveBuyOrder, false);
   }
 }
 
@@ -2449,10 +2449,10 @@ async function adjustStorefrontBuyOrderFill() {
     activeStorefrontBuyOrder = structuredClone(result.order);
     clearDraftDirty("buy-order");
     storefrontBuyOrders = result.orders || [];
-    elements.buyOrderDataStatus.textContent = `Fill adjusted to ${formatNumber(activeStorefrontBuyOrder.filledQuantity)}`;
+    setWorkspaceDataStatus(elements.buyOrderDataStatus, `Fill adjusted to ${formatNumber(activeStorefrontBuyOrder.filledQuantity)}`, "success");
     renderStorefrontBuyOrderWorkspace();
   } catch (error) {
-    elements.buyOrderDataStatus.textContent = `Adjustment failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.buyOrderDataStatus, `Adjustment failed: ${error.message}`, "error");
   } finally {
     elements.adjustBuyOrderFill.disabled = false;
   }
@@ -2472,10 +2472,10 @@ async function removeActiveStorefrontBuyOrder() {
     storefrontBuyOrders = result.orders || [];
     activeStorefrontBuyOrder = newStorefrontBuyOrder();
     clearDraftDirty("buy-order");
-    elements.buyOrderDataStatus.textContent = "Buy order removed";
+    setWorkspaceDataStatus(elements.buyOrderDataStatus, "Buy order removed", "success");
     renderStorefrontBuyOrderWorkspace();
   } catch (error) {
-    elements.buyOrderDataStatus.textContent = `Remove failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.buyOrderDataStatus, `Remove failed: ${error.message}`, "error");
   }
 }
 
@@ -2529,18 +2529,22 @@ function renderStorefrontBuyOrders() {
   const visible = storefrontBuyOrders.filter(order =>
     filter === "All" || (filter === "Open" ? BUY_ORDER_OPEN_STATUSES.has(order.status) : order.status === filter)
   );
-  if (!visible.length) {
-    elements.buyOrderList.innerHTML = `<div class="empty-card">No storefront buy orders in this view</div>`;
-    return;
-  }
-  elements.buyOrderList.innerHTML = visible.map(order => {
-    const quantity = Math.max(1, Number(order.quantity || 1));
-    const filled = Math.max(0, Number(order.filledQuantity || 0));
-    const remaining = Math.max(0, quantity - filled);
-    const percent = Math.min(100, Math.round(filled / quantity * 100));
-    const status = order.status === "Active" && percent >= 80 && percent < 100 ? "Near filled" : order.status;
-    return `
-      <button class="buy-order-card ${order.id === activeStorefrontBuyOrder.id ? "active" : ""}" data-buy-order-id="${escapeHtml(order.id)}" data-status="${escapeHtml(order.status)}" type="button">
+  renderRecordCollection({
+    container: elements.buyOrderList,
+    records: visible,
+    activeId: activeStorefrontBuyOrder.id,
+    className: "buy-order-card",
+    selectedClass: "active",
+    emptyMessage: "No storefront buy orders in this view",
+    emptyDetail: "Change the filter or create a new buy order.",
+    attributes: order => `data-status="${escapeHtml(order.status)}"`,
+    renderContent: order => {
+      const quantity = Math.max(1, Number(order.quantity || 1));
+      const filled = Math.max(0, Number(order.filledQuantity || 0));
+      const remaining = Math.max(0, quantity - filled);
+      const percent = Math.min(100, Math.round(filled / quantity * 100));
+      const status = order.status === "Active" && percent >= 80 && percent < 100 ? "Near filled" : order.status;
+      return `
         <span class="buy-order-card-header">
           <strong>${escapeHtml(order.itemLabel || order.itemName)}</strong>
           <span class="buy-order-status">${escapeHtml(status)}</span>
@@ -2554,11 +2558,9 @@ function renderStorefrontBuyOrders() {
         <span>${formatCurrency(order.unitPrice)} each</span>
           <span>${formatDateTime(order.postedAt)}</span>
         </span>
-      </button>
-    `;
-  }).join("");
-  elements.buyOrderList.querySelectorAll("[data-buy-order-id]").forEach(button => {
-    button.addEventListener("click", () => loadStorefrontBuyOrder(button.dataset.buyOrderId));
+      `;
+    },
+    onSelect: loadStorefrontBuyOrder
   });
 }
 
@@ -2575,11 +2577,11 @@ async function loadSuppliers({ silent = false } = {}) {
     suppliers = Array.isArray(result.suppliers) ? result.suppliers : [];
     const refreshed = suppliers.find(supplier => supplier.id === activeSupplier.id);
     if (refreshed && !supplierDirty) activeSupplier = structuredClone(refreshed);
-    elements.supplierDataStatus.textContent = `${suppliers.length} shared ${suppliers.length === 1 ? "supplier" : "suppliers"} loaded`;
+    setWorkspaceDataStatus(elements.supplierDataStatus, `${suppliers.length} shared ${suppliers.length === 1 ? "supplier" : "suppliers"} loaded`);
     seedProducerOptions();
     if (activeSection === "supplies") renderSupplierWorkspace();
   } catch (error) {
-    if (!silent) elements.supplierDataStatus.textContent = `Unable to load suppliers: ${error.message}`;
+    if (!silent) setWorkspaceDataStatus(elements.supplierDataStatus, `Unable to load suppliers: ${error.message}`, "error");
   }
 }
 
@@ -2616,12 +2618,12 @@ function updateSupplierFromInputs() {
 async function saveSupplier() {
   updateSupplierFromInputs();
   if (!activeSupplier.name) {
-    elements.supplierDataStatus.textContent = "Enter a supplier name before saving";
+    setWorkspaceDataStatus(elements.supplierDataStatus, "Enter a supplier name before saving", "error");
     elements.supplierName.focus();
     return;
   }
-  elements.saveSupplier.disabled = true;
-  elements.supplierDataStatus.textContent = `Saving ${activeSupplier.name}`;
+  setButtonBusy(elements.saveSupplier, true, "Saving...");
+  setWorkspaceDataStatus(elements.supplierDataStatus, `Saving ${activeSupplier.name}`, "pending");
   try {
     const response = await fetch("/api/suppliers", {
       method: "POST",
@@ -2633,13 +2635,13 @@ async function saveSupplier() {
     activeSupplier = structuredClone(result.supplier);
     suppliers = Array.isArray(result.suppliers) ? result.suppliers : [];
     clearDraftDirty("supplier");
-    elements.supplierDataStatus.textContent = `${activeSupplier.name} saved`;
+    setWorkspaceDataStatus(elements.supplierDataStatus, `${activeSupplier.name} saved`, "success");
     seedProducerOptions();
     renderSupplierWorkspace();
   } catch (error) {
-    elements.supplierDataStatus.textContent = `Supplier save failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.supplierDataStatus, `Supplier save failed: ${error.message}`, "error");
   } finally {
-    elements.saveSupplier.disabled = false;
+    setButtonBusy(elements.saveSupplier, false);
   }
 }
 
@@ -2661,11 +2663,11 @@ async function removeActiveSupplier() {
     suppliers = Array.isArray(result.suppliers) ? result.suppliers : [];
     activeSupplier = newSupplier();
     clearDraftDirty("supplier");
-    elements.supplierDataStatus.textContent = "Supplier removed; historical orders were kept";
+    setWorkspaceDataStatus(elements.supplierDataStatus, "Supplier removed; historical orders were kept", "success");
     seedProducerOptions();
     renderSupplierWorkspace();
   } catch (error) {
-    elements.supplierDataStatus.textContent = `Supplier removal failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.supplierDataStatus, `Supplier removal failed: ${error.message}`, "error");
   } finally {
     elements.deleteSupplier.disabled = false;
   }
@@ -2706,13 +2708,13 @@ function addSupplierProduct() {
 
 function addSupplierEmployee() {
   if (activeSupplier.employees.length >= 5) {
-    elements.supplierDataStatus.textContent = "A supplier can have up to 5 employee contacts";
+    setWorkspaceDataStatus(elements.supplierDataStatus, "A supplier can have up to 5 employee contacts", "error");
     return;
   }
   const name = elements.supplierEmployeeName.value.trim();
   const telegram = elements.supplierEmployeeTelegram.value.trim();
   if (!name) {
-    elements.supplierDataStatus.textContent = "Enter the employee character name";
+    setWorkspaceDataStatus(elements.supplierDataStatus, "Enter the employee character name", "error");
     elements.supplierEmployeeName.focus();
     return;
   }
@@ -2837,16 +2839,18 @@ function renderSupplierDirectory() {
     ...supplier.employees.flatMap(contact => [contact.name, contact.telegram])
   ].join(" ")).includes(search));
   elements.supplierSavedCount.textContent = `${suppliers.length} ${suppliers.length === 1 ? "supplier" : "suppliers"}`;
-  if (!visible.length) {
-    elements.supplierCardList.innerHTML = `<div class="empty-card">No suppliers match this view</div>`;
-    return;
-  }
-  elements.supplierCardList.innerHTML = visible.map(supplier => {
-    const offers = supplier.products.slice(0, 3)
-    .map(product => `${product.label || product.name} ${formatCurrency(product.unitPrice)}`)
-      .join(" / ");
-    return `
-      <button class="supplier-card ${supplier.id === activeSupplier.id ? "selected" : ""}" type="button" data-supplier-id="${supplier.id}">
+  renderRecordCollection({
+    container: elements.supplierCardList,
+    records: visible,
+    activeId: activeSupplier.id,
+    className: "supplier-card",
+    emptyMessage: search ? "No matching suppliers" : "No suppliers recorded",
+    emptyDetail: search ? "Try another name, category, location, or product." : "Use New Supplier to add the first trade contact.",
+    renderContent: supplier => {
+      const offers = supplier.products.slice(0, 3)
+        .map(product => `${product.label || product.name} ${formatCurrency(product.unitPrice)}`)
+        .join(" / ");
+      return `
         <span class="supplier-card-heading">
           <strong>${escapeHtml(supplier.name)}</strong>
           <span>${supplier.products.length} ${supplier.products.length === 1 ? "price" : "prices"}</span>
@@ -2855,11 +2859,9 @@ function renderSupplierDirectory() {
         <span>${escapeHtml(supplier.ownerName || "Owner not recorded")}${supplier.ownerTelegram ? ` / ${escapeHtml(supplier.ownerTelegram)}` : ""}</span>
         <span>${supplier.businessTelegram ? `Business ${escapeHtml(supplier.businessTelegram)}` : "Business telegram not recorded"} / ${supplier.employees.length} employee ${supplier.employees.length === 1 ? "contact" : "contacts"}</span>
         <small>${offers ? escapeHtml(offers) : "No product prices recorded"}</small>
-      </button>
-    `;
-  }).join("");
-  elements.supplierCardList.querySelectorAll("[data-supplier-id]").forEach(button => {
-    button.addEventListener("click", () => loadSupplier(button.dataset.supplierId));
+      `;
+    },
+    onSelect: loadSupplier
   });
 }
 
@@ -2902,13 +2904,13 @@ async function saveCustomer() {
   if (customerSavePending) return;
   updateCustomerFromInputs();
   if (!activeCustomer.name) {
-    elements.customerDataStatus.textContent = "Enter a customer name before saving";
+    setWorkspaceDataStatus(elements.customerDataStatus, "Enter a customer name before saving", "error");
     elements.customerName.focus();
     return;
   }
   customerSavePending = true;
-  elements.saveCustomer.disabled = true;
-  elements.customerDataStatus.textContent = `Saving ${activeCustomer.name}`;
+  setButtonBusy(elements.saveCustomer, true, "Saving...");
+  setWorkspaceDataStatus(elements.customerDataStatus, `Saving ${activeCustomer.name}`, "pending");
   try {
     const response = await fetch("/api/customers", {
       method: "POST",
@@ -2927,13 +2929,13 @@ async function saveCustomer() {
       repriceActiveOrderLines();
       touchActive();
     }
-    elements.customerDataStatus.textContent = `${activeCustomer.name} saved`;
+    setWorkspaceDataStatus(elements.customerDataStatus, `${activeCustomer.name} saved`, "success");
     renderSalesWorkspace();
   } catch (error) {
-    elements.customerDataStatus.textContent = `Customer save failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.customerDataStatus, `Customer save failed: ${error.message}`, "error");
   } finally {
     customerSavePending = false;
-    elements.saveCustomer.disabled = false;
+    setButtonBusy(elements.saveCustomer, false);
   }
 }
 
@@ -2955,10 +2957,10 @@ async function removeActiveCustomer() {
     customers = Array.isArray(result.customers) ? result.customers : [];
     activeCustomer = newCustomer();
     clearDraftDirty("customer");
-    elements.customerDataStatus.textContent = "Customer removed; historical orders were kept";
+    setWorkspaceDataStatus(elements.customerDataStatus, "Customer removed; historical orders were kept", "success");
     renderSalesWorkspace();
   } catch (error) {
-    elements.customerDataStatus.textContent = `Customer removal failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.customerDataStatus, `Customer removal failed: ${error.message}`, "error");
   } finally {
     elements.deleteCustomer.disabled = false;
   }
@@ -3088,14 +3090,16 @@ function renderCustomerDirectory() {
     ].join(" ")).includes(search))
     .sort((left, right) => left.name.localeCompare(right.name));
   elements.customerSavedCount.textContent = `${customers.length} ${customers.length === 1 ? "customer" : "customers"}`;
-  if (!visible.length) {
-    elements.customerCardList.innerHTML = `<div class="empty-card">No customers match this view</div>`;
-    return;
-  }
-  elements.customerCardList.innerHTML = visible.map(customer => {
-    const stats = customerStats(customer);
-    return `
-      <button class="customer-card ${customer.id === activeCustomer.id ? "selected" : ""}" type="button" data-customer-id="${escapeHtml(customer.id)}">
+  renderRecordCollection({
+    container: elements.customerCardList,
+    records: visible,
+    activeId: activeCustomer.id,
+    className: "customer-card",
+    emptyMessage: search ? "No matching customers" : "No customers recorded",
+    emptyDetail: search ? "Try another name, type, location, or telegram." : "Use New Customer to start the register.",
+    renderContent: customer => {
+      const stats = customerStats(customer);
+      return `
         <span class="customer-card-heading">
           <strong>${escapeHtml(customer.name)}</strong>
           <span>${formatNumber(stats.completedSales)} sales</span>
@@ -3104,11 +3108,9 @@ function renderCustomerDirectory() {
         <span>${customer.pricingTier === "Reseller" ? "Bulk / reseller pricing" : "Storefront pricing"}</span>
         <span>${formatCurrency(stats.lifetimeSales)} lifetime / ${formatCurrency(stats.outstandingBalance)} outstanding</span>
         <small>${stats.lastActivityAt ? `Last activity ${formatDateTime(stats.lastActivityAt)}` : "No sales history yet"}</small>
-      </button>
-    `;
-  }).join("");
-  elements.customerCardList.querySelectorAll("[data-customer-id]").forEach(button => {
-    button.addEventListener("click", () => loadCustomer(button.dataset.customerId));
+      `;
+    },
+    onSelect: loadCustomer
   });
 }
 
@@ -3116,12 +3118,12 @@ async function saveSupplyOrder() {
   updateSupplyFromInputs();
   const wasDraft = activeSupplyOrder.status === "Draft";
   if (!activeSupplyOrder.producer) {
-    elements.supplyDataStatus.textContent = "Choose a producer before saving";
+    setWorkspaceDataStatus(elements.supplyDataStatus, "Choose a producer before saving", "error");
     elements.supplyProducer.focus();
     return;
   }
-  elements.saveSupplyOrder.disabled = true;
-  elements.supplyDataStatus.textContent = "Saving shared producer order";
+  setButtonBusy(elements.saveSupplyOrder, true, "Saving...");
+  setWorkspaceDataStatus(elements.supplyDataStatus, "Saving shared producer order", "pending");
   try {
     const response = await fetch("/api/supply-orders", {
       method: "POST",
@@ -3134,14 +3136,14 @@ async function saveSupplyOrder() {
     supplyOrders = result.orders || [];
     clearDraftDirty("supply");
     if (wasDraft) elements.supplyFilter.value = "Active";
-    elements.supplyDataStatus.textContent = `Saved as ${activeSupplyOrder.status} for ${activeSupplyOrder.producer}`;
+    setWorkspaceDataStatus(elements.supplyDataStatus, `Saved as ${activeSupplyOrder.status} for ${activeSupplyOrder.producer}`, "success");
     seedProducerOptions();
     renderSupplyWorkspace();
     renderDashboard();
   } catch (error) {
-    elements.supplyDataStatus.textContent = `Save failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.supplyDataStatus, `Save failed: ${error.message}`, "error");
   } finally {
-    elements.saveSupplyOrder.disabled = false;
+    setButtonBusy(elements.saveSupplyOrder, false);
   }
 }
 
@@ -3164,12 +3166,12 @@ async function removeActiveSupplyOrder() {
     supplyOrders = result.orders || [];
     activeSupplyOrder = newSupplyOrder();
     clearDraftDirty("supply");
-    elements.supplyDataStatus.textContent = "Supply order removed";
+    setWorkspaceDataStatus(elements.supplyDataStatus, "Supply order removed", "success");
     seedProducerOptions();
     renderSupplyWorkspace();
     renderDashboard();
   } catch (error) {
-    elements.supplyDataStatus.textContent = `Remove failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.supplyDataStatus, `Remove failed: ${error.message}`, "error");
   }
 }
 
@@ -3181,21 +3183,21 @@ function setSupplyStatus(status) {
 
 async function receiveSupplyOrder() {
   if (activeSupplyOrder.status !== "Ordered" && activeSupplyOrder.status !== "Partially Received") {
-    elements.supplyDataStatus.textContent = "Mark the supply order as Ordered before receiving it";
+    setWorkspaceDataStatus(elements.supplyDataStatus, "Mark the supply order as Ordered before receiving it", "error");
     return;
   }
   const receipts = [...elements.supplyLines.querySelectorAll("[data-receive-supply-line]")]
     .map(input => ({ lineId: input.dataset.receiveSupplyLine, quantity: Number(input.value || 0) }))
     .filter(receipt => receipt.quantity > 0);
   if (!receipts.length) {
-    elements.supplyDataStatus.textContent = "Enter at least one quantity in Receive Now";
+    setWorkspaceDataStatus(elements.supplyDataStatus, "Enter at least one quantity in Receive Now", "error");
     return;
   }
 
   const orderId = activeSupplyOrder.id;
   supplyReceiptPending = true;
   elements.receiveSupply.disabled = true;
-  elements.supplyDataStatus.textContent = "Posting received items to Storage";
+  setWorkspaceDataStatus(elements.supplyDataStatus, "Posting received items to Storage", "pending");
   try {
     const response = await fetch(`/api/supply-orders/${encodeURIComponent(orderId)}/receive`, {
       method: "POST",
@@ -3211,7 +3213,7 @@ async function receiveSupplyOrder() {
     renderDashboard();
     await loadBackendSnapshot({ silent: true });
     const receivedUnits = (result.receipts || []).reduce((sum, receipt) => sum + Number(receipt.quantity || 0), 0);
-    elements.supplyDataStatus.textContent = `${formatNumber(receivedUnits)} units added to Storage / ${activeSupplyOrder.status}`;
+    setWorkspaceDataStatus(elements.supplyDataStatus, `${formatNumber(receivedUnits)} units added to Storage / ${activeSupplyOrder.status}`, "success");
   } catch (error) {
     await loadSupplyOrders({ silent: true });
     const latest = supplyOrders.find(order => order.id === orderId);
@@ -3221,7 +3223,7 @@ async function receiveSupplyOrder() {
     }
     await loadBackendSnapshot({ silent: true });
     renderSupplyWorkspace();
-    elements.supplyDataStatus.textContent = `Receipt failed: ${error.message}`;
+    setWorkspaceDataStatus(elements.supplyDataStatus, `Receipt failed: ${error.message}`, "error");
   } finally {
     supplyReceiptPending = false;
     renderSupplyWorkspace();
@@ -3244,7 +3246,7 @@ async function copySupplyTelegram() {
   });
   await navigator.clipboard.writeText(telegram);
   elements.supplySummary.textContent = `${telegram}\n\nCopied to clipboard.`;
-  elements.supplyDataStatus.textContent = `Quotation telegram copied for ${activeSupplyOrder.producer}`;
+  setWorkspaceDataStatus(elements.supplyDataStatus, `Quotation telegram copied for ${activeSupplyOrder.producer}`, "success");
 }
 
 function materialUnitPrice(name) {
@@ -3558,7 +3560,10 @@ function renderSupplyOrdersList() {
   const producerCount = new Set(supplyOrders.map(order => normalize(order.producer))).size;
   elements.supplySavedCount.textContent = `${activeCount} active across ${producerCount} ${producerCount === 1 ? "producer" : "producers"}`;
   if (!visible.length) {
-    elements.supplyOrdersList.innerHTML = `<div class="empty-card">No producer orders in this view</div>`;
+    elements.supplyOrdersList.innerHTML = emptyRecordState(
+      "No producer orders in this view",
+      "Change the filter or save a new parts and materials order."
+    );
     return;
   }
 
@@ -3575,20 +3580,21 @@ function renderSupplyOrdersList() {
         <span>${producerOrders.length} ${producerOrders.length === 1 ? "order" : "orders"}</span>
       </div>
       <div class="orders-list">
-        ${producerOrders.map(order => `
-          <button class="order-card ${order.id === activeSupplyOrder.id ? "selected" : ""}" type="button" data-supply-order-id="${order.id}">
-            <span class="status-pill ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
-            <strong>${order.expectedDate ? formatDelivery(order.expectedDate) : "No expected date"}</strong>
-          <span>${order.lines.length} lines / ${formatNumber(getSupplyReceivedUnits(order))} of ${formatNumber(getSupplyOrderedUnits(order))} received / ${formatCurrency(getSupplyOrderTotal(order))}</span>
-            <small>Updated ${formatDateTime(order.updatedAt)} by ${escapeHtml(order.updatedBy || order.requestedBy)}</small>
-          </button>
-        `).join("")}
+        ${producerOrders.map(order => recordButtonMarkup({
+          record: order,
+          activeId: activeSupplyOrder.id,
+          className: "order-card",
+          renderContent: selectedOrder => `
+            <span class="status-pill ${statusClass(selectedOrder.status)}">${escapeHtml(selectedOrder.status)}</span>
+            <strong>${selectedOrder.expectedDate ? formatDelivery(selectedOrder.expectedDate) : "No expected date"}</strong>
+            <span>${selectedOrder.lines.length} lines / ${formatNumber(getSupplyReceivedUnits(selectedOrder))} of ${formatNumber(getSupplyOrderedUnits(selectedOrder))} received / ${formatCurrency(getSupplyOrderTotal(selectedOrder))}</span>
+            <small>Updated ${formatDateTime(selectedOrder.updatedAt)} by ${escapeHtml(selectedOrder.updatedBy || selectedOrder.requestedBy)}</small>
+          `
+        })).join("")}
       </div>
     </section>
   `).join("");
-  elements.supplyOrdersList.querySelectorAll("[data-supply-order-id]").forEach(button => {
-    button.addEventListener("click", () => loadSupplyOrder(button.dataset.supplyOrderId));
-  });
+  bindRecordSelection(elements.supplyOrdersList, loadSupplyOrder);
 }
 
 function seedProducerOptions() {
@@ -5842,24 +5848,22 @@ function renderOrdersList() {
   const activeCount = orders.filter(order => !statusesHiddenFromActive.has(order.status)).length;
   elements.savedCount.textContent = `${activeCount} active / ${orders.length} shared`;
 
-  if (!visibleOrders.length) {
-    elements.ordersList.innerHTML = `<div class="empty-card">No saved work orders</div>`;
-    return;
-  }
-
-  elements.ordersList.innerHTML = visibleOrders.map(order => `
-    <button class="order-card ${order.id === activeOrder.id ? "selected" : ""}" type="button" data-order-id="${order.id}">
+  renderRecordCollection({
+    container: elements.ordersList,
+    records: visibleOrders,
+    activeId: activeOrder.id,
+    className: "order-card",
+    emptyMessage: "No saved work orders in this view",
+    emptyDetail: "Change the filter or save a new sale or internal craft.",
+    renderContent: order => `
       <span class="status-pill ${order.status.toLowerCase()}">${escapeHtml(order.status)}</span>
       <strong>${escapeHtml(orderDisplayName(order))}</strong>
       <span>${escapeHtml(isInternalCraftOrder(order) ? "Internal Craft" : isCounterSaleOrder(order) ? "Counter Sale" : "Customer Order")} / ${order.lines.length} lines / ${formatCurrency(isInternalCraftOrder(order) ? 0 : getSubtotal(order))}</span>
       ${isInternalCraftOrder(order) ? "" : `<span>${order.pricingTier === "Reseller" ? "Bulk / reseller pricing" : "Storefront pricing"}</span>`}
       <span>${formatDelivery(order.deliveryDate)}</span>
       <small>${formatDateTime(order.updatedAt)}</small>
-    </button>
-  `).join("");
-
-  elements.ordersList.querySelectorAll("[data-order-id]").forEach(button => {
-    button.addEventListener("click", () => loadOrder(button.dataset.orderId));
+    `,
+    onSelect: loadOrder
   });
 }
 
@@ -6283,11 +6287,11 @@ async function loadProductionBatches({ silent = false } = {}) {
         || productionBatches[0]?.id
         || "";
     }
-    elements.productionDataStatus.textContent = `${productionBatches.length} shared ${productionBatches.length === 1 ? "batch" : "batches"} loaded`;
+    setWorkspaceDataStatus(elements.productionDataStatus, `${productionBatches.length} shared ${productionBatches.length === 1 ? "batch" : "batches"} loaded`);
     renderProductionQueue();
     renderReplenishment();
   } catch (error) {
-    if (!silent) elements.productionDataStatus.textContent = `Unable to load production: ${error.message}`;
+    if (!silent) setWorkspaceDataStatus(elements.productionDataStatus, `Unable to load production: ${error.message}`, "error");
   }
 }
 
@@ -6313,28 +6317,31 @@ function renderProductionQueue() {
   if (!visible.some(batch => batch.id === activeProductionBatchId)) {
     activeProductionBatchId = visible[0]?.id || "";
   }
-  elements.productionBatchList.innerHTML = visible.length
-    ? visible.map(batch => {
+  renderRecordCollection({
+    container: elements.productionBatchList,
+    records: visible,
+    activeId: activeProductionBatchId,
+    className: "production-batch-row",
+    selectedClass: "active",
+    emptyMessage: "No production batches in this view",
+    emptyDetail: "Change the filter or queue work from Sales or Restock.",
+    renderContent: batch => {
       const planned = batch.lines.reduce((sum, line) => sum + Number(line.plannedCrafts || 0), 0);
       const completed = batch.lines.reduce((sum, line) => sum + Number(line.completedCrafts || 0), 0);
       const reservedStock = (batch.stockAllocations || []).reduce((sum, allocation) =>
         sum + Number(allocation.storageQuantity || 0) + Number(allocation.storefrontQuantity || 0), 0);
       const materialPlan = readinessPlans.get(batch.id) || getProductionBatchMaterialPlan(batch);
       return `
-        <button class="production-batch-row ${batch.id === activeProductionBatchId ? "active" : ""}" type="button" data-production-batch="${escapeHtml(batch.id)}">
           <span class="status-pill ${statusClass(batch.status)}">${escapeHtml(batch.status)}</span>
           <strong>${escapeHtml(batch.reference || batch.sourceType)}</strong>
           <span>${escapeHtml(batch.sourceType)} / ${formatNumber(reservedStock)} existing units / ${formatNumber(completed)} of ${formatNumber(planned)} production cycles</span>
           <small>${batch.assignedTo ? `Assigned to ${escapeHtml(batch.assignedTo)} / ` : "Unassigned / "}${batch.dueDate ? formatDelivery(batch.dueDate) : "No due date"}${materialPlan.shortageCount ? ` / ${formatNumber(materialPlan.shortageCount)} material shorts` : " / Materials ready"}</small>
-        </button>
       `;
-    }).join("")
-    : `<div class="empty-card">No production batches in this view</div>`;
-  elements.productionBatchList.querySelectorAll("[data-production-batch]").forEach(button => {
-    button.addEventListener("click", () => {
-      activeProductionBatchId = button.dataset.productionBatch;
+    },
+    onSelect: batchId => {
+      activeProductionBatchId = batchId;
       renderProductionQueue();
-    });
+    }
   });
   renderProductionDetail(visible.find(batch => batch.id === activeProductionBatchId));
 }
@@ -6540,7 +6547,7 @@ async function runProductionAction(batch, action, payload, successMessage) {
       if (activeProductionBatchId === batch.id) {
         elements.productionActionStatus.textContent = finalMessage;
       } else {
-        elements.productionDataStatus.textContent = finalMessage;
+        setWorkspaceDataStatus(elements.productionDataStatus, finalMessage, finalMessage.startsWith("Update failed") ? "error" : "success");
       }
     }
   }
@@ -7493,7 +7500,7 @@ async function performBackendRefresh({ silent = false, preserveReviewEditor = fa
       if (refreshedBuyOrder && !storefrontBuyOrderDirty) {
         activeStorefrontBuyOrder = structuredClone(refreshedBuyOrder);
       }
-      elements.buyOrderDataStatus.textContent = `${storefrontBuyOrders.length} shared buy ${storefrontBuyOrders.length === 1 ? "order" : "orders"} loaded`;
+      setWorkspaceDataStatus(elements.buyOrderDataStatus, `${storefrontBuyOrders.length} shared buy ${storefrontBuyOrders.length === 1 ? "order" : "orders"} loaded`);
     }
     lastBackendRefreshAt = Date.now();
     const backendText = backendSnapshot.dataBackend === "postgresql"
@@ -7551,7 +7558,7 @@ function hydrateCustomers(snapshot) {
     if (refreshed) activeCustomer = structuredClone(refreshed);
     else if (activeWasSaved) activeCustomer = newCustomer();
   }
-  elements.customerDataStatus.textContent = `${customers.length} shared ${customers.length === 1 ? "customer" : "customers"} loaded`;
+  setWorkspaceDataStatus(elements.customerDataStatus, `${customers.length} shared ${customers.length === 1 ? "customer" : "customers"} loaded`);
 }
 
 function hydrateDailyCloses(snapshot) {
@@ -7975,6 +7982,79 @@ function normalize(value) {
 
 function statusClass(value) {
   return normalize(value).replace(/\s+/g, "-");
+}
+
+function emptyRecordState(message, detail = "") {
+  return `
+    <div class="empty-card record-empty-state" role="status">
+      <strong>${escapeHtml(message)}</strong>
+      ${detail ? `<span>${escapeHtml(detail)}</span>` : ""}
+    </div>
+  `;
+}
+
+function recordButtonMarkup({ record, activeId, className, selectedClass = "selected", attributes, renderContent }) {
+  const recordId = String(record?.id || "");
+  const selected = recordId === String(activeId || "");
+  const extraAttributes = typeof attributes === "function" ? attributes(record) : "";
+  return `
+    <button class="record-card ${className}${selected ? ` ${selectedClass}` : ""}" type="button" data-record-id="${escapeHtml(recordId)}" aria-pressed="${selected}"${extraAttributes ? ` ${extraAttributes}` : ""}>
+      ${renderContent(record)}
+    </button>
+  `;
+}
+
+function bindRecordSelection(container, onSelect) {
+  container.querySelectorAll(":scope [data-record-id]").forEach(button => {
+    button.addEventListener("click", () => onSelect(button.dataset.recordId));
+  });
+}
+
+function renderRecordCollection({
+  container,
+  records,
+  activeId,
+  className,
+  selectedClass = "selected",
+  emptyMessage,
+  emptyDetail = "",
+  attributes,
+  renderContent,
+  onSelect
+}) {
+  if (!records.length) {
+    container.innerHTML = emptyRecordState(emptyMessage, emptyDetail);
+    return;
+  }
+  container.innerHTML = records.map(record => recordButtonMarkup({
+    record,
+    activeId,
+    className,
+    selectedClass,
+    attributes,
+    renderContent
+  })).join("");
+  bindRecordSelection(container, onSelect);
+}
+
+function setWorkspaceDataStatus(element, message, tone = "") {
+  if (!element) return;
+  element.textContent = message;
+  if (tone) element.dataset.tone = tone;
+  else delete element.dataset.tone;
+}
+
+function setButtonBusy(button, busy, busyLabel) {
+  if (!button) return;
+  if (busy) {
+    button.dataset.idleLabel = button.textContent;
+    button.textContent = busyLabel;
+  } else if (button.dataset.idleLabel) {
+    button.textContent = button.dataset.idleLabel;
+    delete button.dataset.idleLabel;
+  }
+  button.disabled = busy;
+  button.setAttribute("aria-busy", String(busy));
 }
 
 function getRecipeIngredients() {

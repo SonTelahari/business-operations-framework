@@ -116,6 +116,16 @@ assert(appScript.includes("function renderWebhookLog"), "the review workspace mu
 assert(appScript.includes("let reviewEditorDirty = false"), "webhook review must track unsaved editor changes");
 assert(appScript.includes("preserveReviewEditor: true"), "background refreshes must preserve unsaved webhook review input");
 assert(appScript.includes("function renderCustomerWorkspace"), "the sales workspace must render customer statistics and history");
+assert(appScript.includes("function renderRecordCollection"), "workspace directories must share one selectable-record renderer");
+assert(appScript.includes("function recordButtonMarkup"), "grouped order registers must share the standard record control");
+assert(appScript.includes('aria-pressed="${selected}"'), "selectable record controls must expose their active state accessibly");
+assert((appScript.match(/renderRecordCollection\(\{/g) || []).length >= 6, "customers, suppliers, sales, buy orders, and production must use the shared record renderer");
+assert(appScript.includes("bindRecordSelection(elements.supplyOrdersList, loadSupplyOrder)"), "grouped supply orders must use the shared selection binding");
+assert(appScript.includes("function setWorkspaceDataStatus"), "workspace editors must share status feedback behavior");
+assert(appScript.includes("function setButtonBusy"), "workspace save controls must share pending-state behavior");
+assert(appHtml.includes('class="directory-layout"'), "customer and supplier editors must share the directory layout");
+assert((appHtml.match(/class="workspace-data-status"/g) || []).length >= 5, "record workspaces must expose consistent live status regions");
+assert(styles.includes(".record-empty-state"), "record registers must use an instructive shared empty state");
 assert(appScript.includes("function catalogPriceForTier"), "order lines must resolve catalog prices by pricing tier");
 assert(appScript.includes("resellerPrice > 0 ? resellerPrice : storefrontPrice"), "goods without a bulk price must fall back to storefront pricing");
 assert(appScript.includes("function updateOrderPricingTier"), "staff must be able to override the customer pricing tier per order");
