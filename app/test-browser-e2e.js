@@ -67,11 +67,13 @@ async function run() {
     await signIn(page, workspace.code);
     await assertWorkspaceReady(page, workspace.code);
     await exerciseNavigation(page);
+    await updateBusinessAppearance(page);
     const customerId = await createCustomer(page);
     await createSalesOrder(page, customerId);
 
     await page.reload({ waitUntil: "networkidle" });
     await assertWorkspaceReady(page, workspace.code);
+    await page.locator('body[data-appearance="saloon"]').waitFor({ state: "visible" });
     await openSection(page, "workbench", "#workbenchSection");
     await assertCustomerPersisted(page);
     await assertSalesOrderPersisted(page);
@@ -184,6 +186,23 @@ async function exerciseNavigation(page) {
   await openMenuSection(page, "management", "operations", "#operationsSection");
   await openMenuSection(page, "owner", "business-settings", "#businessSettingsSection");
   await openSection(page, "dashboard", "#dashboardSection");
+}
+
+async function updateBusinessAppearance(page) {
+  await openMenuSection(page, "owner", "business-settings", "#businessSettingsSection");
+  const saloonTheme = page.locator('#settingsAppearanceThemes input[value="saloon"]');
+  await saloonTheme.check();
+  assert.equal(await page.locator("body").getAttribute("data-appearance"), "saloon");
+  const responsePromise = page.waitForResponse(response => response.url().endsWith("/api/admin/business-profile")
+    && response.request().method() === "PUT");
+  await page.locator("#saveBusinessSettingsButton").click();
+  const response = await responsePromise;
+  const result = await response.json();
+  assert.equal(response.status(), 200, JSON.stringify(result));
+  assert.equal(result.business.appearanceTheme, "saloon");
+  await page.locator("#businessSettingsStatus").filter({ hasText: "Saved" }).waitFor();
+  await page.screenshot({ path: path.join(RESULTS_DIR, "appearance-viewport.png") });
+  await page.screenshot({ path: path.join(RESULTS_DIR, "appearance-settings.png"), fullPage: true });
 }
 
 async function openSection(page, section, expectedSelector) {

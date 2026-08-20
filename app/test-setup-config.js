@@ -10,12 +10,14 @@ assert.equal(defaults.locations.length, 2);
 assert.equal(defaults.modules.production, true);
 assert.equal(defaults.navigation.sections.workbench, true);
 assert.equal(defaults.navigation.sections.finance, true);
+assert.equal(defaults.business.appearanceTheme, "gunsmith");
 
 const configuration = normalizeSetupPayload({
   business: {
     name: "Copper & Pine",
     ledgerName: "Copper & Pine Works",
     location: "Blackwater",
+    appearanceTheme: "saloon",
     currency: "USD",
     locale: "en-US",
     timezone: "America/New_York"
@@ -41,6 +43,7 @@ const configuration = normalizeSetupPayload({
 });
 
 assert.equal(configuration.business.name, "Copper & Pine");
+assert.equal(configuration.business.appearanceTheme, "saloon");
 assert.equal(configuration.modules.discord, true);
 assert.equal(configuration.modules.finance, true);
 assert.equal(configuration.navigation.sections.review, false);
@@ -61,6 +64,12 @@ const explicitNavigationOverride = normalizeSetupPayload({
   navigation: { sections: { finance: true } }
 });
 assert.equal(explicitNavigationOverride.navigation.sections.finance, true);
+
+const inferredTobacconistTheme = normalizeSetupPayload({
+  business: { name: "Lakefront Tobacco", currency: "USD", locale: "en-US", timezone: "UTC" },
+  catalog: { products: [{ name: "Cigar Box", category: "Tobacco" }] }
+});
+assert.equal(inferredTobacconistTheme.business.appearanceTheme, "tobacconist");
 
 const catalog = configurationToCatalogData(configuration);
 assert.equal(catalog.items[0].price, 15);

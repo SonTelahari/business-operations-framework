@@ -32,6 +32,8 @@ const MODULE_NAVIGATION_SECTIONS = Object.freeze({
   finance: "finance"
 });
 
+const APPEARANCE_THEMES = new Set(["gunsmith", "tobacconist", "saloon"]);
+
 const DEFAULT_LOCATIONS = Object.freeze([
   Object.freeze({ id: "storefront", name: "Storefront", type: "sales" }),
   Object.freeze({ id: "storage", name: "Storage", type: "storage" })
@@ -48,6 +50,7 @@ function defaultSetupConfiguration() {
       referenceId: "",
       description: "",
       logoUrl: "",
+      appearanceTheme: "gunsmith",
       currency: "USD",
       locale: "en-US",
       timezone: "UTC"
@@ -108,6 +111,11 @@ function normalizeSetupPayload(input) {
     ...products.map(product => product.category)
   ], 60);
   const recipes = normalizeRecipes(catalogInput.recipes, products, materials);
+  const appearanceTheme = normalizeAppearanceTheme(businessInput.appearanceTheme, {
+    business: businessInput,
+    materials,
+    products
+  });
 
   const modules = normalizeModules(source.modules);
   return {
@@ -120,6 +128,7 @@ function normalizeSetupPayload(input) {
       referenceId: cleanText(businessInput.referenceId, 100),
       description: cleanMultilineText(businessInput.description, 1000),
       logoUrl,
+      appearanceTheme,
       currency,
       locale,
       timezone
@@ -134,6 +143,23 @@ function normalizeSetupPayload(input) {
     navigation: normalizeNavigation(source.navigation, modules),
     catalog: { categories, materials, products, recipes }
   };
+}
+
+function normalizeAppearanceTheme(value, context = {}) {
+  const explicitTheme = cleanText(value, 30).toLowerCase();
+  if (APPEARANCE_THEMES.has(explicitTheme)) return explicitTheme;
+
+  const business = context.business || {};
+  const catalogText = [
+    business.name,
+    business.ledgerName,
+    business.description,
+    ...(context.materials || []).flatMap(item => [item.name, item.category]),
+    ...(context.products || []).flatMap(item => [item.name, item.label, item.category])
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (/tobacco|tobaccon|cigar|cigarette|snuff|rolling paper/.test(catalogText)) return "tobacconist";
+  if (/saloon|tavern|restaurant|kitchen|meal|whiskey|beer|produce|vegetable|flour/.test(catalogText)) return "saloon";
+  return "gunsmith";
 }
 
 function configurationToCatalogData(configuration) {

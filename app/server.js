@@ -98,7 +98,9 @@ const mimeTypes = {
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".webmanifest": "application/manifest+json; charset=utf-8",
-  ".png": "image/png"
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg"
 };
 const publicFiles = new Set([
   "/index.html",
@@ -123,6 +125,10 @@ const publicFiles = new Set([
   "/supply-telegram.js",
   "/inventory-counts.js",
   "/assets/frontier-firearms-logo.png",
+  "/assets/counter-gunsmith.jpg",
+  "/assets/counter-tobacconist.jpg",
+  "/assets/counter-saloon.jpg",
+  "/assets/ledger-oxblood-leather.jpg",
   "/assets/operations-ledger-32.png",
   "/assets/operations-ledger-192.png",
   "/assets/operations-ledger-512.png",
@@ -1570,6 +1576,7 @@ async function handleBusinessProfileRoute(request, response, url, user) {
         location: configuration.business.location,
         referenceId: configuration.business.referenceId,
         logoChanged: previous.logoUrl !== configuration.business.logoUrl,
+        appearanceChanged: previous.appearanceTheme !== configuration.business.appearanceTheme,
         navigationChanged: JSON.stringify(previousConfiguration.navigation?.sections || {})
           !== JSON.stringify(configuration.navigation?.sections || {})
       }

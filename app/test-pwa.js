@@ -176,7 +176,11 @@ assert(appScript.includes('function linkWorkspaceJob(event)'), "the ledger must 
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
 assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");
 assert(appHtml.includes('id="settingsLogoPreview"'), "business settings must preview branding changes");
+assert(appHtml.includes('id="settingsAppearanceThemes"'), "business settings must expose per-business counter themes");
 assert(appHtml.includes('id="settingsNavigationTabs"'), "business settings must expose per-business navigation controls");
+assert(appScript.includes("function applyAppearanceTheme("), "saved appearance choices must update the ledger scene");
+assert(styles.includes('counter-gunsmith.jpg'), "the ledger frame must use a trade-specific counter background");
+assert(styles.includes('ledger-oxblood-leather.jpg'), "the ledger cover must use the leather texture asset");
 assert(appHtml.includes('data-navigation-menu="inventory"'), "manager inventory pages must be grouped under one navigation menu");
 assert(appHtml.includes('data-navigation-menu="management"'), "manager operations pages must be grouped under one navigation menu");
 assert(appHtml.includes('data-navigation-menu="owner"'), "administrator pages must be grouped under an owner menu");

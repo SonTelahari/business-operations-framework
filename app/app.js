@@ -51,6 +51,7 @@ const NAVIGATION_GROUP_DEFINITIONS = Object.freeze([
 const DEFAULT_NAVIGATION_SECTIONS = Object.freeze(Object.fromEntries(
   NAVIGATION_TAB_DEFINITIONS.map(tab => [tab.section, true])
 ));
+const APPEARANCE_THEMES = new Set(["gunsmith", "tobacconist", "saloon"]);
 let deliveryDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "2-digit",
   month: "2-digit",
@@ -138,7 +139,7 @@ const { buildSupplyQuoteTelegram } = window.FRONTIER_SUPPLY_TELEGRAM;
 const ingredientCatalog = getRecipeIngredients();
 const stockCatalog = [...itemCatalog, ...ingredientCatalog];
 const productCatalogByKey = new Map();
-let businessProfile = { name: "Business", ledgerName: "Business Ledger", location: "", referenceId: "", description: "", logoUrl: "", currency: "USD", locale: "en-US", timezone: "UTC" };
+let businessProfile = { name: "Business", ledgerName: "Business Ledger", location: "", referenceId: "", description: "", logoUrl: "", appearanceTheme: "gunsmith", currency: "USD", locale: "en-US", timezone: "UTC" };
 let businessTerminology = { salesLocation: "Storefront", storageLocation: "Storage", salesOrder: "Sales Order" };
 let navigationSections = { ...DEFAULT_NAVIGATION_SECTIONS };
 rebuildCatalogIndexes();
@@ -563,6 +564,7 @@ const elements = {
   settingsSalesLocation: document.querySelector("#settingsSalesLocationInput"),
   settingsStorageLocation: document.querySelector("#settingsStorageLocationInput"),
   settingsSalesOrder: document.querySelector("#settingsSalesOrderInput"),
+  settingsAppearanceThemes: document.querySelector("#settingsAppearanceThemes"),
   settingsNavigationTabs: document.querySelector("#settingsNavigationTabs"),
   settingsLogoPreview: document.querySelector("#settingsLogoPreview"),
   settingsMonogramPreview: document.querySelector("#settingsMonogramPreview"),
@@ -1105,6 +1107,7 @@ function applyBusinessConfiguration(snapshot) {
   const locale = businessProfile.locale || "en-US";
   const timezone = businessProfile.timezone || "UTC";
   const currency = businessProfile.currency || "USD";
+  applyAppearanceTheme(businessSettingsDirty ? selectedAppearanceTheme() : businessProfile.appearanceTheme);
   deliveryDateFormatter = new Intl.DateTimeFormat(locale, {
     day: "2-digit",
     month: "2-digit",
@@ -1209,6 +1212,20 @@ function businessInitials(value) {
   return String(value || "Business Ledger").split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0]).join("").toUpperCase();
 }
 
+function normalizeAppearanceTheme(value) {
+  const theme = String(value || "").trim().toLowerCase();
+  return APPEARANCE_THEMES.has(theme) ? theme : "gunsmith";
+}
+
+function applyAppearanceTheme(value) {
+  document.body.dataset.appearance = normalizeAppearanceTheme(value);
+}
+
+function selectedAppearanceTheme() {
+  return elements.settingsAppearanceThemes?.querySelector('input[name="appearanceTheme"]:checked')?.value
+    || normalizeAppearanceTheme(businessProfile.appearanceTheme);
+}
+
 function isNavigationSectionEnabled(section) {
   if (section === "dashboard" || section === "business-settings") return true;
   return navigationSections[section] !== false;
@@ -1247,6 +1264,10 @@ function populateBusinessSettings() {
   elements.settingsReferenceId.value = businessProfile.referenceId || "";
   elements.settingsLogoUrl.value = businessProfile.logoUrl || "";
   elements.settingsDescription.value = businessProfile.description || "";
+  const appearanceTheme = normalizeAppearanceTheme(businessProfile.appearanceTheme);
+  elements.settingsAppearanceThemes?.querySelectorAll('input[name="appearanceTheme"]').forEach(input => {
+    input.checked = input.value === appearanceTheme;
+  });
   elements.settingsCurrency.value = businessProfile.currency || "USD";
   elements.settingsLocale.value = businessProfile.locale || "en-US";
   elements.settingsTimezone.value = businessProfile.timezone || "UTC";
@@ -1330,6 +1351,7 @@ async function saveBusinessSettings() {
           referenceId: elements.settingsReferenceId.value.trim(),
           logoUrl: elements.settingsLogoUrl.value.trim(),
           description: elements.settingsDescription.value.trim(),
+          appearanceTheme: selectedAppearanceTheme(),
           currency: elements.settingsCurrency.value.trim().toUpperCase(),
           locale: elements.settingsLocale.value.trim(),
           timezone: elements.settingsTimezone.value.trim()
@@ -1657,6 +1679,7 @@ function wireEvents() {
   elements.resetBusinessSettings.addEventListener("click", () => {
     clearDraftDirty("business-settings");
     populateBusinessSettings();
+    applyAppearanceTheme(businessProfile.appearanceTheme);
     elements.businessSettingsStatus.textContent = "Saved profile restored";
   });
   [
@@ -1679,6 +1702,12 @@ function wireEvents() {
   }));
   elements.settingsNavigationTabs.addEventListener("change", event => {
     if (!event.target.matches("[data-navigation-section]")) return;
+    markDraftDirty("business-settings");
+    elements.businessSettingsStatus.textContent = "Unsaved changes";
+  });
+  elements.settingsAppearanceThemes?.addEventListener("change", event => {
+    if (!event.target.matches('input[name="appearanceTheme"]')) return;
+    applyAppearanceTheme(event.target.value);
     markDraftDirty("business-settings");
     elements.businessSettingsStatus.textContent = "Unsaved changes";
   });

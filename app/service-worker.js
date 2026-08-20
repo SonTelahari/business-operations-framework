@@ -1,10 +1,14 @@
-const CACHE_NAME = "operations-ledger-public-v1";
+const CACHE_NAME = "operations-ledger-public-v2";
 const PUBLIC_ASSETS = [
   "/manifest.webmanifest",
   "/assets/operations-ledger-32.png",
   "/assets/operations-ledger-192.png",
   "/assets/operations-ledger-512.png",
-  "/assets/operations-ledger-maskable-512.png"
+  "/assets/operations-ledger-maskable-512.png",
+  "/assets/counter-gunsmith.jpg",
+  "/assets/counter-tobacconist.jpg",
+  "/assets/counter-saloon.jpg",
+  "/assets/ledger-oxblood-leather.jpg"
 ];
 
 self.addEventListener("install", event => {

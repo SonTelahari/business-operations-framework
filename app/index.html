@@ -11,7 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/operations-ledger-32.png">
     <link rel="apple-touch-icon" href="/assets/operations-ledger-192.png">
-    <link rel="stylesheet" href="styles.css?v=20260821-standard-controls">
+    <link rel="stylesheet" href="styles.css?v=20260821-ledger-appearance">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -2077,6 +2077,43 @@
             </div>
 
             <div class="business-settings-divider"></div>
+            <section class="business-appearance-settings" aria-labelledby="businessAppearanceTitle">
+              <div class="business-navigation-heading">
+                <div>
+                  <p class="eyebrow">Ledger Room</p>
+                  <h3 id="businessAppearanceTitle">Counter Setting</h3>
+                </div>
+                <span>Choose the trade scene shown around the ledger</span>
+              </div>
+              <div class="appearance-theme-options" id="settingsAppearanceThemes">
+                <label class="appearance-theme-option">
+                  <input type="radio" name="appearanceTheme" value="gunsmith">
+                  <span>
+                    <span class="appearance-theme-image appearance-theme-gunsmith" aria-hidden="true"></span>
+                    <strong>Gunsmith</strong>
+                    <small>Walnut, brass and steel</small>
+                  </span>
+                </label>
+                <label class="appearance-theme-option">
+                  <input type="radio" name="appearanceTheme" value="tobacconist">
+                  <span>
+                    <span class="appearance-theme-image appearance-theme-tobacconist" aria-hidden="true"></span>
+                    <strong>Tobacconist</strong>
+                    <small>Tobacco, matches and paper</small>
+                  </span>
+                </label>
+                <label class="appearance-theme-option">
+                  <input type="radio" name="appearanceTheme" value="saloon">
+                  <span>
+                    <span class="appearance-theme-image appearance-theme-saloon" aria-hidden="true"></span>
+                    <strong>Saloon</strong>
+                    <small>Flour, produce and stoneware</small>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <div class="business-settings-divider"></div>
             <div class="business-settings-fields business-settings-regional">
               <label>
                 Currency
@@ -2285,7 +2322,7 @@
     <script src="supply-telegram.js?v=20260714-telegram"></script>
     <script src="production-planner.js?v=20260820-multistage-production"></script>
     <script src="production-inventory.js?v=20260821-static-route"></script>
-    <script src="app.js?v=20260821-standard-controls"></script>
+    <script src="app.js?v=20260821-ledger-appearance"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>
