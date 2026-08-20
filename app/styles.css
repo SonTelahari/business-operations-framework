@@ -4980,6 +4980,47 @@ body.auth-page {
   overflow-wrap: anywhere;
 }
 
+.production-line-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.production-line-name::before {
+  box-sizing: border-box;
+  display: grid;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  color: transparent;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  content: "";
+}
+
+.production-line-name.completed::before {
+  color: #315649;
+  background: rgba(63, 102, 88, 0.14);
+  border-color: rgba(63, 102, 88, 0.48);
+  content: "\2713";
+  font-family: Arial, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.production-progress-row.production-line-completed {
+  box-shadow: inset 3px 0 rgba(63, 102, 88, 0.65);
+  padding-left: 10px;
+}
+
+.production-cycle-control .production-cycle-count.complete {
+  color: #315649;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .production-cycle-control {
   display: grid;
   grid-template-columns: auto 72px;

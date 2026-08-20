@@ -131,6 +131,9 @@ assert(appScript.includes('await saveActiveOrder({ syncInputs: false })'), "dire
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
 assert(appScript.includes('function planRecipeStages('), "production and restock plans must expand nested recipes");
 assert(appScript.includes('function productionBatchInventoryState('), "production readiness must net intermediate work in progress");
+assert(appScript.includes('class="production-progress-row${lineCompleted ? " production-line-completed" : ""}"'), "completed production lines must expose a distinct row state");
+assert(appScript.includes('${lineCompleted ? "Complete" : `${formatNumber(completedCrafts)} / ${formatNumber(plannedCrafts)}`}'), "completed production lines must replace the small cycle count with a clear label");
+assert(styles.includes('.production-line-name.completed::before'), "completed production lines must render a leading check marker");
 assert(appScript.includes('function isInternalCraftOrder(order)'), "the client must keep internal crafts distinct from customer sales");
 assert(appScript.includes('sourceType: orderProductionSourceType(activeOrder)'), "internal crafts must queue with their own production source type");
 assert(appScript.includes('signal: AbortSignal.timeout(45000)'), "production queue requests must stop waiting after a bounded timeout");

@@ -6019,16 +6019,17 @@ function renderProductionDetail(batch) {
   const productionMarkup = batch.lines.map(line => {
     const completedCrafts = Number(line.completedCrafts || 0);
     const plannedCrafts = Number(line.plannedCrafts || 0);
+    const lineCompleted = plannedCrafts > 0 && completedCrafts >= plannedCrafts;
     const inputValue = pendingTargets.get(line.id) ?? completedCrafts;
     return `
-      <div class="production-progress-row">
+      <div class="production-progress-row${lineCompleted ? " production-line-completed" : ""}">
         <div>
-          <strong>${escapeHtml(line.itemLabel || line.itemName)}</strong>
+          <strong class="production-line-name${lineCompleted ? " completed" : ""}">${escapeHtml(line.itemLabel || line.itemName)}</strong>
           <span>Stage ${formatNumber(line.stage || 1)} / ${formatNumber(line.requestedQuantity)} requested / ${formatNumber(plannedCrafts * line.recipeYield)} planned output${line.isIntermediate ? " / intermediate" : " / finished good"}</span>
         </div>
         <div class="production-cycle-control">
-          <span>${formatNumber(completedCrafts)} / ${formatNumber(plannedCrafts)}</span>
-          <input data-production-progress-line="${escapeHtml(line.id)}" type="number" min="${completedCrafts}" max="${plannedCrafts}" step="1" value="${inputValue}" aria-label="Completed production cycles for ${escapeHtml(line.itemLabel || line.itemName)}" ${closed ? "disabled" : ""}>
+          <span class="production-cycle-count${lineCompleted ? " complete" : ""}">${lineCompleted ? "Complete" : `${formatNumber(completedCrafts)} / ${formatNumber(plannedCrafts)}`}</span>
+          <input data-production-progress-line="${escapeHtml(line.id)}" type="number" min="${completedCrafts}" max="${plannedCrafts}" step="1" value="${inputValue}" aria-label="Completed production cycles for ${escapeHtml(line.itemLabel || line.itemName)}" ${closed || lineCompleted ? "disabled" : ""}>
         </div>
       </div>
     `;
