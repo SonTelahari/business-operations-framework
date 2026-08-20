@@ -201,6 +201,7 @@ function collectPayload() {
     tag: value(row, "tag"),
     category: value(row, "category"),
     salePrice: numberValue(row, "salePrice"),
+    resellerPrice: numberValue(row, "resellerPrice"),
     target: numberValue(row, "target"),
     storageTarget: numberValue(row, "storageTarget"),
     active: true
@@ -292,7 +293,8 @@ function addProductRow(product = {}) {
       <label>Display label<input data-field="label" maxlength="100" value="${escapeHtml(product.label || "")}"></label>
       <label>Category<input data-field="category" maxlength="60" value="${escapeHtml(product.category || "Products")}"></label>
       <label>Item tag<input data-field="tag" maxlength="150" value="${escapeHtml(product.tag || "")}"></label>
-      <label>Sale price<input data-field="salePrice" type="number" min="0" step="0.01" value="${numericValue(product.salePrice)}"></label>
+      <label>Storefront price<input data-field="salePrice" type="number" min="0" step="0.01" value="${numericValue(product.salePrice)}"></label>
+      <label>Bulk / reseller price<input data-field="resellerPrice" type="number" min="0" step="0.01" value="${numericValue(product.resellerPrice)}"></label>
       <label>Stock target<input data-field="target" type="number" min="0" step="1" value="${numericValue(product.target)}"></label>
       <label>Storage target<input data-field="storageTarget" type="number" min="0" step="1" value="${numericValue(product.storageTarget)}"></label>
       <button class="remove-row-button" data-remove-row type="button" aria-label="Remove product">Remove</button>
@@ -398,7 +400,7 @@ function saveDraft() {
     modules: Object.fromEntries([...document.querySelectorAll("input[name='module']")].map(input => [input.value, input.checked])),
     locations: collectRows(elements.locations).map(row => ({ name: value(row, "name"), type: value(row, "type") })),
     materials: collectRows(elements.materials).map(row => rowData(row, ["name", "category", "unit", "unitCost"])),
-    products: collectRows(elements.products).map(row => rowData(row, ["name", "label", "category", "tag", "salePrice", "target"])),
+    products: collectRows(elements.products).map(row => rowData(row, ["name", "label", "category", "tag", "salePrice", "resellerPrice", "target"])),
     recipes: collectRows(elements.recipes).map(row => ({
       productName: value(row, "productName"),
       yield: value(row, "yield"),

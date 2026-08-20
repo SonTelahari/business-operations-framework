@@ -222,6 +222,8 @@ const elements = {
   customerField: document.querySelector("#customerField"),
   customer: document.querySelector("#customerInput"),
   openCustomerRegister: document.querySelector("#openCustomerRegisterButton"),
+  pricingTierField: document.querySelector("#pricingTierField"),
+  resellerPricing: document.querySelector("#resellerPricingInput"),
   handler: document.querySelector("#handlerInput"),
   depositField: document.querySelector("#depositField"),
   deposit: document.querySelector("#depositInput"),
@@ -366,6 +368,7 @@ const elements = {
   customerPanel: document.querySelector("#customerPanel"),
   customerName: document.querySelector("#customerNameInput"),
   customerType: document.querySelector("#customerTypeInput"),
+  customerResellerPricing: document.querySelector("#customerResellerPricingInput"),
   customerLocation: document.querySelector("#customerLocationInput"),
   customerTelegram: document.querySelector("#customerTelegramInput"),
   customerNotes: document.querySelector("#customerNotesInput"),
@@ -503,6 +506,7 @@ const elements = {
   catalogItemUnit: document.querySelector("#catalogItemUnitInput"),
   catalogItemUnitCost: document.querySelector("#catalogItemUnitCostInput"),
   catalogItemSalePrice: document.querySelector("#catalogItemSalePriceInput"),
+  catalogItemResellerPrice: document.querySelector("#catalogItemResellerPriceInput"),
   catalogItemTarget: document.querySelector("#catalogItemTargetInput"),
   catalogItemStorageTarget: document.querySelector("#catalogItemStorageTargetInput"),
   catalogItemActive: document.querySelector("#catalogItemActiveInput"),
@@ -699,6 +703,7 @@ function newOrder() {
   return {
     id: crypto.randomUUID(),
     orderType: "Customer Sale",
+    pricingTier: "Storefront",
     customerId: "",
     customer: "",
     handler: currentUser?.fullName || "",
@@ -1031,6 +1036,7 @@ function newCustomer() {
     id: crypto.randomUUID(),
     name: "",
     customerType: "Individual",
+    pricingTier: "Storefront",
     location: "",
     telegram: "",
     notes: "",
@@ -1546,6 +1552,7 @@ function wireEvents() {
   [
     elements.customerName,
     elements.customerType,
+    elements.customerResellerPricing,
     elements.customerLocation,
     elements.customerTelegram,
     elements.customerNotes
@@ -1602,7 +1609,6 @@ function wireEvents() {
 
   ["input", "change"].forEach(eventName => {
     elements.orderType.addEventListener(eventName, updateOrderTypeFromInput);
-    elements.customer.addEventListener(eventName, updateActiveFromInputs);
     elements.handler.addEventListener(eventName, updateActiveFromInputs);
     elements.deposit.addEventListener(eventName, updateActiveFromInputs);
     elements.priority.addEventListener(eventName, updateActiveFromInputs);
@@ -1610,10 +1616,12 @@ function wireEvents() {
     elements.label.addEventListener(eventName, updateActiveFromInputs);
     elements.notes.addEventListener(eventName, updateActiveFromInputs);
   });
+  elements.customer.addEventListener("change", updateOrderCustomer);
+  elements.resellerPricing.addEventListener("change", updateOrderPricingTier);
 
   elements.itemSearch.addEventListener("input", () => {
     const item = findCatalogItem(elements.itemSearch.value);
-    elements.price.value = item ? item.price : "";
+    elements.price.value = item ? catalogPriceForTier(item, activeOrder.pricingTier) : "";
   });
 
   [elements.supplyProducer, elements.supplyExpectedDate, elements.supplyStatus, elements.supplyNotes]
@@ -1655,6 +1663,7 @@ function updateActiveFromInputs() {
   activeOrder.orderType = ["Internal Craft", "Counter Sale"].includes(elements.orderType.value)
     ? elements.orderType.value
     : "Customer Sale";
+  activeOrder.pricingTier = elements.resellerPricing.checked ? "Reseller" : "Storefront";
   if (isInternalCraftOrder(activeOrder) || isCounterSaleOrder(activeOrder)) {
     activeOrder.customerId = "";
     activeOrder.customer = "";
@@ -1681,6 +1690,40 @@ function updateActiveFromInputs() {
   renderSalesOrderActions();
 }
 
+function catalogPriceForTier(item, pricingTier = "Storefront") {
+  const storefrontPrice = Number(item?.price ?? item?.salePrice ?? 0);
+  const resellerPrice = Number(item?.resellerPrice ?? item?.metadata?.resellerPrice ?? 0);
+  return pricingTier === "Reseller" && resellerPrice > 0 ? resellerPrice : storefrontPrice;
+}
+
+function repriceActiveOrderLines() {
+  if (isInternalCraftOrder(activeOrder)) return;
+  activeOrder.lines = activeOrder.lines.map(line => {
+    if (line.custom) return line;
+    const item = findCatalogItem(line.name || line.label);
+    return item ? { ...line, unitPrice: catalogPriceForTier(item, activeOrder.pricingTier) } : line;
+  });
+  if (isCounterSaleOrder(activeOrder)) activeOrder.deposit = getSubtotal(activeOrder);
+}
+
+function updateOrderCustomer() {
+  if (isInternalCraftOrder(activeOrder) || isCounterSaleOrder(activeOrder)) return;
+  const customer = customers.find(candidate => candidate.id === elements.customer.value);
+  activeOrder.customerId = customer?.id || "";
+  activeOrder.customer = customer?.name || "";
+  activeOrder.pricingTier = customer?.pricingTier === "Reseller" ? "Reseller" : "Storefront";
+  repriceActiveOrderLines();
+  touchActive();
+  render();
+}
+
+function updateOrderPricingTier() {
+  activeOrder.pricingTier = elements.resellerPricing.checked ? "Reseller" : "Storefront";
+  repriceActiveOrderLines();
+  touchActive();
+  render();
+}
+
 function updateOrderTypeFromInput() {
   const nextType = ["Internal Craft", "Counter Sale"].includes(elements.orderType.value)
     ? elements.orderType.value
@@ -1700,10 +1743,7 @@ function updateOrderTypeFromInput() {
     activeOrder.customerId = "";
     activeOrder.customer = "";
     if (wasInternal) {
-      activeOrder.lines = activeOrder.lines.map(line => ({
-        ...line,
-        unitPrice: Number(findCatalogItem(line.name || line.label)?.price || 0)
-      }));
+      repriceActiveOrderLines();
     }
     activeOrder.deposit = getSubtotal(activeOrder);
     activeOrder.priority = "Normal";
@@ -1711,10 +1751,7 @@ function updateOrderTypeFromInput() {
     activeOrder.status = "Completed";
     activeView = "quote";
   } else if (wasInternal) {
-    activeOrder.lines = activeOrder.lines.map(line => ({
-      ...line,
-      unitPrice: Number(findCatalogItem(line.name || line.label)?.price || 0)
-    }));
+    repriceActiveOrderLines();
   } else if (wasCounterSale) {
     activeOrder.deposit = 0;
     activeOrder.status = "Draft";
@@ -1747,7 +1784,9 @@ function addItemLine() {
     tag: item.tag,
     category: item.category,
     quantity: Math.max(1, Number(elements.quantity.value || 1)),
-    unitPrice: isInternalCraftOrder(activeOrder) ? 0 : Number(elements.price.value || item.price || 0),
+    unitPrice: isInternalCraftOrder(activeOrder)
+      ? 0
+      : Number(elements.price.value || catalogPriceForTier(item, activeOrder.pricingTier) || 0),
     custom: false
   });
 
@@ -2594,6 +2633,7 @@ function loadCustomer(customerId) {
 function updateCustomerFromInputs() {
   activeCustomer.name = elements.customerName.value.trim();
   activeCustomer.customerType = elements.customerType.value;
+  activeCustomer.pricingTier = elements.customerResellerPricing.checked ? "Reseller" : "Storefront";
   activeCustomer.location = elements.customerLocation.value.trim();
   activeCustomer.telegram = elements.customerTelegram.value.trim();
   activeCustomer.notes = elements.customerNotes.value;
@@ -2626,6 +2666,8 @@ async function saveCustomer() {
     if (!isInternalCraftOrder(activeOrder) && !isCounterSaleOrder(activeOrder) && !activeOrder.customerId) {
       activeOrder.customerId = activeCustomer.id;
       activeOrder.customer = activeCustomer.name;
+      activeOrder.pricingTier = activeCustomer.pricingTier;
+      repriceActiveOrderLines();
       touchActive();
     }
     elements.customerDataStatus.textContent = `${activeCustomer.name} saved`;
@@ -2736,6 +2778,7 @@ function renderCustomerWorkspace() {
   const saved = customers.some(customer => customer.id === activeCustomer.id);
   elements.customerName.value = activeCustomer.name || "";
   elements.customerType.value = activeCustomer.customerType || "Individual";
+  elements.customerResellerPricing.checked = activeCustomer.pricingTier === "Reseller";
   elements.customerLocation.value = activeCustomer.location || "";
   elements.customerTelegram.value = activeCustomer.telegram || "";
   elements.customerNotes.value = activeCustomer.notes || "";
@@ -2801,6 +2844,7 @@ function renderCustomerDirectory() {
           <span>${formatNumber(stats.completedSales)} sales</span>
         </span>
         <span>${escapeHtml(customer.customerType || "Individual")} / ${escapeHtml(customer.location || "Location not set")}</span>
+        <span>${customer.pricingTier === "Reseller" ? "Bulk / reseller pricing" : "Storefront pricing"}</span>
         <span>${formatCurrency(stats.lifetimeSales)} lifetime / ${formatCurrency(stats.outstandingBalance)} outstanding</span>
         <small>${stats.lastActivityAt ? `Last activity ${formatDateTime(stats.lastActivityAt)}` : "No sales history yet"}</small>
       </button>
@@ -2952,6 +2996,7 @@ function preferredSupplyUnitPrice(name) {
 function render() {
   renderOrderMode();
   elements.orderType.value = activeOrder.orderType || "Customer Sale";
+  elements.resellerPricing.checked = activeOrder.pricingTier === "Reseller";
   renderCustomerSelect();
   elements.handler.value = activeOrder.handler;
   elements.deposit.value = isCounterSaleOrder(activeOrder) ? getSubtotal(activeOrder) : activeOrder.deposit || 0;
@@ -2993,6 +3038,7 @@ function renderOrderMode() {
       ? "Over-the-counter Cash Sale"
       : businessTerminology.salesOrder;
   elements.customerField.classList.toggle("hidden", internal || counterSale);
+  elements.pricingTierField.classList.toggle("hidden", internal);
   elements.depositField.classList.toggle("hidden", internal || counterSale);
   elements.linePriceField.classList.toggle("hidden", internal);
   elements.quickCustomWork.classList.toggle("hidden", internal);
@@ -3369,6 +3415,7 @@ function openCatalogItemDialog(itemId = "") {
   elements.catalogItemUnit.value = existing?.unit || existing?.unitName || "unit";
   elements.catalogItemUnitCost.value = Number(existing?.unitCost ?? existing?.price ?? 0);
   elements.catalogItemSalePrice.value = Number(existing?.salePrice ?? existing?.price ?? 0);
+  elements.catalogItemResellerPrice.value = Number(existing?.resellerPrice ?? existing?.metadata?.resellerPrice ?? 0);
   elements.catalogItemTarget.value = Number(existing?.stockTarget ?? existing?.target ?? 0);
   elements.catalogItemStorageTarget.value = Number(existing?.storageTarget ?? 0);
   elements.catalogItemActive.value = existing?.active === false ? "false" : "true";
@@ -3415,6 +3462,7 @@ async function saveCatalogItem() {
     unit: elements.catalogItemUnit.value,
     unitCost: elements.catalogItemUnitCost.value,
     salePrice: elements.catalogItemSalePrice.value,
+    resellerPrice: elements.catalogItemResellerPrice.value,
     target: elements.catalogItemTarget.value,
     storageTarget: elements.catalogItemStorageTarget.value,
     active: elements.catalogItemActive.value === "true"
@@ -3462,6 +3510,7 @@ function catalogItemDraft(input) {
     unit: String(input.unit || "unit").trim() || "unit",
     unitCost: input.unitCost === "" ? 0 : formNumber(input.unitCost),
     salePrice: sellable ? input.salePrice === "" ? 0 : formNumber(input.salePrice) : 0,
+    resellerPrice: sellable ? input.resellerPrice === "" ? 0 : formNumber(input.resellerPrice) : 0,
     target: sellable ? input.target === "" ? 0 : formNumber(input.target) : 0,
     storageTarget: input.storageTarget === "" ? 0 : formNumber(input.storageTarget),
     active: input.active !== false
@@ -3471,7 +3520,7 @@ function catalogItemDraft(input) {
 function validateCatalogItemDraft(item) {
   if (!item.name || !item.label) return "Enter a catalog name and display label";
   if (!item.category) return "Enter a category";
-  if (![item.unitCost, item.salePrice, item.target, item.storageTarget].every(value => Number.isFinite(value) && value >= 0)) {
+  if (![item.unitCost, item.salePrice, item.resellerPrice, item.target, item.storageTarget].every(value => Number.isFinite(value) && value >= 0)) {
     return "Costs, prices, and targets must be zero or greater";
   }
   return "";
@@ -3517,9 +3566,10 @@ function renderCatalogLedger() {
       <td>${escapeHtml(item.category || "Uncategorized")}</td>
       <td>${formatCurrency(item.unitCost || 0)}</td>
       <td>${item.itemType === "material" ? "-" : formatCurrency(item.salePrice ?? item.price ?? 0)}</td>
+      <td>${item.itemType === "material" ? "-" : Number(item.resellerPrice || 0) > 0 ? formatCurrency(item.resellerPrice) : "Storefront"}</td>
       <td><button class="ghost-button" type="button" data-edit-catalog-good="${escapeHtml(item.id || item.name)}">Edit</button></td>
     </tr>
-  `).join("") : '<tr><td colspan="6" class="empty-line">No goods match this search</td></tr>';
+  `).join("") : '<tr><td colspan="7" class="empty-line">No goods match this search</td></tr>';
   elements.catalogDataStatus.textContent = backendSnapshot?.dataBackend === "postgresql"
     ? `${goods.length} goods / ${Object.keys(recipeCatalog).length} recipes in the shared catalog`
     : "Catalog editing requires the hosted database version";
@@ -3794,6 +3844,7 @@ function renderProductCard() {
   const target = stockTargets.find(entry => !entry.deleting && inventoryOverviewKey(entry) === inventoryOverviewKey(item));
   const storageTarget = storageTargets.find(entry => !entry.deleting && inventoryOverviewKey(entry) === inventoryOverviewKey(item));
   const retailPrice = Number(item.price || 0);
+  const resellerPrice = Number(item.resellerPrice || 0);
   const productPricing = pricingCatalog.products?.[item.name];
   const ingredients = recipe.map(([ingredient, quantity, source]) => {
     const pricing = pricingCatalog.materials?.[ingredient];
@@ -3813,6 +3864,7 @@ function renderProductCard() {
   const unitCost = yieldQuantity ? batchCost / yieldQuantity : batchCost;
   const unitProfit = retailPrice > 0 && costKnown ? retailPrice - unitCost : null;
   const margin = unitProfit !== null && retailPrice > 0 ? (unitProfit / retailPrice) * 100 : null;
+  const resellerUnitProfit = resellerPrice > 0 && costKnown ? resellerPrice - unitCost : null;
 
   elements.productCardCategory.textContent = item.category || "Product Record";
   elements.productCardTitle.textContent = item.label || item.name;
@@ -3823,7 +3875,8 @@ function renderProductCard() {
   const managementPricing = isManagement() ? `
     <div><dt>MSRP range</dt><dd>${productPricing ? `${formatCurrency(productPricing.low)}-${formatCurrency(productPricing.high)}` : "Unavailable"}</dd></div>
     <div><dt>MSRP material cost</dt><dd>${costKnown ? `${formatCurrency(unitCost)} / unit` : "Unavailable"}</dd></div>
-        <div><dt>Est. gross / unit</dt><dd class="${unitProfit !== null && unitProfit < 0 ? "negative" : ""}">${unitProfit === null ? "Unavailable" : formatCurrency(unitProfit)}</dd></div>
+    <div><dt>Est. storefront gross / unit</dt><dd class="${unitProfit !== null && unitProfit < 0 ? "negative" : ""}">${unitProfit === null ? "Unavailable" : formatCurrency(unitProfit)}</dd></div>
+    <div><dt>Est. reseller gross / unit</dt><dd class="${resellerUnitProfit !== null && resellerUnitProfit < 0 ? "negative" : ""}">${resellerUnitProfit === null ? "Unavailable" : formatCurrency(resellerUnitProfit)}</dd></div>
     <div><dt>Est. gross margin</dt><dd>${margin === null ? "Unavailable" : `${formatNumber(margin)}%`}</dd></div>
   ` : "";
   const salesSection = isManagement() ? renderProductSalesInsight(insight) : "";
@@ -3854,7 +3907,8 @@ function renderProductCard() {
     <section class="product-card-section">
       <h3>${isManagement() ? "Price and Cost" : "Price"}</h3>
       <dl class="product-card-facts">
-        <div><dt>Store price</dt><dd>${retailPrice > 0 ? formatCurrency(retailPrice) : "Not priced"}</dd></div>
+        <div><dt>Storefront price</dt><dd>${retailPrice > 0 ? formatCurrency(retailPrice) : "Not priced"}</dd></div>
+        <div><dt>Bulk / reseller</dt><dd>${resellerPrice > 0 ? formatCurrency(resellerPrice) : "Uses storefront price"}</dd></div>
         <div><dt>Recipe yield</dt><dd>${hasRecipe ? formatNumber(yieldQuantity) : "-"}</dd></div>
         ${managementPricing}
       </dl>
@@ -5423,6 +5477,7 @@ function renderOrdersList() {
       <span class="status-pill ${order.status.toLowerCase()}">${escapeHtml(order.status)}</span>
       <strong>${escapeHtml(orderDisplayName(order))}</strong>
       <span>${escapeHtml(isInternalCraftOrder(order) ? "Internal Craft" : isCounterSaleOrder(order) ? "Counter Sale" : "Customer Order")} / ${order.lines.length} lines / ${formatCurrency(isInternalCraftOrder(order) ? 0 : getSubtotal(order))}</span>
+      ${isInternalCraftOrder(order) ? "" : `<span>${order.pricingTier === "Reseller" ? "Bulk / reseller pricing" : "Storefront pricing"}</span>`}
       <span>${formatDelivery(order.deliveryDate)}</span>
       <small>${formatDateTime(order.updatedAt)}</small>
     </button>
@@ -5437,7 +5492,10 @@ function renderMeta() {
   const sharedState = activeOrder.revision > 0
     ? `Shared revision ${activeOrder.revision}${activeOrder.updatedBy ? ` by ${activeOrder.updatedBy}` : ""}`
     : "Not yet saved";
-  elements.orderMeta.textContent = `${activeOrder.status} / ${activeOrder.priority} / ${sharedState} / ${formatDateTime(activeOrder.updatedAt)}`;
+  const pricing = isInternalCraftOrder(activeOrder)
+    ? "No sale pricing"
+    : activeOrder.pricingTier === "Reseller" ? "Bulk / reseller pricing" : "Storefront pricing";
+  elements.orderMeta.textContent = `${activeOrder.status} / ${activeOrder.priority} / ${pricing} / ${sharedState} / ${formatDateTime(activeOrder.updatedAt)}`;
 }
 
 async function copySummary() {
@@ -5473,6 +5531,7 @@ function buildSummary(order) {
     `${businessProfile.name || "Business"} ${internal ? "Internal Craft" : counterSale ? "Cash Sale Receipt" : "Quote"}`,
     internal ? "Purpose: Build stock for storage" : counterSale ? "Customer: Over-the-counter" : `Customer: ${order.customer || ""}`,
     order.handler ? `Handler: ${order.handler}` : "",
+    internal ? "" : `Pricing: ${order.pricingTier === "Reseller" ? "Bulk / reseller" : "Storefront"}`,
     order.deliveryDate
       ? `${internal ? "Target" : "Delivery"}: ${formatDelivery(order.deliveryDate)}`
       : internal ? "Target: Not set" : counterSale ? "Payment: Cash" : "Order Type: In-store",

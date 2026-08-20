@@ -130,11 +130,13 @@ async function run() {
       id: "customer-arthur",
       name: "Arthur Morgan",
       customerType: "Individual",
+      pricingTier: "Reseller",
       location: "Valentine",
       telegram: "SW-184",
       notes: "Prefers rifles"
     }, actor);
     assert.equal(customer.name, "Arthur Morgan");
+    assert.equal(customer.pricingTier, "Reseller");
     assert.equal(customer.stats.orderCount, 0);
     await assert.rejects(() => store.saveCustomer({
       name: " arthur MORGAN "
@@ -145,6 +147,7 @@ async function run() {
       orderType: "Customer Sale",
       customerId: customer.id,
       customer: "Stale name ignored",
+      pricingTier: "Reseller",
       status: "Completed",
       deposit: 0,
       lines: [
@@ -152,7 +155,7 @@ async function run() {
         { name: "Rifle Ammo Express", label: "Rifle Ammo Express", quantity: 2, unitPrice: 2.25 }
       ]
     }, actor);
-    await store.saveSalesOrder({
+    const activeCustomerOrder = await store.saveSalesOrder({
       id: "customer-active-order",
       orderType: "Customer Sale",
       customerId: customer.id,
@@ -160,6 +163,8 @@ async function run() {
       deposit: 50,
       lines: [{ name: "Navy Revolver", label: "Navy Revolver", quantity: 2, unitPrice: 105 }]
     }, actor);
+    assert.equal(activeCustomerOrder.pricingTier, "Storefront", "orders without an explicit tier remain on storefront pricing");
+    assert.equal(store.getSalesOrder("customer-completed-sale").pricingTier, "Reseller");
 
     const customerWithHistory = store.getCustomer(customer.id);
     assert.equal(customerWithHistory.stats.orderCount, 2);

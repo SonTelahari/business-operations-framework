@@ -32,7 +32,7 @@ const configuration = normalizeSetupPayload({
       { name: "Copper", category: "Metals", unit: "bar", unitCost: 2.5, storageTarget: 30 },
       { name: "Copper Sheet", category: "Metals", unit: "sheet", unitCost: 5 }
     ],
-    products: [{ name: "Copper Pan", category: "Cookware", salePrice: 15, target: 4, storageTarget: 2 }],
+    products: [{ name: "Copper Pan", category: "Cookware", salePrice: 15, resellerPrice: 12, target: 4, storageTarget: 2 }],
     recipes: [
       { productName: "Copper Pan", yield: 1, ingredients: [{ name: "Copper", quantity: 3 }] },
       { productName: "Copper Sheet", yield: 1, ingredients: [{ name: "Copper", quantity: 2 }] }
@@ -64,6 +64,8 @@ assert.equal(explicitNavigationOverride.navigation.sections.finance, true);
 
 const catalog = configurationToCatalogData(configuration);
 assert.equal(catalog.items[0].price, 15);
+assert.equal(catalog.items[0].resellerPrice, 12);
+assert.equal(configuration.catalog.products[0].resellerPrice, 12);
 assert.equal(catalog.items[0].storageTarget, 2);
 assert.equal(catalog.materials.find(material => material.name === "Copper").storageTarget, 30);
 assert.deepEqual(catalog.recipes["Copper Pan"], [["Copper", 3]]);

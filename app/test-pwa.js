@@ -59,8 +59,11 @@ assert(appHtml.includes('id="orderTypeSelect"'), "the workbench must expose cust
 assert(appHtml.includes('<option value="Internal Craft">Internal Craft</option>'), "internal stock builds must be selectable from the workbench");
 assert(appHtml.includes('<option value="Counter Sale">Over-the-counter Cash Sale</option>'), "cash sales must be distinct from registered customer orders");
 assert(appHtml.includes('id="customerInput"'), "customer orders must select a registered customer");
+assert(appHtml.includes('id="resellerPricingInput"'), "sales orders must allow a per-order bulk pricing override");
 assert(appHtml.includes('id="customerPanel"'), "the sales workspace must expose a customer register");
+assert(appHtml.includes('id="customerResellerPricingInput"'), "customer records must support a default pricing tier");
 assert(appHtml.includes('id="customerHistoryList"'), "customer records must expose sales history");
+assert(appHtml.includes('id="catalogItemResellerPriceInput"'), "catalog goods must store a bulk or reseller price");
 assert(appHtml.includes('id="storefrontOverviewValue"'), "the Store overview must show storefront value");
 assert(appHtml.includes('id="storageOverviewValue"'), "the Store overview must show storage value");
 assert(appHtml.includes('<div class="management-only">\n              <span>Storefront Value</span>'), "storefront value must remain management-only");
@@ -108,6 +111,9 @@ assert(appScript.includes("function renderWebhookLog"), "the review workspace mu
 assert(appScript.includes("let reviewEditorDirty = false"), "webhook review must track unsaved editor changes");
 assert(appScript.includes("preserveReviewEditor: true"), "background refreshes must preserve unsaved webhook review input");
 assert(appScript.includes("function renderCustomerWorkspace"), "the sales workspace must render customer statistics and history");
+assert(appScript.includes("function catalogPriceForTier"), "order lines must resolve catalog prices by pricing tier");
+assert(appScript.includes("resellerPrice > 0 ? resellerPrice : storefrontPrice"), "goods without a bulk price must fall back to storefront pricing");
+assert(appScript.includes("function updateOrderPricingTier"), "staff must be able to override the customer pricing tier per order");
 assert(appScript.includes("let customerDirty = false"), "background refreshes must preserve unsaved customer edits");
 assert(appScript.includes("function isCounterSaleOrder"), "counter sales must use their own workflow");
 assert(styles.includes(".customer-history-list"), "customer sales history must use a bounded ledger list");

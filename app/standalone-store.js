@@ -428,6 +428,7 @@ class StandaloneStore {
         unitName: item.unitName,
         unitCost: item.unitCost,
         salePrice: item.salePrice,
+        resellerPrice: item.resellerPrice,
         target: item.stockTarget,
         storageTarget: item.storageTarget,
         currentStock: Math.max(0, count.quantity),
@@ -467,6 +468,7 @@ class StandaloneStore {
         itemType: item.itemType,
         category: item.category,
         salePrice: item.salePrice,
+        resellerPrice: item.resellerPrice,
         target: isSellableCatalogItem(item) ? item.stockTarget : 0,
         storageTarget: item.storageTarget,
         currentStock: Math.max(0, count.quantity),
@@ -488,6 +490,7 @@ class StandaloneStore {
         category: item.category,
         unitCost: item.unitCost,
         salePrice: item.salePrice,
+        resellerPrice: item.resellerPrice,
         storageTarget: item.storageTarget,
         storageCount: Math.max(0, count.quantity),
         countedAt: count.countedAt,
@@ -905,6 +908,7 @@ class StandaloneStore {
       const metadata = json(existing.rows[0].metadata, {});
       metadata.updatedBy = cleanText(input.updatedBy, 100);
       metadata.updatedFrom = "Catalog Ledger";
+      metadata.resellerPrice = item.resellerPrice;
       const result = await client.query(`
         UPDATE catalog_items SET
           item_type = $3, label = $4, item_tag = $5, category = $6, unit_name = $7,
@@ -1369,6 +1373,15 @@ class StandaloneStore {
 }
 
 async function upsertCatalogItem(client, businessId, item) {
+  const normalizedName = inventoryKey(item.name);
+  const existing = await client.query(`
+    SELECT metadata FROM catalog_items WHERE business_id = $1 AND normalized_name = $2
+  `, [businessId, normalizedName]);
+  const metadata = {
+    source: "Business setup",
+    resellerPrice: number(item.resellerPrice),
+    ...json(existing.rows[0]?.metadata, {})
+  };
   await client.query(`
     INSERT INTO catalog_items (
       business_id, id, item_type, name, normalized_name, label, item_tag, category,
@@ -1399,10 +1412,10 @@ async function upsertCatalogItem(client, businessId, item) {
       metadata = EXCLUDED.metadata,
       updated_at = now()
   `, [
-    businessId, item.id || crypto.randomUUID(), item.type, item.name, inventoryKey(item.name),
+    businessId, item.id || crypto.randomUUID(), item.type, item.name, normalizedName,
     item.label || item.name, item.tag || "", item.category || (item.type === "material" ? "Materials" : "Products"),
     item.unit || "unit", number(item.unitCost), number(item.salePrice), number(item.target), number(item.storageTarget), item.active !== false,
-    JSON.stringify(item.aliases || []), JSON.stringify({ source: "Business setup" })
+    JSON.stringify(item.aliases || []), JSON.stringify(metadata)
   ]);
 }
 
@@ -1852,6 +1865,7 @@ async function createCatalogItemRecord(client, businessId, input, { source, crea
         ...json(existing.metadata, {}),
         source,
         createdBy,
+        resellerPrice: input.resellerPrice,
         reactivatedAt: new Date().toISOString()
       };
       const reactivated = await client.query(`
@@ -1876,7 +1890,8 @@ async function createCatalogItemRecord(client, businessId, input, { source, crea
   }
   const metadata = {
     source,
-    createdBy
+    createdBy,
+    resellerPrice: input.resellerPrice
   };
   if (isSellableCatalogItem({ itemType: input.type }) && input.salePrice > 0) {
     metadata.msrpLow = input.salePrice;
@@ -2035,6 +2050,7 @@ function normalizeCatalogItem(input) {
     unit: cleanText(input?.unit || input?.unitName, 50) || "unit",
     unitCost: catalogNumber(input?.unitCost, "Unit cost"),
     salePrice: sellable ? catalogNumber(input?.salePrice ?? input?.price, "Sale price") : 0,
+    resellerPrice: sellable ? catalogNumber(input?.resellerPrice, "Bulk / reseller price") : 0,
     target: sellable ? catalogNumber(input?.target ?? input?.stockTarget, "Stock target") : 0,
     storageTarget: catalogNumber(input?.storageTarget, "Storage target")
   };
@@ -2159,6 +2175,7 @@ function catalogRow(row) {
     unitName: row.unit_name,
     unitCost: number(row.unit_cost),
     salePrice: number(row.sale_price),
+    resellerPrice: number(json(row.metadata, {}).resellerPrice),
     stockTarget: number(row.stock_target),
     storageTarget: number(row.storage_target),
     active: row.active !== false,

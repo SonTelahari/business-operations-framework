@@ -11,7 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/operations-ledger-32.png">
     <link rel="apple-touch-icon" href="/assets/operations-ledger-192.png">
-    <link rel="stylesheet" href="styles.css?v=20260820-dashboard-shortcuts">
+    <link rel="stylesheet" href="styles.css?v=20260820-customer-pricing-tiers">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -359,8 +359,12 @@
                 </select>
               </label>
               <label class="catalog-product-field">
-                Sale Price
+                Storefront Price
                 <input id="catalogItemSalePriceInput" type="number" min="0" step="0.01" value="0">
+              </label>
+              <label class="catalog-product-field">
+                Bulk / Reseller Price
+                <input id="catalogItemResellerPriceInput" type="number" min="0" step="0.01" value="0">
               </label>
               <label class="catalog-product-field">
                 Storefront Target
@@ -399,7 +403,7 @@
           <div class="catalog-table-wrap">
             <table class="catalog-table">
               <thead>
-                <tr><th>Good</th><th>Role</th><th>Category</th><th>Unit Cost</th><th>Sale Price</th><th></th></tr>
+                <tr><th>Good</th><th>Role</th><th>Category</th><th>Unit Cost</th><th>Storefront</th><th>Reseller</th><th></th></tr>
               </thead>
               <tbody id="catalogGoodsBody"></tbody>
             </table>
@@ -730,6 +734,10 @@
                 </label>
                 <button class="ghost-button" id="openCustomerRegisterButton" type="button">New Customer</button>
               </div>
+              <label class="checkbox-line pricing-tier-toggle" id="pricingTierField">
+                <input id="resellerPricingInput" type="checkbox">
+                <span><strong>Bulk / Reseller Pricing</strong><small>Use the alternate catalog price for this order</small></span>
+              </label>
               <label>
                 Handler
                 <input id="handlerInput" type="text" autocomplete="off" placeholder="Employee">
@@ -912,6 +920,10 @@
                 <label>
                   Telegram
                   <input id="customerTelegramInput" type="text" autocomplete="off" placeholder="In-game telegram number">
+                </label>
+                <label class="checkbox-line customer-pricing-default">
+                  <input id="customerResellerPricingInput" type="checkbox">
+                  <span><strong>Bulk / Reseller Customer</strong><small>New orders default to reseller pricing</small></span>
                 </label>
               </div>
 
@@ -2244,7 +2256,7 @@
       <option value="Australia/Sydney"></option>
     </datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260820-dashboard-shortcuts"></script>
+    <script src="app.js?v=20260820-customer-pricing-tiers"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

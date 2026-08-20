@@ -4010,6 +4010,7 @@ function mergeCatalogWithSheetProducts(data, sheetSnapshot) {
       unit: String(product.unitName || base.unit || "unit"),
       unitCost: Number(product.unitCost || base.unitCost || 0),
       price: Number(product.salePrice || 0),
+      resellerPrice: Number(product.resellerPrice ?? base.resellerPrice ?? 0),
       target: Number(product.target || 0),
       active: product.active !== false,
       aliases: Array.isArray(product.aliases) ? [...product.aliases] : base.aliases || [],

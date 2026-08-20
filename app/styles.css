@@ -961,6 +961,38 @@ h2 {
   grid-template-columns: minmax(210px, 1.4fr) repeat(3, minmax(130px, 0.8fr));
 }
 
+.pricing-tier-toggle,
+.customer-pricing-default {
+  align-self: end;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  background: rgba(84, 113, 124, 0.06);
+}
+
+.customer-pricing-default {
+  grid-column: span 2;
+}
+
+.pricing-tier-toggle > span,
+.customer-pricing-default > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pricing-tier-toggle strong,
+.customer-pricing-default strong {
+  font-size: 0.78rem;
+}
+
+.pricing-tier-toggle small,
+.customer-pricing-default small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
 .customer-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

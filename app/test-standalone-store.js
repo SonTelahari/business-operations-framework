@@ -18,7 +18,7 @@ async function run() {
         materials: [{ id: "iron", name: "Iron", category: "Metals", unit: "bar", unitCost: 2, storageTarget: 12 }],
         products: [{
           id: "widget", name: "Iron Widget", label: "Iron Widget", tag: "ITEM_IRON_WIDGET",
-          category: "Goods", salePrice: 25, target: 4
+          category: "Goods", salePrice: 25, resellerPrice: 20, target: 4
         }, {
           id: "unpriced-widget", name: "Unpriced Widget", label: "Unpriced Widget", tag: "ITEM_UNPRICED_WIDGET",
           category: "Goods", salePrice: 0, target: 0
@@ -70,10 +70,11 @@ async function run() {
       action: "catalog_item",
       item: {
         type: "product", name: "Imported Knife", label: "Imported Knife", category: "Resale",
-        salePrice: 12, target: 2, createdBy: "Ada Lovelace"
+        salePrice: 12, resellerPrice: 9, target: 2, createdBy: "Ada Lovelace"
       }
     });
     assert.equal(addedProduct.item.itemTag, "", "manual catalog goods may learn their game tag later");
+    assert.equal(addedProduct.item.resellerPrice, 9);
     const addedDualPurposeGood = await store.handleGuiPayload({
       action: "catalog_item",
       item: {
@@ -93,12 +94,43 @@ async function run() {
         unit: "bundle",
         unitCost: 1.75,
         salePrice: 3.25,
+        resellerPrice: 2.75,
         target: 8,
         active: true,
         updatedBy: "Ada Lovelace"
       }
     });
     assert.equal(updatedDualPurposeGood.item.label, "Raw Tobacco Leaf");
+    assert.equal(updatedDualPurposeGood.item.resellerPrice, 2.75);
+    const setupSnapshot = await store.snapshot();
+    const setupWidget = setupSnapshot.inventory.products.find(item => item.itemName === "Iron Widget");
+    assert.equal(setupWidget.resellerPrice, 20);
+    const clearedWidgetResellerPrice = await store.handleGuiPayload({
+      action: "catalog_item_update",
+      item: {
+        id: setupWidget.id,
+        type: "product",
+        name: "Iron Widget",
+        label: "Iron Widget",
+        tag: "ITEM_IRON_WIDGET",
+        category: "Goods",
+        unit: "unit",
+        unitCost: 0,
+        salePrice: 25,
+        resellerPrice: 0,
+        target: 4,
+        storageTarget: 0,
+        active: true,
+        updatedBy: "Ada Lovelace"
+      }
+    });
+    assert.equal(clearedWidgetResellerPrice.item.resellerPrice, 0);
+    await store.syncCatalog(configuration);
+    assert.equal(
+      (await store.snapshot()).inventory.products.find(item => item.itemName === "Iron Widget").resellerPrice,
+      0,
+      "catalog syncs must preserve a manager-cleared reseller price"
+    );
     await store.handleGuiPayload({
       action: "recipe_upsert",
       recipe: {
