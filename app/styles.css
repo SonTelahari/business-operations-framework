@@ -1317,6 +1317,13 @@ h2 {
   min-width: 1220px;
 }
 
+.supply-workspace {
+  grid-template-areas:
+    "active summary"
+    "saved summary"
+    "suppliers suppliers";
+}
+
 .supply-workspace > * {
   min-width: 0;
 }
@@ -2281,6 +2288,14 @@ tr:last-child td {
       "summary"
       "saved"
       "customers";
+  }
+
+  .supply-workspace {
+    grid-template-areas:
+      "active"
+      "summary"
+      "saved"
+      "suppliers";
   }
 
   .summary-panel {

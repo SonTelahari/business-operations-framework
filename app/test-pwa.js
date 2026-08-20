@@ -40,6 +40,14 @@ assert(setupScript.includes('addRecipeRow({}, { prepend: true, focus: true })'),
 assert(!setupScript.includes("parseIngredients("), "first-launch recipes must not require free-form ingredient parsing");
 assert(styles.includes(".inventory-overview-table thead th"), "store inventory headers must stick by cell inside their scroll panes");
 assert(styles.includes("background: var(--paper)"), "sticky store inventory headers must hide scrolling row text");
+assert(
+  /\.supply-workspace\s*\{[^}]*"active summary"[^}]*"saved summary"[^}]*"suppliers suppliers"/s.test(styles),
+  "the Supplies desktop grid must keep the editor, summary, orders, and supplier directory in explicit tracks"
+);
+assert(
+  /@media \(max-width: 980px\)[\s\S]*?\.supply-workspace\s*\{[^}]*"active"[^}]*"summary"[^}]*"saved"[^}]*"suppliers"/s.test(styles),
+  "the Supplies narrow layout must stack every panel in a named track"
+);
 assert(appHtml.includes('id="openCatalogItemDialogButton"'), "the Store tab must expose manager catalog creation");
 assert(appHtml.includes('id="catalogItemTypeInput"'), "manual catalog creation must distinguish products and materials");
 assert(appHtml.includes('<option value="both">Product and material</option>'), "manual catalog creation must support dual-purpose goods");
