@@ -1297,6 +1297,7 @@ function stockOptionMarkup(catalog) {
 }
 
 function wireEvents() {
+  elements.dashboardSection.addEventListener("click", handleDashboardShortcut);
   elements.newSalesOrder.addEventListener("click", startNewSalesOrder);
   elements.saveSalesOrder.addEventListener("click", () => saveActiveOrder());
   elements.newSupplyOrder.addEventListener("click", startNewSupplyOrder);
@@ -3290,6 +3291,7 @@ function renderDashboard() {
   elements.pausedCount.textContent = paused.length;
   elements.inStoreCount.textContent = inStore.length;
   elements.expectedDeliveryTodayCount.textContent = expectedDeliveries.length;
+  renderDashboardShortcutAccess();
   renderReviewIndicators();
   elements.dueTodayList.innerHTML = renderDashboardCards(dueToday, "No deliveries due today");
   elements.overdueList.innerHTML = renderDashboardCards(overdue, "No overdue orders");
@@ -3315,6 +3317,42 @@ function renderDashboard() {
       renderSection();
       window.scrollTo({ top: 0, behavior: "smooth" });
     }));
+}
+
+function renderDashboardShortcutAccess() {
+  elements.dashboardSection.querySelectorAll("[data-dashboard-section]").forEach(shortcut => {
+    const allowed = canAccessSection(shortcut.dataset.dashboardSection);
+    shortcut.disabled = !allowed;
+    shortcut.title = allowed ? "" : "This section is unavailable for your role or business layout";
+  });
+}
+
+function handleDashboardShortcut(event) {
+  const shortcut = event.target.closest("[data-dashboard-section]");
+  if (!shortcut || !elements.dashboardSection.contains(shortcut) || shortcut.disabled) return;
+  const section = shortcut.dataset.dashboardSection;
+  const filter = shortcut.dataset.dashboardFilter || "";
+  if (!canAccessSection(section)) return;
+
+  if (section === "workbench") {
+    if (filter) elements.filter.value = filter;
+    renderOrdersList();
+  } else if (section === "supplies") {
+    if (filter) elements.supplyFilter.value = filter;
+    renderSupplyOrdersList();
+    loadSupplyOrders({ silent: true });
+    loadSuppliers({ silent: true });
+  } else if (section === "review") {
+    if (filter) elements.reviewStatusFilter.value = filter;
+    renderReviewWorkspace({ preserveEditor: true });
+    loadBackendSnapshot({ silent: true, preserveReviewEditor: true });
+  } else if (section === "restock") {
+    renderReplenishment();
+  }
+
+  activeSection = section;
+  renderSection();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function openCatalogItemDialog(itemId = "") {

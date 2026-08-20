@@ -11,7 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/operations-ledger-32.png">
     <link rel="apple-touch-icon" href="/assets/operations-ledger-192.png">
-    <link rel="stylesheet" href="styles.css?v=20260820-local-workflow-actions">
+    <link rel="stylesheet" href="styles.css?v=20260820-dashboard-shortcuts">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -66,30 +66,30 @@
             <h2>Orders and Time Clock</h2>
           </div>
           <div class="dashboard-stats">
-            <div>
+            <button class="dashboard-stat-link" type="button" data-dashboard-section="workbench" data-dashboard-filter="Active">
               <span>Due Today</span>
               <strong id="dueTodayCount">0</strong>
-            </div>
-            <div>
+            </button>
+            <button class="dashboard-stat-link" type="button" data-dashboard-section="workbench" data-dashboard-filter="Active">
               <span>Overdue</span>
               <strong id="overdueCount">0</strong>
-            </div>
-            <div>
+            </button>
+            <button class="dashboard-stat-link" type="button" data-dashboard-section="workbench" data-dashboard-filter="Expedited">
               <span>Expedited</span>
               <strong id="expeditedCount">0</strong>
-            </div>
-            <div>
+            </button>
+            <button class="dashboard-stat-link" type="button" data-dashboard-section="workbench" data-dashboard-filter="Paused">
               <span>Paused</span>
               <strong id="pausedCount">0</strong>
-            </div>
-            <div>
+            </button>
+            <button class="dashboard-stat-link" type="button" data-dashboard-section="workbench" data-dashboard-filter="Active">
               <span>In-Store</span>
               <strong id="inStoreCount">0</strong>
-            </div>
-            <div class="management-only review-stat">
+            </button>
+            <button class="dashboard-stat-link management-only review-stat" type="button" data-dashboard-section="review" data-dashboard-filter="Open">
               <span>Review Queue</span>
               <strong id="dashboardReviewCount">0</strong>
-            </div>
+            </button>
           </div>
         </section>
 
@@ -101,22 +101,22 @@
             </div>
           </div>
           <div class="dashboard-stats">
-            <div class="priority-stat">
+            <button class="dashboard-stat-link priority-stat" type="button" data-dashboard-section="restock">
               <span>Missing Stock</span>
               <strong id="missingStockCount">0</strong>
-            </div>
-            <div class="priority-stat">
+            </button>
+            <button class="dashboard-stat-link priority-stat" type="button" data-dashboard-section="restock">
               <span>Material Shorts</span>
               <strong id="materialShortageCount">0</strong>
-            </div>
-            <div class="management-only">
+            </button>
+            <button class="dashboard-stat-link management-only" type="button" data-dashboard-section="supplies" data-dashboard-filter="Active">
               <span>Expected Today</span>
               <strong id="expectedDeliveryTodayCount">0</strong>
-            </div>
-            <div class="management-only priority-stat">
+            </button>
+            <button class="dashboard-stat-link management-only priority-stat" type="button" data-dashboard-section="restock">
               <span>Storage Alerts</span>
               <strong id="storageAlertCount">0</strong>
-            </div>
+            </button>
           </div>
         </section>
 
@@ -2244,7 +2244,7 @@
       <option value="Australia/Sydney"></option>
     </datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260820-local-workflow-actions"></script>
+    <script src="app.js?v=20260820-dashboard-shortcuts"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

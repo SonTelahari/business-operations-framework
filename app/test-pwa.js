@@ -82,6 +82,8 @@ for (const localAction of [
 ]) {
   assert(appHtml.includes(`id="${localAction}"`), `${localAction} must live inside its workflow tab`);
 }
+assert.equal((appHtml.match(/data-dashboard-section=/g) || []).length, 10, "each dashboard summary must expose a navigation destination");
+assert(appHtml.includes('data-dashboard-section="restock"'), "missing-stock summaries must link directly to Restock");
 assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
 assert(appHtml.includes('id="reviewPackageConversionInput"'), "webhook review must identify crated goods");
 assert(appHtml.includes('id="reviewUnitsPerPackageInput"'), "webhook review must capture units per crate");
@@ -116,6 +118,8 @@ assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefro
 assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");
 assert(appScript.includes('function completeActiveOrder()'), "customer-order completion must respect linked production");
 assert(appScript.includes('function renderSalesOrderActions()'), "Sales action buttons must reflect the current order state");
+assert(appScript.includes('function handleDashboardShortcut(event)'), "dashboard summaries must route to their workflow tabs");
+assert(appScript.includes('shortcut.disabled = !allowed'), "dashboard shortcuts must respect role and tab access");
 assert(appScript.includes('await saveActiveOrder({ syncInputs: false })'), "direct Sales transitions must survive form synchronization");
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
 assert(appScript.includes('function isInternalCraftOrder(order)'), "the client must keep internal crafts distinct from customer sales");
@@ -138,6 +142,8 @@ assert(appScript.includes("NAVIGATION_TAB_DEFINITIONS"), "the client must define
 assert(appScript.includes("function applyNavigationVisibility()"), "saved navigation choices must update the visible tabs");
 assert(appScript.includes("if (!isNavigationSectionEnabled(section)) return false"), "hidden tabs must also be rejected by the section access guard");
 assert(styles.includes(".business-navigation-tabs"), "navigation controls must have a responsive ledger layout");
+assert(styles.includes(".dashboard-stat-link:hover"), "dashboard shortcuts must provide a visible hover affordance");
+assert(styles.includes(".dashboard-stat-link:focus-visible"), "dashboard shortcuts must provide a keyboard focus affordance");
 const loginHtml = fs.readFileSync(path.join(root, "login.html"), "utf8");
 assert(loginHtml.includes('id="loginBusinessDescription"'), "the sign-in cover must display the configured business description");
 
