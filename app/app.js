@@ -710,8 +710,16 @@ window.addEventListener("beforeunload", event => {
   event.returnValue = "";
 });
 setFinancePeriod("month", false);
-render();
-loadSessionAndData();
+bootstrapApplication();
+
+function bootstrapApplication() {
+  try {
+    render();
+  } catch (error) {
+    console.error("Initial workspace render failed:", error);
+  }
+  loadSessionAndData();
+}
 
 function markDraftDirty(scope) {
   if (scope === "sales") activeOrderDirty = true;
@@ -5007,8 +5015,10 @@ function renderReviewIndicators() {
   elements.reviewIgnoredCount.textContent = formatNumber(ignoredCount);
   elements.exceptionNavCount.textContent = formatNumber(openCount);
   elements.exceptionNavCount.classList.toggle("hidden", openCount === 0);
-  elements.managementNavCount.textContent = formatNumber(openCount);
-  elements.managementNavCount.classList.toggle("hidden", openCount === 0);
+  if (elements.managementNavCount) {
+    elements.managementNavCount.textContent = formatNumber(openCount);
+    elements.managementNavCount.classList.toggle("hidden", openCount === 0);
+  }
 }
 
 function renderReviewWorkspace({ preserveEditor = false } = {}) {

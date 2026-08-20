@@ -170,6 +170,8 @@ assert(appHtml.includes('data-navigation-menu="inventory"'), "manager inventory 
 assert(appHtml.includes('data-navigation-menu="management"'), "manager operations pages must be grouped under one navigation menu");
 assert(appHtml.includes('data-navigation-menu="owner"'), "administrator pages must be grouped under an owner menu");
 assert(appHtml.includes('id="managementNavCount"'), "open review work must remain visible on the collapsed management menu");
+assert(appScript.includes("function bootstrapApplication()"), "the client must guard initial rendering before loading the authenticated session");
+assert(appScript.includes("if (elements.managementNavCount)"), "grouped navigation badges must tolerate mixed-version app assets during rolling deploys");
 assert(appHtml.includes('id="discordSettingsForm"'), "business settings must expose editable Discord channels");
 assert(appHtml.includes('id="discordStorageLedgerChannelIdInput"'), "business settings must distinguish storage and ledger events");
 assert(setupHtml.includes('id="discordStorageLedgerChannelIdInput"'), "first launch must collect the storage and ledger event channel");
