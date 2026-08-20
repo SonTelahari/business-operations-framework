@@ -2450,14 +2450,15 @@ async function prepareProductionBatch(input) {
   const storefrontRows = Array.isArray(snapshot?.inventory?.storefront)
     ? snapshot.inventory.storefront
     : snapshot?.inventory?.products;
+  const productionCounts = subtractFinishedStockReservations({
+    Storage: materialStorageCounts(Array.isArray(storageRows) ? storageRows : []),
+    Storefront: storefrontInventoryCounts(Array.isArray(storefrontRows) ? storefrontRows : [])
+  }, input.sourceId);
   const staged = planProduction({
     lines: [...rootLines.values()],
     recipes: catalog.recipes,
     recipeYields: catalog.recipeYields,
-    counts: {
-      Storage: materialStorageCounts(Array.isArray(storageRows) ? storageRows : []),
-      Storefront: storefrontInventoryCounts(Array.isArray(storefrontRows) ? storefrontRows : [])
-    },
+    counts: productionCounts,
     ingredientSources,
     rootOutputLocation: input.sourceType === "Storefront Restock" ? "Storefront" : "Storage",
     maxLines: 50
@@ -2643,19 +2644,60 @@ async function assertProductionStockAvailable(batch) {
 function finishedStockReservations(excludeOrderId = "") {
   const reserved = new Map();
   const ordersById = new Map(businessStore.listSalesOrders().map(order => [order.id, order]));
+  const addReservation = (location, itemName, quantity) => {
+    const amount = Math.max(0, Number(quantity || 0));
+    const itemKey = inventoryKey(itemName);
+    if (!itemKey || !amount) return;
+    const key = `${normalizeProductionSource(location)}:${itemKey}`;
+    reserved.set(key, Number(reserved.get(key) || 0) + amount);
+  };
   businessStore.listProductionBatches().forEach(batch => {
     if (batch.sourceType !== "Customer Order" || batch.status === "Cancelled" || batch.sourceId === excludeOrderId) return;
     const order = ordersById.get(batch.sourceId);
     if (!order || order.status === "Completed" || order.status === "Cancelled") return;
     (batch.stockAllocations || []).forEach(allocation => {
-      const itemKey = inventoryKey(allocation.itemName || allocation.itemLabel);
-      [["Storage", allocation.storageQuantity], ["Storefront", allocation.storefrontQuantity]].forEach(([location, quantity]) => {
-        const key = `${location}:${itemKey}`;
-        reserved.set(key, Number(reserved.get(key) || 0) + Number(quantity || 0));
-      });
+      addReservation("Storage", allocation.itemName || allocation.itemLabel, allocation.storageQuantity);
+      addReservation("Storefront", allocation.itemName || allocation.itemLabel, allocation.storefrontQuantity);
+    });
+    const pendingTargets = new Map((batch.pendingProgress?.targets || []).map(target => [
+      target.lineId,
+      Number(target.completedCrafts || 0)
+    ]));
+    (batch.lines || []).filter(line => !line.isIntermediate).forEach(line => {
+      const completedCrafts = Math.max(
+        Number(line.completedCrafts || 0),
+        Number(pendingTargets.get(line.id) || 0)
+      );
+      const completedOutput = Math.min(
+        Number(line.requestedQuantity || 0),
+        completedCrafts * Number(line.recipeYield || 1)
+      );
+      addReservation(line.outputLocation, line.itemName || line.itemLabel, completedOutput);
     });
   });
   return reserved;
+}
+
+function subtractFinishedStockReservations(counts, excludeOrderId = "") {
+  const available = {
+    Storage: new Map(counts.Storage || []),
+    Storefront: new Map(counts.Storefront || [])
+  };
+  const reserved = finishedStockReservations(excludeOrderId);
+  ["Storage", "Storefront"].forEach(location => {
+    const prefix = `${location}:`;
+    reserved.forEach((quantity, key) => {
+      if (!key.startsWith(prefix)) return;
+      const itemKey = key.slice(prefix.length);
+      const current = available[location].get(itemKey);
+      if (!current) return;
+      available[location].set(itemKey, {
+        ...current,
+        quantity: Math.max(0, Number(current.quantity || 0) - Number(quantity || 0))
+      });
+    });
+  });
+  return available;
 }
 
 async function syncCustomerOrderFulfillment(order, batch, user) {
@@ -2892,7 +2934,7 @@ async function getWebhookManagedInventoryLocations() {
 }
 
 function productionReservationsBefore(batchId) {
-  const reserved = new Map();
+  const reserved = new Map(finishedStockReservations());
   for (const batch of businessStore.listProductionBatches()) {
     if (batch.id === batchId) break;
     if (batch.status !== "Planned" && batch.status !== "In Progress") continue;

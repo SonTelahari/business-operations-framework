@@ -1975,6 +1975,21 @@ async function runOperationalFullCycleSimulations({ baseUrl, managerCookie, work
     assert.equal(mixedComplete.response.status, 200, JSON.stringify(mixedComplete.body));
     assert.equal(mixedComplete.body.batch.status, "Completed");
     assert.equal(mixedComplete.body.order.status, "Ready");
+    const reservedOutputOrder = await post(`${baseUrl}/api/sales-orders`, {
+      id: "simulation-completed-output-reservation-order",
+      customer: "Reserved Output Customer",
+      status: "Reserved",
+      lines: [{ name: "Navy Revolver", label: "Navy Revolver", quantity: 1, unitPrice: 105 }]
+    }, workerCookie);
+    assert.equal(reservedOutputOrder.response.status, 200, JSON.stringify(reservedOutputOrder.body));
+    const reservedOutputClaim = await post(`${baseUrl}/api/production-batches`, {
+      id: "simulation-completed-output-reservation-claim",
+      sourceType: "Customer Order",
+      sourceId: reservedOutputOrder.body.order.id,
+      stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 1 }]
+    }, workerCookie);
+    assert.equal(reservedOutputClaim.response.status, 409);
+    assert.equal(reservedOutputClaim.body.code, "production_stock_allocation_shortage");
     const mixedProductionWrites = operationWritesSince(mixedWritesStart);
     assert.equal(new Set(mixedProductionWrites.map(payload => payload.entry.id)).size, mixedProductionWrites.length);
     ingredients.forEach(ingredient => {

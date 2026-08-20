@@ -131,6 +131,9 @@ assert(appScript.includes('await saveActiveOrder({ syncInputs: false })'), "dire
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
 assert(appScript.includes('function planRecipeStages('), "production and restock plans must expand nested recipes");
 assert(appScript.includes('function productionBatchInventoryState('), "production readiness must net intermediate work in progress");
+assert(appScript.includes('function getProductionAvailableCounts('), "production planning must subtract goods reserved for open customer orders");
+assert(appScript.includes('completedCrafts * Number(line.recipeYield || 1)'), "completed customer-order output must remain reserved until the order closes");
+assert(appScript.includes('const storefrontCounts = getProductionAvailableCounts().Storefront'), "storefront restock must treat customer-reserved goods as unavailable");
 assert(appScript.includes('class="production-progress-row${lineCompleted ? " production-line-completed" : ""}"'), "completed production lines must expose a distinct row state");
 assert(appScript.includes('${lineCompleted ? "Complete" : `${formatNumber(completedCrafts)} / ${formatNumber(plannedCrafts)}`}'), "completed production lines must replace the small cycle count with a clear label");
 assert(styles.includes('.production-line-name.completed::before'), "completed production lines must render a leading check marker");

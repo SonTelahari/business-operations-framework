@@ -6113,10 +6113,7 @@ function productionBatchInventoryState(batch, craftsForLine) {
 }
 
 function getProductionReadinessPlans() {
-  const remaining = {
-    Storage: new Map(getLatestCounts("Storage")),
-    Storefront: new Map(getLatestCounts("Storefront"))
-  };
+  const remaining = getProductionAvailableCounts();
   const plans = new Map();
   productionBatches.filter(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status)).forEach(batch => {
     const materials = getProductionBatchMaterialNeeds(batch).map(material => {
@@ -6474,18 +6471,52 @@ function productionBatchForOrder(orderId) {
 function getFinishedStockReservations(excludeOrderId = "") {
   const reservations = { Storage: new Map(), Storefront: new Map() };
   const ordersById = new Map(orders.map(order => [order.id, order]));
+  const addReservation = (location, itemName, quantity) => {
+    const normalizedLocation = normalizeProductionSourceClient(location);
+    const key = normalize(itemName);
+    const amount = Math.max(0, Number(quantity || 0));
+    if (!key || !amount) return;
+    reservations[normalizedLocation].set(
+      key,
+      Number(reservations[normalizedLocation].get(key) || 0) + amount
+    );
+  };
   productionBatches.forEach(batch => {
     if (batch.sourceType !== "Customer Order" || batch.status === "Cancelled" || batch.sourceId === excludeOrderId) return;
     const order = ordersById.get(batch.sourceId);
     if (!order || statusesHiddenFromActive.has(order.status)) return;
     (batch.stockAllocations || []).forEach(allocation => {
-      const key = normalize(allocation.itemName || allocation.itemLabel);
-      [["Storage", allocation.storageQuantity], ["Storefront", allocation.storefrontQuantity]].forEach(([location, quantity]) => {
-        reservations[location].set(key, Number(reservations[location].get(key) || 0) + Number(quantity || 0));
-      });
+      addReservation("Storage", allocation.itemName || allocation.itemLabel, allocation.storageQuantity);
+      addReservation("Storefront", allocation.itemName || allocation.itemLabel, allocation.storefrontQuantity);
+    });
+    const pendingTargets = new Map((batch.pendingProgress?.targets || []).map(target => [
+      target.lineId,
+      Number(target.completedCrafts || 0)
+    ]));
+    (batch.lines || []).filter(line => !line.isIntermediate).forEach(line => {
+      const completedCrafts = Math.max(
+        Number(line.completedCrafts || 0),
+        Number(pendingTargets.get(line.id) || 0)
+      );
+      const completedOutput = Math.min(
+        Number(line.requestedQuantity || 0),
+        completedCrafts * Number(line.recipeYield || 1)
+      );
+      addReservation(line.outputLocation, line.itemName || line.itemLabel, completedOutput);
     });
   });
   return reservations;
+}
+
+function getProductionAvailableCounts(excludeOrderId = "") {
+  const reservations = getFinishedStockReservations(excludeOrderId);
+  return Object.fromEntries(["Storage", "Storefront"].map(location => {
+    const counts = new Map(getLatestCounts(location));
+    reservations[location].forEach((quantity, key) => {
+      counts.set(key, Math.max(0, Number(counts.get(key) || 0) - Number(quantity || 0)));
+    });
+    return [location, counts];
+  }));
 }
 
 function applySalesOrdersFromResult(result) {
@@ -7276,7 +7307,7 @@ async function retryPendingSyncs() {
 }
 
 function getReplenishmentPlan() {
-  const storefrontCounts = getLatestCounts("Storefront");
+  const storefrontCounts = getProductionAvailableCounts().Storefront;
   const missingRecipes = [];
 
   const missing = stockTargets
@@ -7394,15 +7425,12 @@ function getLatestCounts(location) {
   });
 }
 
-function planRecipeStages(lines, ingredientSources = {}, rootOutputLocation = "Storage") {
+function planRecipeStages(lines, ingredientSources = {}, rootOutputLocation = "Storage", excludeOrderId = "") {
   return window.BUSINESS_PRODUCTION_PLANNER.planProduction({
     lines,
     recipes: recipeCatalog,
     recipeYields: recipeYieldCatalog,
-    counts: {
-      Storage: getLatestCounts("Storage"),
-      Storefront: getLatestCounts("Storefront")
-    },
+    counts: getProductionAvailableCounts(excludeOrderId),
     ingredientSources,
     rootOutputLocation
   });
@@ -7505,7 +7533,8 @@ function getProductionPlan(order, allocationOverrides = null) {
   const staged = planRecipeStages(
     [...buildMap.entries()].map(([itemName, requestedQuantity]) => ({ itemName, requestedQuantity })),
     {},
-    "Storage"
+    "Storage",
+    order.id
   );
   staged.issues.forEach(issue => {
     const label = issue.type === "recipe_cycle"
