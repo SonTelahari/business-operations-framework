@@ -21,6 +21,7 @@ const { defaultSetupConfiguration, normalizeSetupPayload } = require("./setup-co
 const { TenantManager, normalizeWorkspaceCode } = require("./tenant-manager");
 const { PlatformOperations } = require("./platform-operations");
 const { planProduction } = require("./production-planner");
+const productionInventory = require("./production-inventory");
 
 const root = __dirname;
 loadEnvFile(path.join(root, "..", ".env"));
@@ -2642,62 +2643,20 @@ async function assertProductionStockAvailable(batch) {
 }
 
 function finishedStockReservations(excludeOrderId = "") {
-  const reserved = new Map();
-  const ordersById = new Map(businessStore.listSalesOrders().map(order => [order.id, order]));
-  const addReservation = (location, itemName, quantity) => {
-    const amount = Math.max(0, Number(quantity || 0));
-    const itemKey = inventoryKey(itemName);
-    if (!itemKey || !amount) return;
-    const key = `${normalizeProductionSource(location)}:${itemKey}`;
-    reserved.set(key, Number(reserved.get(key) || 0) + amount);
-  };
-  businessStore.listProductionBatches().forEach(batch => {
-    if (batch.sourceType !== "Customer Order" || batch.status === "Cancelled" || batch.sourceId === excludeOrderId) return;
-    const order = ordersById.get(batch.sourceId);
-    if (!order || order.status === "Completed" || order.status === "Cancelled") return;
-    (batch.stockAllocations || []).forEach(allocation => {
-      addReservation("Storage", allocation.itemName || allocation.itemLabel, allocation.storageQuantity);
-      addReservation("Storefront", allocation.itemName || allocation.itemLabel, allocation.storefrontQuantity);
-    });
-    const pendingTargets = new Map((batch.pendingProgress?.targets || []).map(target => [
-      target.lineId,
-      Number(target.completedCrafts || 0)
-    ]));
-    (batch.lines || []).filter(line => !line.isIntermediate).forEach(line => {
-      const completedCrafts = Math.max(
-        Number(line.completedCrafts || 0),
-        Number(pendingTargets.get(line.id) || 0)
-      );
-      const completedOutput = Math.min(
-        Number(line.requestedQuantity || 0),
-        completedCrafts * Number(line.recipeYield || 1)
-      );
-      addReservation(line.outputLocation, line.itemName || line.itemLabel, completedOutput);
-    });
+  return productionInventory.finishedStockReservations({
+    batches: businessStore.listProductionBatches(),
+    orders: businessStore.listSalesOrders(),
+    excludeOrderId,
+    itemKey: inventoryKey,
+    normalizeSource: normalizeProductionSource
   });
-  return reserved;
 }
 
 function subtractFinishedStockReservations(counts, excludeOrderId = "") {
-  const available = {
-    Storage: new Map(counts.Storage || []),
-    Storefront: new Map(counts.Storefront || [])
-  };
-  const reserved = finishedStockReservations(excludeOrderId);
-  ["Storage", "Storefront"].forEach(location => {
-    const prefix = `${location}:`;
-    reserved.forEach((quantity, key) => {
-      if (!key.startsWith(prefix)) return;
-      const itemKey = key.slice(prefix.length);
-      const current = available[location].get(itemKey);
-      if (!current) return;
-      available[location].set(itemKey, {
-        ...current,
-        quantity: Math.max(0, Number(current.quantity || 0) - Number(quantity || 0))
-      });
-    });
+  return productionInventory.subtractInventoryReservations({
+    counts,
+    reservations: finishedStockReservations(excludeOrderId)
   });
-  return available;
 }
 
 async function syncCustomerOrderFulfillment(order, batch, user) {
@@ -2949,58 +2908,11 @@ function productionReservationsBefore(batchId) {
 }
 
 function productionInventoryState(batch, craftsByLine) {
-  const requirements = new Map();
-  const intermediateOutputs = new Map();
-  const outputs = new Map();
-  batch.lines.forEach(line => {
-    const crafts = Math.max(0, Number(craftsByLine.get(line.id) || 0));
-    line.recipe.forEach(component => {
-      const itemName = canonicalInventoryName(component.ingredient);
-      const sourceLocation = normalizeProductionSource(component.sourceLocation);
-      const key = `${sourceLocation}:${inventoryKey(itemName)}`;
-      const current = requirements.get(key) || { itemName, sourceLocation, quantity: 0 };
-      current.quantity += crafts * Number(component.quantity || 0);
-      requirements.set(key, current);
-    });
-    const outputLocation = normalizeProductionSource(line.outputLocation);
-    const outputQuantity = crafts * Number(line.recipeYield || 1);
-    const key = `${outputLocation}:${inventoryKey(line.itemName)}`;
-    if (line.isIntermediate) {
-      const current = intermediateOutputs.get(key) || {
-        itemName: line.itemName,
-        itemLabel: line.itemLabel,
-        outputLocation,
-        usable: 0,
-        surplus: 0
-      };
-      current.usable += Math.min(outputQuantity, Number(line.requestedQuantity || 0));
-      current.surplus += Math.max(0, outputQuantity - Number(line.requestedQuantity || 0));
-      intermediateOutputs.set(key, current);
-    } else {
-      const current = outputs.get(key) || {
-        itemName: line.itemName,
-        itemLabel: line.itemLabel,
-        outputLocation,
-        quantity: 0,
-        rootOutput: true
-      };
-      current.quantity += outputQuantity;
-      outputs.set(key, current);
-    }
+  return productionInventory.productionInventoryState(batch, craftsByLine, {
+    itemKey: inventoryKey,
+    canonicalItemName: canonicalInventoryName,
+    normalizeSource: normalizeProductionSource
   });
-  const uses = new Map();
-  requirements.forEach((requirement, key) => {
-    const usable = Number(intermediateOutputs.get(key)?.usable || 0);
-    const quantity = Math.max(0, requirement.quantity - usable);
-    if (quantity > 0) uses.set(key, { ...requirement, quantity });
-  });
-  intermediateOutputs.forEach((output, key) => {
-    if (output.surplus <= 0) return;
-    const current = outputs.get(key) || { ...output, quantity: 0, rootOutput: false };
-    current.quantity += output.surplus;
-    outputs.set(key, current);
-  });
-  return { uses, outputs };
 }
 
 function productionError(message, status, code) {
@@ -3148,8 +3060,7 @@ function storefrontInventoryCounts(items) {
 }
 
 function normalizeProductionSource(value) {
-  const key = inventoryKey(value);
-  return key === "sales" || key.includes("store") ? "Storefront" : "Storage";
+  return productionInventory.normalizeProductionSource(value, { itemKey: inventoryKey });
 }
 
 function inventoryKey(value) {

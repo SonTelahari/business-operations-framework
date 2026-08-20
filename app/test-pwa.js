@@ -10,6 +10,7 @@ const setupScript = fs.readFileSync(path.join(root, "setup.js"), "utf8");
 const setupHtml = fs.readFileSync(path.join(root, "setup.html"), "utf8");
 const appHtml = fs.readFileSync(path.join(root, "index.html"), "utf8").replace(/\r\n/g, "\n");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+const productionInventoryScript = fs.readFileSync(path.join(root, "production-inventory.js"), "utf8");
 
 assert.equal(manifest.name, "Business Operations Ledger");
 assert.equal(manifest.display, "standalone");
@@ -55,6 +56,8 @@ assert(appHtml.includes('data-section="catalog"'), "managers must have a catalog
 assert(appHtml.includes('id="recipeEditorForm"'), "catalog management must expose a recipe editor");
 assert(appHtml.includes('id="productionSourceDialog"'), "production queues must confirm ingredient source locations");
 assert(appHtml.includes('src="production-planner.js?v=20260820-multistage-production"'), "the production UI must load the shared multi-stage planner");
+assert(appHtml.includes('src="production-inventory.js?v=20260820-shared-inventory"'), "the production UI must load shared inventory calculations");
+assert(appHtml.indexOf('src="production-inventory.js') < appHtml.indexOf('src="app.js'), "shared inventory calculations must load before the application");
 assert(appHtml.includes('id="confirmProductionSourceButton"'), "customer fulfillment must confirm existing-stock allocations");
 assert(appHtml.includes('id="orderTypeSelect"'), "the workbench must expose customer-sale and internal-craft modes");
 assert(appHtml.includes('<option value="Internal Craft">Internal Craft</option>'), "internal stock builds must be selectable from the workbench");
@@ -142,7 +145,12 @@ assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders 
 assert(appScript.includes('function planRecipeStages('), "production and restock plans must expand nested recipes");
 assert(appScript.includes('function productionBatchInventoryState('), "production readiness must net intermediate work in progress");
 assert(appScript.includes('function getProductionAvailableCounts('), "production planning must subtract goods reserved for open customer orders");
-assert(appScript.includes('completedCrafts * Number(line.recipeYield || 1)'), "completed customer-order output must remain reserved until the order closes");
+assert(appScript.includes('FRONTIER_PRODUCTION_INVENTORY.productionInventoryState'), "the browser must delegate production consumption to the shared inventory module");
+assert(appScript.includes('FRONTIER_PRODUCTION_INVENTORY.finishedStockReservations'), "the browser must delegate customer stock reservations to the shared inventory module");
+assert(server.includes('require("./production-inventory")'), "the server must load the shared production inventory module");
+assert(server.includes('productionInventory.productionInventoryState'), "the server must delegate production consumption to the shared inventory module");
+assert(server.includes('productionInventory.finishedStockReservations'), "the server must delegate customer stock reservations to the shared inventory module");
+assert(productionInventoryScript.includes('completedCrafts * Number(line.recipeYield || 1)'), "completed customer-order output must remain reserved until the order closes");
 assert(appScript.includes('const storefrontCounts = getProductionAvailableCounts().Storefront'), "storefront restock must treat customer-reserved goods as unavailable");
 assert(appScript.includes('class="production-progress-row${lineCompleted ? " production-line-completed" : ""}"'), "completed production lines must expose a distinct row state");
 assert(appScript.includes('${lineCompleted ? "Complete" : `${formatNumber(completedCrafts)} / ${formatNumber(plannedCrafts)}`}'), "completed production lines must replace the small cycle count with a clear label");

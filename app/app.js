@@ -3979,8 +3979,7 @@ async function deleteActiveRecipe() {
 }
 
 function normalizeProductionSourceClient(value) {
-  const key = normalize(value);
-  return key === "sales" || key.includes("store") ? "Storefront" : "Storage";
+  return window.FRONTIER_PRODUCTION_INVENTORY.normalizeProductionSource(value, { itemKey: normalize });
 }
 
 function renderStoreOverview() {
@@ -6332,37 +6331,10 @@ function getProductionBatchMaterialNeeds(batch) {
 }
 
 function productionBatchInventoryState(batch, craftsForLine) {
-  const requirements = new Map();
-  const intermediateOutputs = new Map();
-  batch.lines.forEach(line => {
-    const crafts = Math.max(0, Number(craftsForLine(line) || 0));
-    line.recipe.forEach(component => {
-      const sourceLocation = normalizeProductionSourceClient(component.sourceLocation);
-      const itemKey = normalize(component.ingredient);
-      const key = `${sourceLocation}:${itemKey}`;
-      const current = requirements.get(key) || {
-        ingredient: component.ingredient,
-        sourceLocation,
-        itemKey,
-        needed: 0
-      };
-      current.needed += crafts * Number(component.quantity || 0);
-      requirements.set(key, current);
-    });
-    if (!line.isIntermediate) return;
-    const outputLocation = normalizeProductionSourceClient(line.outputLocation);
-    const itemKey = normalize(line.itemName);
-    const key = `${outputLocation}:${itemKey}`;
-    const produced = crafts * Number(line.recipeYield || 1);
-    intermediateOutputs.set(key, Number(intermediateOutputs.get(key) || 0)
-      + Math.min(produced, Number(line.requestedQuantity || 0)));
-  });
-  const result = new Map();
-  requirements.forEach((requirement, key) => {
-    const needed = Math.max(0, requirement.needed - Number(intermediateOutputs.get(key) || 0));
-    if (needed > 0) result.set(key, { ...requirement, needed });
-  });
-  return result;
+  return window.FRONTIER_PRODUCTION_INVENTORY.productionInventoryState(batch, craftsForLine, {
+    itemKey: normalize,
+    normalizeSource: normalizeProductionSourceClient
+  }).uses;
 }
 
 function getProductionReadinessPlans() {
@@ -6721,55 +6693,31 @@ function productionBatchForOrder(orderId) {
     && batch.status !== "Cancelled") || null;
 }
 
-function getFinishedStockReservations(excludeOrderId = "") {
-  const reservations = { Storage: new Map(), Storefront: new Map() };
-  const ordersById = new Map(orders.map(order => [order.id, order]));
-  const addReservation = (location, itemName, quantity) => {
-    const normalizedLocation = normalizeProductionSourceClient(location);
-    const key = normalize(itemName);
-    const amount = Math.max(0, Number(quantity || 0));
-    if (!key || !amount) return;
-    reservations[normalizedLocation].set(
-      key,
-      Number(reservations[normalizedLocation].get(key) || 0) + amount
-    );
-  };
-  productionBatches.forEach(batch => {
-    if (batch.sourceType !== "Customer Order" || batch.status === "Cancelled" || batch.sourceId === excludeOrderId) return;
-    const order = ordersById.get(batch.sourceId);
-    if (!order || statusesHiddenFromActive.has(order.status)) return;
-    (batch.stockAllocations || []).forEach(allocation => {
-      addReservation("Storage", allocation.itemName || allocation.itemLabel, allocation.storageQuantity);
-      addReservation("Storefront", allocation.itemName || allocation.itemLabel, allocation.storefrontQuantity);
-    });
-    const pendingTargets = new Map((batch.pendingProgress?.targets || []).map(target => [
-      target.lineId,
-      Number(target.completedCrafts || 0)
-    ]));
-    (batch.lines || []).filter(line => !line.isIntermediate).forEach(line => {
-      const completedCrafts = Math.max(
-        Number(line.completedCrafts || 0),
-        Number(pendingTargets.get(line.id) || 0)
-      );
-      const completedOutput = Math.min(
-        Number(line.requestedQuantity || 0),
-        completedCrafts * Number(line.recipeYield || 1)
-      );
-      addReservation(line.outputLocation, line.itemName || line.itemLabel, completedOutput);
-    });
+function getFinishedStockReservationMap(excludeOrderId = "") {
+  return window.FRONTIER_PRODUCTION_INVENTORY.finishedStockReservations({
+    batches: productionBatches,
+    orders,
+    excludeOrderId,
+    itemKey: normalize,
+    normalizeSource: normalizeProductionSourceClient,
+    isOrderClosed: order => statusesHiddenFromActive.has(order.status)
   });
-  return reservations;
+}
+
+function getFinishedStockReservations(excludeOrderId = "") {
+  return window.FRONTIER_PRODUCTION_INVENTORY.reservationsByLocation(
+    getFinishedStockReservationMap(excludeOrderId)
+  );
 }
 
 function getProductionAvailableCounts(excludeOrderId = "") {
-  const reservations = getFinishedStockReservations(excludeOrderId);
-  return Object.fromEntries(["Storage", "Storefront"].map(location => {
-    const counts = new Map(getLatestCounts(location));
-    reservations[location].forEach((quantity, key) => {
-      counts.set(key, Math.max(0, Number(counts.get(key) || 0) - Number(quantity || 0)));
-    });
-    return [location, counts];
-  }));
+  return window.FRONTIER_PRODUCTION_INVENTORY.subtractInventoryReservations({
+    counts: {
+      Storage: getLatestCounts("Storage"),
+      Storefront: getLatestCounts("Storefront")
+    },
+    reservations: getFinishedStockReservationMap(excludeOrderId)
+  });
 }
 
 function applySalesOrdersFromResult(result) {
