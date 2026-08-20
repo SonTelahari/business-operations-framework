@@ -1228,6 +1228,20 @@ h2 {
   margin-bottom: 16px;
 }
 
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.panel-header-actions select {
+  flex: 0 1 220px;
+  width: auto;
+  min-width: 140px;
+}
+
 .panel-header p {
   margin: 5px 0 0;
   color: var(--muted);
@@ -2264,13 +2278,27 @@ tr:last-child td {
 }
 
 @media (max-width: 720px) {
-  #supplySection .panel-header {
+  #workbenchSection .panel-header,
+  #buyOrdersSection .panel-header,
+  #supplySection .panel-header,
+  .daily-close-heading {
     align-items: stretch;
     flex-direction: column;
   }
 
-  #supplyStatusSelect {
+  .panel-header-actions {
     width: 100%;
+    justify-content: flex-start;
+  }
+
+  .panel-header-actions button {
+    flex: 1 1 140px;
+  }
+
+  #buyOrderStatusInput,
+  #supplyStatusSelect {
+    flex: 1 1 100%;
+    width: auto;
   }
 }
 

@@ -11,7 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/operations-ledger-32.png">
     <link rel="apple-touch-icon" href="/assets/operations-ledger-192.png">
-    <link rel="stylesheet" href="styles.css?v=20260820-supplies-grid">
+    <link rel="stylesheet" href="styles.css?v=20260820-local-workflow-actions">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -35,8 +35,6 @@
           </button>
           <a class="ghost-button hidden" id="profileButton" href="/profile.html">Characters</a>
           <button class="ghost-button" id="logoutButton" type="button">Sign Out</button>
-          <button class="ghost-button" id="newOrderButton" type="button">New Sale</button>
-          <button class="primary-button" id="saveOrderButton" type="button">Save Sale</button>
         </div>
       </header>
 
@@ -701,16 +699,11 @@
               <h2 id="activeSalesOrderTitle">Sales Order</h2>
               <p id="orderMeta">Draft</p>
             </div>
-            <select id="statusSelect" aria-label="Status">
-              <option value="Draft">Draft</option>
-              <option value="Paused">Paused</option>
-              <option value="Expedited">Expedited</option>
-              <option value="Reserved">Reserved</option>
-              <option value="In Production" disabled>In Production</option>
-              <option value="Ready" disabled>Ready</option>
-              <option value="Completed">Completed</option>
-              <option value="Cancelled" data-management-only-option>Cancelled</option>
-            </select>
+            <div class="panel-header-actions">
+              <span class="status-pill" id="salesOrderStatus">Draft</span>
+              <button class="ghost-button" id="newSalesOrderButton" type="button">New Sale</button>
+              <button class="primary-button" id="saveSalesOrderButton" type="button">Save Order</button>
+            </div>
           </div>
 
           <div class="view-tabs" role="tablist" aria-label="Active order views">
@@ -854,6 +847,7 @@
             <button id="expediteButton" class="ghost-button" type="button">Expedite</button>
             <button id="reserveButton" class="ghost-button" type="button">Reserve</button>
             <button id="completeButton" class="ghost-button" type="button">Complete</button>
+            <button id="cancelOrderButton" class="danger-button management-only" type="button">Cancel Order</button>
             <button id="deleteOrderButton" class="danger-button management-only" type="button">Remove</button>
           </div>
 
@@ -1055,12 +1049,16 @@
               <h2>Buy Order</h2>
               <p id="buyOrderMeta">New order</p>
             </div>
-            <select id="buyOrderStatusInput" aria-label="Buy order status">
-              <option value="Active">Active</option>
-              <option value="Paused">Paused</option>
-              <option value="Filled">Filled</option>
-              <option value="Cancelled">Cancelled</option>
-            </select>
+            <div class="panel-header-actions">
+              <select id="buyOrderStatusInput" aria-label="Buy order status">
+                <option value="Active">Active</option>
+                <option value="Paused">Paused</option>
+                <option value="Filled">Filled</option>
+                <option value="Cancelled">Cancelled</option>
+              </select>
+              <button id="newBuyOrderButton" class="ghost-button" type="button">New Buy Order</button>
+              <button id="saveBuyOrderButton" class="primary-button" type="button">Save Buy Order</button>
+            </div>
           </div>
 
           <div class="form-grid buy-order-fields">
@@ -1088,8 +1086,6 @@
           </label>
 
           <div class="buy-order-actions">
-            <button id="newBuyOrderButton" class="ghost-button" type="button">New</button>
-            <button id="saveBuyOrderButton" class="primary-button" type="button">Save Order</button>
             <button id="deleteBuyOrderButton" class="danger-button" type="button">Remove</button>
           </div>
         </section>
@@ -1146,14 +1142,18 @@
               <h2>Parts and Materials Order</h2>
               <p id="supplyOrderMeta">Draft</p>
             </div>
-            <select id="supplyStatusSelect" aria-label="Supply order status">
-              <option value="Draft" disabled>Draft (unsaved)</option>
-              <option value="Active">Active</option>
-              <option value="Ordered">Ordered</option>
-              <option value="Partially Received" disabled>Partially Received</option>
-              <option value="Received" disabled>Received</option>
-              <option value="Cancelled">Cancelled</option>
-            </select>
+            <div class="panel-header-actions">
+              <select id="supplyStatusSelect" aria-label="Supply order status">
+                <option value="Draft" disabled>Draft (unsaved)</option>
+                <option value="Active">Active</option>
+                <option value="Ordered">Ordered</option>
+                <option value="Partially Received" disabled>Partially Received</option>
+                <option value="Received" disabled>Received</option>
+                <option value="Cancelled">Cancelled</option>
+              </select>
+              <button class="ghost-button" id="newSupplyOrderButton" type="button">New Supply</button>
+              <button class="primary-button" id="saveSupplyOrderButton" type="button">Save Supply</button>
+            </div>
           </div>
 
           <div class="form-grid supply-order-fields">
@@ -1619,7 +1619,11 @@
               <h2>Daily Close and Handoff</h2>
               <p id="dailyCloseDataStatus">Loading shared close records</p>
             </div>
-            <span class="status-pill draft" id="dailyCloseStatus">Draft</span>
+            <div class="panel-header-actions">
+              <span class="status-pill draft" id="dailyCloseStatus">Draft</span>
+              <button class="ghost-button" id="newDailyCloseButton" type="button">Today's Close</button>
+              <button class="primary-button" id="saveDailyCloseButton" type="button">Save Draft</button>
+            </div>
           </div>
           <div class="daily-close-stats">
             <div><span>Storefront Units</span><strong id="dailyCloseStorefrontUnits">Unavailable</strong></div>
@@ -2240,7 +2244,7 @@
       <option value="Australia/Sydney"></option>
     </datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
-    <script src="app.js?v=20260815-multi-business-jobs"></script>
+    <script src="app.js?v=20260820-local-workflow-actions"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

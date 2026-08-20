@@ -66,7 +66,22 @@ assert(appHtml.includes('id="storageOverviewValue"'), "the Store overview must s
 assert(appHtml.includes('<div class="management-only">\n              <span>Storefront Value</span>'), "storefront value must remain management-only");
 assert(appHtml.includes('<button class="primary-button" id="queueOrderProductionButton"'), "employees must be able to queue customer-order production");
 assert(appHtml.includes('<option value="Mine">Assigned to Me</option>'), "employees need an assigned production view");
-assert(appHtml.includes('<option value="Cancelled" data-management-only-option>'), "order cancellation must remain management-only");
+assert(appHtml.includes('id="cancelOrderButton" class="danger-button management-only"'), "order cancellation must remain a direct management-only action");
+assert(appHtml.includes('id="salesOrderStatus"'), "Sales must display its server-managed status without an editable dropdown");
+assert(!appHtml.includes('id="statusSelect"'), "Sales status must not be freely editable");
+assert(!appHtml.includes('id="newOrderButton"') && !appHtml.includes('id="saveOrderButton"'), "workflow controls must not remain in the account header");
+for (const localAction of [
+  "newSalesOrderButton",
+  "saveSalesOrderButton",
+  "newSupplyOrderButton",
+  "saveSupplyOrderButton",
+  "newBuyOrderButton",
+  "saveBuyOrderButton",
+  "newDailyCloseButton",
+  "saveDailyCloseButton"
+]) {
+  assert(appHtml.includes(`id="${localAction}"`), `${localAction} must live inside its workflow tab`);
+}
 assert(appHtml.includes('id="reviewItemTypeInput"'), "webhook review must create either product or material goods");
 assert(appHtml.includes('id="reviewPackageConversionInput"'), "webhook review must identify crated goods");
 assert(appHtml.includes('id="reviewUnitsPerPackageInput"'), "webhook review must capture units per crate");
@@ -100,6 +115,8 @@ assert(appScript.includes("refreshed && !storefrontBuyOrderDirty"), "buy-order r
 assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefront value must be calculated from current counts");
 assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");
 assert(appScript.includes('function completeActiveOrder()'), "customer-order completion must respect linked production");
+assert(appScript.includes('function renderSalesOrderActions()'), "Sales action buttons must reflect the current order state");
+assert(appScript.includes('await saveActiveOrder({ syncInputs: false })'), "direct Sales transitions must survive form synchronization");
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
 assert(appScript.includes('function isInternalCraftOrder(order)'), "the client must keep internal crafts distinct from customer sales");
 assert(appScript.includes('sourceType: orderProductionSourceType(activeOrder)'), "internal crafts must queue with their own production source type");

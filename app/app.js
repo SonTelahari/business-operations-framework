@@ -230,7 +230,9 @@ const elements = {
   deliveryDateField: document.querySelector("#deliveryDateField"),
   deliveryDateFieldLabel: document.querySelector("#deliveryDateFieldLabel"),
   deliveryDate: document.querySelector("#deliveryDateInput"),
-  status: document.querySelector("#statusSelect"),
+  salesOrderStatus: document.querySelector("#salesOrderStatus"),
+  newSalesOrder: document.querySelector("#newSalesOrderButton"),
+  saveSalesOrder: document.querySelector("#saveSalesOrderButton"),
   itemSearch: document.querySelector("#itemSearchInput"),
   itemOptions: document.querySelector("#itemOptions"),
   stockOptions: document.querySelector("#stockOptions"),
@@ -258,6 +260,7 @@ const elements = {
   expediteOrder: document.querySelector("#expediteButton"),
   reserveOrder: document.querySelector("#reserveButton"),
   completeOrder: document.querySelector("#completeButton"),
+  cancelOrder: document.querySelector("#cancelOrderButton"),
   quoteView: document.querySelector("#quoteView"),
   productionView: document.querySelector("#productionView"),
   productionMeta: document.querySelector("#productionMeta"),
@@ -330,6 +333,8 @@ const elements = {
   supplySavedCount: document.querySelector("#supplySavedCount"),
   supplyDataStatus: document.querySelector("#supplyDataStatus"),
   supplyOrdersList: document.querySelector("#supplyOrdersList"),
+  newSupplyOrder: document.querySelector("#newSupplyOrderButton"),
+  saveSupplyOrder: document.querySelector("#saveSupplyOrderButton"),
   copySupplyTelegram: document.querySelector("#copySupplyTelegramButton"),
   receiveSupply: document.querySelector("#receiveSupplyButton"),
   producerOptions: document.querySelector("#producerOptions"),
@@ -380,8 +385,6 @@ const elements = {
   newCustomer: document.querySelector("#newCustomerButton"),
   saveCustomer: document.querySelector("#saveCustomerButton"),
   deleteCustomer: document.querySelector("#deleteCustomerButton"),
-  newDocument: document.querySelector("#newOrderButton"),
-  saveDocument: document.querySelector("#saveOrderButton"),
   dashboardSection: document.querySelector("#dashboardSection"),
   storeSection: document.querySelector("#storeSection"),
   catalogSection: document.querySelector("#catalogSection"),
@@ -633,6 +636,8 @@ const elements = {
   dailyCloseDiscrepancy: document.querySelector("#dailyCloseDiscrepancyInput"),
   dailyClosePriority: document.querySelector("#dailyClosePriorityInput"),
   dailyCloseHandoff: document.querySelector("#dailyCloseHandoffInput"),
+  newDailyClose: document.querySelector("#newDailyCloseButton"),
+  saveDailyClose: document.querySelector("#saveDailyCloseButton"),
   finalizeDailyClose: document.querySelector("#finalizeDailyCloseButton"),
   reopenDailyClose: document.querySelector("#reopenDailyCloseButton"),
   dailyCloseIssueList: document.querySelector("#dailyCloseIssueList"),
@@ -1292,8 +1297,12 @@ function stockOptionMarkup(catalog) {
 }
 
 function wireEvents() {
-  elements.newDocument.addEventListener("click", startNewDocument);
-  elements.saveDocument.addEventListener("click", saveCurrentDocument);
+  elements.newSalesOrder.addEventListener("click", startNewSalesOrder);
+  elements.saveSalesOrder.addEventListener("click", () => saveActiveOrder());
+  elements.newSupplyOrder.addEventListener("click", startNewSupplyOrder);
+  elements.saveSupplyOrder.addEventListener("click", saveSupplyOrder);
+  elements.newDailyClose.addEventListener("click", startTodayDailyClose);
+  elements.saveDailyClose.addEventListener("click", () => saveDailyClose());
   elements.finalizeDailyClose.addEventListener("click", finalizeActiveDailyClose);
   elements.reopenDailyClose.addEventListener("click", reopenActiveDailyClose);
   [
@@ -1387,13 +1396,11 @@ function wireEvents() {
     elements.saveTarget.textContent = "Save Target";
     seedTargetDatalist();
   });
-  document.querySelector("#pauseButton").addEventListener("click", () => setStatus("Paused"));
-  document.querySelector("#expediteButton").addEventListener("click", () => {
-    activeOrder.priority = "Expedite";
-    setStatus("Expedited");
-  });
+  document.querySelector("#pauseButton").addEventListener("click", togglePausedOrder);
+  document.querySelector("#expediteButton").addEventListener("click", toggleExpeditedOrder);
   document.querySelector("#reserveButton").addEventListener("click", () => setStatus("Reserved"));
   document.querySelector("#completeButton").addEventListener("click", completeActiveOrder);
+  elements.cancelOrder.addEventListener("click", cancelActiveOrder);
   document.querySelector("#deleteOrderButton").addEventListener("click", removeActiveOrder);
   document.querySelector("#addSupplyLineButton").addEventListener("click", addSupplyLine);
   document.querySelector("#addMissingSupplyButton").addEventListener("click", addMissingSupplyLines);
@@ -1599,7 +1606,6 @@ function wireEvents() {
     elements.deposit.addEventListener(eventName, updateActiveFromInputs);
     elements.priority.addEventListener(eventName, updateActiveFromInputs);
     elements.deliveryDate.addEventListener(eventName, updateActiveFromInputs);
-    elements.status.addEventListener(eventName, updateActiveFromInputs);
     elements.label.addEventListener(eventName, updateActiveFromInputs);
     elements.notes.addEventListener(eventName, updateActiveFromInputs);
   });
@@ -1624,35 +1630,24 @@ function wireEvents() {
   elements.buyOrderFilter.addEventListener("change", renderStorefrontBuyOrders);
 }
 
-function startNewDocument() {
-  if (activeSection === "daily-close") {
-    const todayClose = dailyCloses.find(close => close.businessDate === todayKey());
-    activeDailyClose = structuredClone(todayClose || newDailyClose());
-    dailyCloseDirty = false;
-    renderDailyCloseWorkspace();
-    return;
-  }
-  if (activeSection === "supplies") {
-    activeSupplyOrder = newSupplyOrder();
-    renderSupplyWorkspace();
-    elements.supplyProducer.focus();
-    return;
-  }
-  if (activeSection === "buy-orders") {
-    startNewStorefrontBuyOrder();
-    return;
-  }
+function startNewSalesOrder() {
   activeOrder = newOrder();
   activeOrderDirty = false;
   activeSection = "workbench";
   render();
 }
 
-function saveCurrentDocument() {
-  if (activeSection === "daily-close") return saveDailyClose();
-  if (activeSection === "supplies") return saveSupplyOrder();
-  if (activeSection === "buy-orders") return saveStorefrontBuyOrder();
-  return saveActiveOrder();
+function startNewSupplyOrder() {
+  activeSupplyOrder = newSupplyOrder();
+  renderSupplyWorkspace();
+  elements.supplyProducer.focus();
+}
+
+function startTodayDailyClose() {
+  const todayClose = dailyCloses.find(close => close.businessDate === todayKey());
+  activeDailyClose = structuredClone(todayClose || newDailyClose());
+  dailyCloseDirty = false;
+  renderDailyCloseWorkspace();
 }
 
 function updateActiveFromInputs() {
@@ -1675,13 +1670,14 @@ function updateActiveFromInputs() {
       : Number(elements.deposit.value || 0);
   activeOrder.priority = isCounterSaleOrder(activeOrder) ? "Normal" : elements.priority.value;
   activeOrder.deliveryDate = isCounterSaleOrder(activeOrder) ? "" : elements.deliveryDate.value;
-  activeOrder.status = isCounterSaleOrder(activeOrder) ? "Completed" : elements.status.value;
+  if (isCounterSaleOrder(activeOrder)) activeOrder.status = "Completed";
   activeOrder.label = elements.label.value;
   activeOrder.notes = elements.notes.value;
   touchActive();
   renderTotals();
   renderPreview();
   renderMeta();
+  renderSalesOrderActions();
 }
 
 function updateOrderTypeFromInput() {
@@ -1765,16 +1761,16 @@ function findCatalogItem(value) {
   return window.FRONTIER_INVENTORY_COUNTS.resolveCatalogItem(itemCatalog, value);
 }
 
-async function saveActiveOrder() {
+async function saveActiveOrder({ syncInputs = true } = {}) {
   if (salesOrderSavePending) return false;
-  updateActiveFromInputs();
+  if (syncInputs) updateActiveFromInputs();
   if (!isInternalCraftOrder(activeOrder) && !isCounterSaleOrder(activeOrder) && !activeOrder.customer) {
     elements.orderMeta.textContent = "Choose a registered customer, or change the order type to an over-the-counter cash sale";
     elements.customer.focus();
     return false;
   }
   salesOrderSavePending = true;
-  elements.saveDocument.disabled = true;
+  elements.saveSalesOrder.disabled = true;
   elements.orderMeta.textContent = "Saving to the shared order register";
   try {
     const response = await fetch("/api/sales-orders", {
@@ -1810,15 +1806,46 @@ async function saveActiveOrder() {
     return false;
   } finally {
     salesOrderSavePending = false;
-    elements.saveDocument.disabled = false;
+    elements.saveSalesOrder.disabled = false;
   }
 }
 
-async function setStatus(status) {
+async function setStatus(status, { priority = activeOrder.priority } = {}) {
+  const previousStatus = activeOrder.status;
+  const previousPriority = activeOrder.priority;
+  updateActiveFromInputs();
   activeOrder.status = status;
-  if (status === "Expedited") activeOrder.priority = "Expedite";
+  activeOrder.priority = priority;
+  elements.priority.value = priority;
   activeOrderDirty = true;
-  await saveActiveOrder();
+  const saved = await saveActiveOrder({ syncInputs: false });
+  if (!saved) {
+    activeOrder.status = previousStatus;
+    activeOrder.priority = previousPriority;
+    elements.priority.value = previousPriority;
+    renderSalesOrderActions();
+  }
+  return saved;
+}
+
+async function togglePausedOrder() {
+  const nextStatus = activeOrder.status === "Paused"
+    ? (activeOrder.priority === "Expedite" ? "Expedited" : "Reserved")
+    : "Paused";
+  await setStatus(nextStatus);
+}
+
+async function toggleExpeditedOrder() {
+  const expedited = activeOrder.status === "Expedited" || activeOrder.priority === "Expedite";
+  await setStatus(expedited ? "Reserved" : "Expedited", {
+    priority: expedited ? "Normal" : "Expedite"
+  });
+}
+
+async function cancelActiveOrder() {
+  if (!isManagement() || ["Completed", "Cancelled"].includes(activeOrder.status)) return;
+  if (!window.confirm(`Cancel ${orderDisplayName(activeOrder)}? The order will remain in the audit history.`)) return;
+  await setStatus("Cancelled");
 }
 
 async function completeActiveOrder() {
@@ -2791,7 +2818,7 @@ async function saveSupplyOrder() {
     elements.supplyProducer.focus();
     return;
   }
-  elements.saveDocument.disabled = true;
+  elements.saveSupplyOrder.disabled = true;
   elements.supplyDataStatus.textContent = "Saving shared producer order";
   try {
     const response = await fetch("/api/supply-orders", {
@@ -2811,7 +2838,7 @@ async function saveSupplyOrder() {
   } catch (error) {
     elements.supplyDataStatus.textContent = `Save failed: ${error.message}`;
   } finally {
-    elements.saveDocument.disabled = false;
+    elements.saveSupplyOrder.disabled = false;
   }
 }
 
@@ -2929,7 +2956,6 @@ function render() {
   elements.deposit.value = isCounterSaleOrder(activeOrder) ? getSubtotal(activeOrder) : activeOrder.deposit || 0;
   elements.priority.value = activeOrder.priority;
   elements.deliveryDate.value = activeOrder.deliveryDate || "";
-  elements.status.value = activeOrder.status;
   elements.label.value = activeOrder.label;
   elements.notes.value = activeOrder.notes;
   renderLines();
@@ -2978,17 +3004,43 @@ function renderOrderMode() {
   elements.deliveryDateFieldLabel.textContent = internal ? "Target Date" : "Delivery Date";
   elements.quoteTab.textContent = internal ? "Plan" : counterSale ? "Receipt" : "Quote";
   elements.copySummary.textContent = internal ? "Copy Craft Plan" : counterSale ? "Copy Receipt" : "Copy Summary";
-  elements.saveDocument.textContent = counterSale ? "Record Sale" : internal ? "Save Craft" : "Save Order";
-  elements.pauseOrder.classList.toggle("hidden", counterSale);
-  elements.expediteOrder.classList.toggle("hidden", counterSale);
-  elements.reserveOrder.classList.toggle("hidden", counterSale);
-  elements.completeOrder.classList.toggle("hidden", counterSale);
-  elements.completeOrder.disabled = internal || counterSale;
-  elements.completeOrder.title = internal ? "Internal crafts complete from the production queue" : "Complete order";
-  elements.status.disabled = counterSale;
+  elements.saveSalesOrder.textContent = counterSale ? "Record Sale" : internal ? "Save Craft" : "Save Order";
+  renderSalesOrderActions();
   if (counterSale) activeView = "quote";
-  const completedOption = elements.status.querySelector('option[value="Completed"]');
-  if (completedOption) completedOption.disabled = internal;
+}
+
+function renderSalesOrderActions() {
+  const status = activeOrder.status || "Draft";
+  const counterSale = isCounterSaleOrder(activeOrder);
+  const internal = isInternalCraftOrder(activeOrder);
+  const linkedBatch = productionBatchForOrder(activeOrder.id);
+  const productionActive = linkedBatch && !["Completed", "Cancelled"].includes(linkedBatch.status);
+  const managedStatus = ["In Production", "Ready"].includes(status);
+  const closed = ["Completed", "Cancelled"].includes(status);
+
+  elements.salesOrderStatus.textContent = status;
+  elements.salesOrderStatus.className = `status-pill ${statusClass(status)}`;
+  elements.pauseOrder.textContent = status === "Paused" ? "Resume" : "Pause";
+  elements.pauseOrder.classList.toggle("hidden", counterSale || managedStatus || closed);
+  elements.expediteOrder.textContent = status === "Expedited" || activeOrder.priority === "Expedite"
+    ? "Standard Priority"
+    : "Expedite";
+  elements.expediteOrder.classList.toggle("hidden", counterSale || managedStatus || closed);
+  elements.expediteOrder.disabled = status === "Paused";
+  elements.reserveOrder.textContent = status === "Reserved" ? "Reserved" : "Reserve Order";
+  elements.reserveOrder.classList.toggle("hidden", counterSale || managedStatus || closed);
+  elements.reserveOrder.disabled = status === "Reserved";
+  elements.completeOrder.textContent = status === "Ready" ? "Deliver Order" : "Complete Sale";
+  elements.completeOrder.classList.toggle("hidden", counterSale || internal || closed || status === "In Production");
+  elements.completeOrder.disabled = Boolean(productionActive);
+  elements.completeOrder.title = productionActive
+    ? "Finish the linked production batch before delivery"
+    : "Complete this sale and record delivery";
+  elements.cancelOrder.classList.toggle("hidden", counterSale || closed);
+  elements.cancelOrder.disabled = Boolean(productionActive);
+  elements.cancelOrder.title = productionActive
+    ? "Cancel the linked production batch first"
+    : "Cancel this order and retain its audit history";
 }
 
 function renderLines() {
@@ -3215,24 +3267,6 @@ function renderSection() {
   elements.reviewSection.classList.toggle("hidden", activeSection !== "review");
   elements.employeesSection.classList.toggle("hidden", activeSection !== "employees");
   elements.businessSettingsSection.classList.toggle("hidden", activeSection !== "business-settings");
-  const supplyMode = activeSection === "supplies";
-  const buyOrderMode = activeSection === "buy-orders";
-  const closeMode = activeSection === "daily-close";
-  const documentMode = activeSection === "workbench" || supplyMode || buyOrderMode || closeMode;
-  elements.newDocument.classList.toggle("hidden", !documentMode);
-  elements.saveDocument.classList.toggle("hidden", !documentMode);
-  elements.newDocument.textContent = supplyMode ? "New Supply" : buyOrderMode ? "New Buy Order" : closeMode ? "Today's Close" : "New Sale";
-  elements.saveDocument.textContent = supplyMode
-    ? "Save Supply"
-    : buyOrderMode
-      ? "Save Buy Order"
-      : closeMode
-        ? "Save Draft"
-        : isCounterSaleOrder(activeOrder)
-          ? "Record Sale"
-          : isInternalCraftOrder(activeOrder)
-            ? "Save Craft"
-            : "Save Order";
 }
 
 function renderDashboard() {
@@ -4085,7 +4119,7 @@ async function saveDailyClose({ silent = false } = {}) {
   if (!isManagement() || dailyCloseActionPending) return false;
   updateDailyCloseFromInputs();
   dailyCloseActionPending = true;
-  elements.saveDocument.disabled = true;
+  elements.saveDailyClose.disabled = true;
   if (!silent) elements.dailyCloseDataStatus.textContent = "Refreshing the shared snapshot and saving draft";
   try {
     const response = await fetch("/api/daily-closes", {
@@ -4111,7 +4145,7 @@ async function saveDailyClose({ silent = false } = {}) {
     return false;
   } finally {
     dailyCloseActionPending = false;
-    elements.saveDocument.disabled = false;
+    elements.saveDailyClose.disabled = false;
     renderDailyCloseWorkspace();
   }
 }
@@ -4233,7 +4267,7 @@ function renderDailyCloseWorkspace() {
   ].forEach(field => { field.disabled = finalized || dailyCloseActionPending; });
   elements.finalizeDailyClose.disabled = finalized || dailyCloseActionPending;
   elements.reopenDailyClose.disabled = !finalized || dailyCloseActionPending;
-  elements.saveDocument.disabled = finalized || dailyCloseActionPending;
+  elements.saveDailyClose.disabled = finalized || dailyCloseActionPending;
   renderDailyCloseDifference(snapshot);
   renderDailyCloseIssues(snapshot);
   renderDailyCloseHistory();
