@@ -941,7 +941,7 @@ function cleanProductionBatch(input, actor, { id, now }) {
   if (!lines.length && !stockAllocations.length) {
     throw businessError("Add production work or reserve existing stock for this order", 400, "production_fulfillment_required");
   }
-  const lineKeys = lines.map(line => normalizeKey(line.itemName));
+  const lineKeys = lines.map(line => `${line.isIntermediate ? "intermediate" : "root"}:${line.outputLocation}:${normalizeKey(line.itemName)}`);
   if (new Set(lineKeys).size !== lineKeys.length) {
     throw businessError("Each product can only appear once in a production batch", 400, "duplicate_production_line");
   }
@@ -996,6 +996,9 @@ function cleanProductionLine(line) {
     recipeYield,
     plannedCrafts,
     completedCrafts: 0,
+    isIntermediate: line.isIntermediate === true,
+    outputLocation: normalizeProductionSource(line.outputLocation),
+    stage: Math.max(1, Math.floor(finiteNumber(line.stage, 1))),
     recipe
   };
 }

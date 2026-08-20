@@ -20,6 +20,7 @@ const {
 const { defaultSetupConfiguration, normalizeSetupPayload } = require("./setup-config");
 const { TenantManager, normalizeWorkspaceCode } = require("./tenant-manager");
 const { PlatformOperations } = require("./platform-operations");
+const { planProduction } = require("./production-planner");
 
 const root = __dirname;
 loadEnvFile(path.join(root, "..", ".env"));
@@ -116,6 +117,7 @@ const publicFiles = new Set([
   "/pricing.js",
   "/items.js",
   "/recipes.js",
+  "/production-planner.js",
   "/supply-telegram.js",
   "/inventory-counts.js",
   "/assets/frontier-firearms-logo.png",
@@ -1768,6 +1770,7 @@ function buildRestockCommitment(sheet, committedPurchaseLines) {
   const catalog = businessStore.getCatalogData();
   const inventory = sheet?.inventory || {};
   const demand = new Map();
+  const productionLines = [];
   const missingProducts = [];
   const storage = new Map();
   const storageRows = Array.isArray(inventory.storage) && inventory.storage.length
@@ -1792,13 +1795,20 @@ function buildRestockCommitment(sheet, committedPurchaseLines) {
       recipeAvailable: Boolean(recipe)
     });
     if (!recipe) return;
-    const batches = Math.ceil(missing / Math.max(1, Number(catalog.recipeYields[name] || 1)));
-    recipe.forEach(([ingredient, quantity]) => {
-      const key = inventoryKey(ingredient);
-      const current = demand.get(key) || { ingredient, quantity: 0 };
-      current.quantity += Number(quantity || 0) * batches;
-      demand.set(key, current);
-    });
+    productionLines.push({ itemName: name, requestedQuantity: missing });
+  });
+  const staged = planProduction({
+    lines: productionLines,
+    recipes: catalog.recipes,
+    recipeYields: catalog.recipeYields,
+    counts: { Storage: storage },
+    rootOutputLocation: "Storefront"
+  });
+  staged.materials.forEach(material => {
+    const key = inventoryKey(material.ingredient);
+    const current = demand.get(key) || { ingredient: material.ingredient, quantity: 0 };
+    current.quantity += Number(material.needed || 0);
+    demand.set(key, current);
   });
 
   const ordered = new Map();
@@ -2402,19 +2412,22 @@ async function handleProductionBatchRoute(request, response, url, user) {
 }
 
 async function prepareProductionBatch(input) {
-  const catalog = mergeCatalogWithSheetProducts(businessStore.getCatalogData(), await readSheetSnapshot());
+  const snapshot = await readSheetSnapshot();
+  const catalog = mergeCatalogWithSheetProducts(businessStore.getCatalogData(), snapshot);
   const itemByKey = new Map();
-  catalog.items.forEach(item => {
+  [...catalog.items, ...(Array.isArray(catalog.materials) ? catalog.materials : [])].forEach(item => {
     [item.name, item.label, item.tag, ...(Array.isArray(item.aliases) ? item.aliases : [])].forEach(value => {
       const key = inventoryKey(value);
       if (key && !itemByKey.has(key)) itemByKey.set(key, item);
     });
   });
-  const lines = new Map();
+  const rootLines = new Map();
+  const ingredientSources = {};
   (Array.isArray(input.lines) ? input.lines : []).slice(0, 50).forEach(sourceLine => {
     const item = itemByKey.get(inventoryKey(sourceLine.itemName || sourceLine.name || sourceLine.itemLabel));
     if (!item) throw productionError("Production batches can only contain catalog products", 400, "production_item_unknown");
-    const recipe = catalog.recipes[item.name];
+    const recipeName = Object.keys(catalog.recipes).find(name => inventoryKey(name) === inventoryKey(item.name));
+    const recipe = recipeName ? catalog.recipes[recipeName] : null;
     if (!Array.isArray(recipe) || !recipe.length) {
       throw productionError(`No recipe is available for ${item.label || item.name}`, 400, "production_recipe_missing");
     }
@@ -2422,22 +2435,72 @@ async function prepareProductionBatch(input) {
     if (!Number.isInteger(quantity) || quantity <= 0) {
       throw productionError("Production quantities must be positive whole numbers", 400, "invalid_production_quantity");
     }
-    const existing = lines.get(item.name) || {
-      id: crypto.randomUUID(),
+    const existing = rootLines.get(item.name) || {
       itemName: item.name,
       itemLabel: item.label || item.name,
-      requestedQuantity: 0,
-      recipeYield: Math.max(1, Number(catalog.recipeYields[item.name] || 1)),
+      requestedQuantity: 0
+    };
+    existing.requestedQuantity += quantity;
+    rootLines.set(item.name, existing);
+    Object.entries(sourceLine.ingredientSources || {}).forEach(([ingredient, sourceLocation]) => {
+      ingredientSources[inventoryKey(ingredient)] = normalizeProductionSource(sourceLocation);
+    });
+  });
+  const storageRows = storageInventoryRows(snapshot);
+  const storefrontRows = Array.isArray(snapshot?.inventory?.storefront)
+    ? snapshot.inventory.storefront
+    : snapshot?.inventory?.products;
+  const staged = planProduction({
+    lines: [...rootLines.values()],
+    recipes: catalog.recipes,
+    recipeYields: catalog.recipeYields,
+    counts: {
+      Storage: materialStorageCounts(Array.isArray(storageRows) ? storageRows : []),
+      Storefront: storefrontInventoryCounts(Array.isArray(storefrontRows) ? storefrontRows : [])
+    },
+    ingredientSources,
+    rootOutputLocation: input.sourceType === "Storefront Restock" ? "Storefront" : "Storage",
+    maxLines: 50
+  });
+  const blockingIssue = staged.issues[0];
+  if (blockingIssue) {
+    const cycle = blockingIssue.type === "recipe_cycle";
+    const tooLarge = blockingIssue.type === "line_limit";
+    throw productionError(
+      tooLarge
+        ? "Production plan exceeds 50 stage lines"
+        : cycle
+        ? `Recipe cycle detected: ${blockingIssue.path.join(" -> ")}`
+        : `No recipe is available for ${blockingIssue.itemName}`,
+      400,
+      tooLarge ? "production_plan_too_large" : cycle ? "production_recipe_cycle" : "production_recipe_missing"
+    );
+  }
+  if (staged.buildLines.length > 50) {
+    throw productionError("Production plan exceeds 50 stage lines", 400, "production_plan_too_large");
+  }
+  const lines = staged.buildLines.map(stageLine => {
+    const recipeName = Object.keys(catalog.recipes).find(name => inventoryKey(name) === inventoryKey(stageLine.name));
+    const recipe = catalog.recipes[recipeName] || [];
+    const item = itemByKey.get(inventoryKey(stageLine.name));
+    return {
+      id: crypto.randomUUID(),
+      itemName: recipeName || stageLine.name,
+      itemLabel: item?.label || stageLine.name,
+      requestedQuantity: stageLine.requestedQuantity,
+      recipeYield: stageLine.recipeYield,
+      plannedCrafts: stageLine.plannedCrafts,
+      isIntermediate: stageLine.isIntermediate,
+      outputLocation: stageLine.outputLocation,
+      stage: stageLine.stage,
       recipe: recipe.map(([ingredient, componentQuantity, defaultSource]) => ({
         ingredient: canonicalInventoryName(ingredient),
         quantity: Number(componentQuantity || 0),
         sourceLocation: normalizeProductionSource(
-          sourceLine.ingredientSources?.[inventoryKey(ingredient)] || defaultSource
+          ingredientSources[inventoryKey(ingredient)] || defaultSource
         )
       }))
     };
-    existing.requestedQuantity += quantity;
-    lines.set(item.name, existing);
   });
   const stockAllocations = new Map();
   (Array.isArray(input.stockAllocations) ? input.stockAllocations : []).slice(0, 50).forEach(sourceAllocation => {
@@ -2471,7 +2534,7 @@ async function prepareProductionBatch(input) {
     priority: input.priority,
     assignedTo: input.assignedTo,
     notes: input.notes,
-    lines: [...lines.values()],
+    lines,
     stockAllocations: [...stockAllocations.values()]
   };
 }
@@ -2497,7 +2560,8 @@ function assertProductionMatchesSalesOrder(batch, order) {
     current.storefrontQuantity += Number(storefrontQuantity || 0);
     fulfillment.set(key, current);
   };
-  batch.lines.forEach(line => addFulfillment(line.itemName, line.itemLabel, line.requestedQuantity));
+  batch.lines.filter(line => !line.isIntermediate)
+    .forEach(line => addFulfillment(line.itemName, line.itemLabel, line.requestedQuantity));
   (batch.stockAllocations || []).forEach(allocation => addFulfillment(
     allocation.itemName,
     allocation.itemLabel,
@@ -2614,7 +2678,7 @@ async function syncCustomerOrderFulfillment(order, batch, user) {
     addMovement("Storage", allocation.itemName, allocation.itemLabel, allocation.storageQuantity);
     addMovement("Storefront", allocation.itemName, allocation.itemLabel, allocation.storefrontQuantity);
   });
-  batch.lines.forEach(line => {
+  batch.lines.filter(line => !line.isIntermediate).forEach(line => {
     addMovement("Storage", line.itemName, line.itemLabel, line.requestedQuantity);
   });
 
@@ -2711,7 +2775,8 @@ async function prepareProductionProgress(batch, payload, user) {
     .map(completion => [String(completion.lineId || ""), Number(completion.completedCrafts)]));
   const targets = [];
   const operations = [];
-  const requiredMaterials = new Map();
+  const previousCrafts = new Map(batch.lines.map(line => [line.id, Number(line.completedCrafts || 0)]));
+  const targetCrafts = new Map(previousCrafts);
 
   batch.lines.forEach(line => {
     if (!requested.has(line.id)) return;
@@ -2721,52 +2786,62 @@ async function prepareProductionProgress(batch, payload, user) {
       || completedCrafts > Number(line.plannedCrafts || 0)) {
       throw productionError("Completed craft cycles must increase without exceeding the plan", 400, "invalid_production_progress");
     }
-    const previousCrafts = Number(line.completedCrafts || 0);
-    const craftDelta = completedCrafts - previousCrafts;
-    targets.push({ lineId: line.id, previousCrafts, completedCrafts });
-    line.recipe.forEach(component => {
-      const quantity = Number(component.quantity || 0) * craftDelta;
-      const itemName = canonicalInventoryName(component.ingredient);
-      const sourceLocation = normalizeProductionSource(component.sourceLocation);
-      const key = `${sourceLocation}:${inventoryKey(itemName)}`;
-      requiredMaterials.set(key, {
-        itemName,
-        sourceLocation,
-        quantity: Number(requiredMaterials.get(key)?.quantity || 0) + quantity
-      });
-      if (!webhookManagedLocations.has(sourceLocation)) {
-        operations.push(productionOperation({
-          batch,
-          line,
-          previousCrafts,
-          completedCrafts,
-          suffix: `use:${key}`,
-          kind: "Production Use",
-          itemName,
-          quantity,
-          location: sourceLocation,
-          employee: user.fullName
-        }));
-      }
-    });
-    if (batch.sourceType !== "Storefront Restock" && !webhookManagedLocations.has("Storage")) {
-      operations.push(productionOperation({
-        batch,
-        line,
-        previousCrafts,
-        completedCrafts,
-        suffix: "output",
-        kind: "Production Output",
-        itemName: line.itemName,
-        itemLabel: line.itemLabel,
-        quantity: craftDelta * Number(line.recipeYield || 1),
-        employee: user.fullName
-      }));
-    }
+    const prior = Number(line.completedCrafts || 0);
+    targets.push({ lineId: line.id, previousCrafts: prior, completedCrafts });
+    targetCrafts.set(line.id, completedCrafts);
   });
   if (!targets.length) {
     throw productionError("Enter at least one newly completed craft cycle", 400, "production_progress_required");
   }
+
+  const before = productionInventoryState(batch, previousCrafts);
+  const after = productionInventoryState(batch, targetCrafts);
+  const fingerprint = targets
+    .map(target => `${target.lineId}:${target.previousCrafts}:${target.completedCrafts}`)
+    .sort()
+    .join("|");
+  const requiredMaterials = new Map();
+  after.uses.forEach((requirement, key) => {
+    const quantity = Number(requirement.quantity || 0) - Number(before.uses.get(key)?.quantity || 0);
+    if (quantity < -0.000001) {
+      throw productionError(
+        `Complete intermediate production before dependent products for ${requirement.itemName}`,
+        409,
+        "production_stage_order"
+      );
+    }
+    if (quantity <= 0) return;
+    requiredMaterials.set(key, { ...requirement, quantity });
+    if (!webhookManagedLocations.has(requirement.sourceLocation)) {
+      operations.push(productionAggregateOperation({
+        batch,
+        fingerprint,
+        suffix: `use:${key}`,
+        kind: "Production Use",
+        itemName: requirement.itemName,
+        quantity,
+        location: requirement.sourceLocation,
+        employee: user.fullName
+      }));
+    }
+  });
+  after.outputs.forEach((output, key) => {
+    const quantity = Number(output.quantity || 0) - Number(before.outputs.get(key)?.quantity || 0);
+    if (quantity <= 0) return;
+    if (batch.sourceType === "Storefront Restock" && output.rootOutput) return;
+    if (webhookManagedLocations.has(output.outputLocation)) return;
+    operations.push(productionAggregateOperation({
+      batch,
+      fingerprint,
+      suffix: `output:${key}`,
+      kind: "Production Output",
+      itemName: output.itemName,
+      itemLabel: output.itemLabel,
+      quantity,
+      location: output.outputLocation,
+      employee: user.fullName
+    }));
+  });
 
   const snapshot = await readSheetSnapshot();
   const storageRows = storageInventoryRows(snapshot);
@@ -2821,31 +2896,69 @@ function productionReservationsBefore(batchId) {
   for (const batch of businessStore.listProductionBatches()) {
     if (batch.id === batchId) break;
     if (batch.status !== "Planned" && batch.status !== "In Progress") continue;
-    batch.lines.forEach(line => {
-      const remainingCrafts = Math.max(0, Number(line.plannedCrafts || 0) - Number(line.completedCrafts || 0));
-      line.recipe.forEach(component => {
-        const key = `${normalizeProductionSource(component.sourceLocation)}:${inventoryKey(component.ingredient)}`;
-        reserved.set(key, Number(reserved.get(key) || 0) + remainingCrafts * Number(component.quantity || 0));
-      });
+    const current = productionInventoryState(batch, new Map(batch.lines.map(line => [line.id, Number(line.completedCrafts || 0)])));
+    const planned = productionInventoryState(batch, new Map(batch.lines.map(line => [line.id, Number(line.plannedCrafts || 0)])));
+    planned.uses.forEach((requirement, key) => {
+      const remaining = Math.max(0, Number(requirement.quantity || 0) - Number(current.uses.get(key)?.quantity || 0));
+      reserved.set(key, Number(reserved.get(key) || 0) + remaining);
     });
   }
   return reserved;
 }
 
-function productionOperation({ batch, line, previousCrafts, completedCrafts, suffix, kind, itemName, itemLabel, quantity, location = "Storage", employee }) {
-  const fingerprint = `${batch.id}:${line.id}:${previousCrafts}:${completedCrafts}:${suffix}`;
-  const id = `production-${crypto.createHash("sha256").update(fingerprint).digest("hex").slice(0, 28)}`;
-  return {
-    id,
-    kind,
-    location,
-    itemName,
-    itemLabel: itemLabel || itemName,
-    quantity,
-    amount: 0,
-    employee,
-    note: `Production batch ${batch.reference || batch.id}: ${line.itemLabel || line.itemName}`
-  };
+function productionInventoryState(batch, craftsByLine) {
+  const requirements = new Map();
+  const intermediateOutputs = new Map();
+  const outputs = new Map();
+  batch.lines.forEach(line => {
+    const crafts = Math.max(0, Number(craftsByLine.get(line.id) || 0));
+    line.recipe.forEach(component => {
+      const itemName = canonicalInventoryName(component.ingredient);
+      const sourceLocation = normalizeProductionSource(component.sourceLocation);
+      const key = `${sourceLocation}:${inventoryKey(itemName)}`;
+      const current = requirements.get(key) || { itemName, sourceLocation, quantity: 0 };
+      current.quantity += crafts * Number(component.quantity || 0);
+      requirements.set(key, current);
+    });
+    const outputLocation = normalizeProductionSource(line.outputLocation);
+    const outputQuantity = crafts * Number(line.recipeYield || 1);
+    const key = `${outputLocation}:${inventoryKey(line.itemName)}`;
+    if (line.isIntermediate) {
+      const current = intermediateOutputs.get(key) || {
+        itemName: line.itemName,
+        itemLabel: line.itemLabel,
+        outputLocation,
+        usable: 0,
+        surplus: 0
+      };
+      current.usable += Math.min(outputQuantity, Number(line.requestedQuantity || 0));
+      current.surplus += Math.max(0, outputQuantity - Number(line.requestedQuantity || 0));
+      intermediateOutputs.set(key, current);
+    } else {
+      const current = outputs.get(key) || {
+        itemName: line.itemName,
+        itemLabel: line.itemLabel,
+        outputLocation,
+        quantity: 0,
+        rootOutput: true
+      };
+      current.quantity += outputQuantity;
+      outputs.set(key, current);
+    }
+  });
+  const uses = new Map();
+  requirements.forEach((requirement, key) => {
+    const usable = Number(intermediateOutputs.get(key)?.usable || 0);
+    const quantity = Math.max(0, requirement.quantity - usable);
+    if (quantity > 0) uses.set(key, { ...requirement, quantity });
+  });
+  intermediateOutputs.forEach((output, key) => {
+    if (output.surplus <= 0) return;
+    const current = outputs.get(key) || { ...output, quantity: 0, rootOutput: false };
+    current.quantity += output.surplus;
+    outputs.set(key, current);
+  });
+  return { uses, outputs };
 }
 
 function productionError(message, status, code) {
@@ -3130,6 +3243,23 @@ async function recordSupplierAudit(action, supplier, user) {
       employeeContacts: supplier.employees.length
     }
   }).catch(error => console.error("Unable to write supplier audit event:", error.message));
+}
+
+function productionAggregateOperation({ batch, fingerprint, suffix, kind, itemName, itemLabel, quantity, location, employee }) {
+  const id = `production-${crypto.createHash("sha256")
+    .update(`${batch.id}:${fingerprint}:${suffix}`)
+    .digest("hex").slice(0, 28)}`;
+  return {
+    id,
+    kind,
+    location,
+    itemName,
+    itemLabel: itemLabel || itemName,
+    quantity,
+    amount: 0,
+    employee,
+    note: `Production batch ${batch.reference || batch.id}: ${itemLabel || itemName}`
+  };
 }
 
 async function recordCustomerAudit(action, customer, user) {

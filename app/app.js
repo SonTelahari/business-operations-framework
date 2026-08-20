@@ -5437,6 +5437,14 @@ function renderProduction() {
       </div>
     `).join("");
   }
+  if (production.buildLines.length) {
+    elements.productionBuildList.insertAdjacentHTML("beforeend", production.buildLines.map(line => `
+      <div class="production-row">
+        <strong>Stage ${formatNumber(line.stage)}: ${escapeHtml(line.name)}</strong>
+        <span>${formatNumber(line.quantity)} needed / ${formatNumber(line.producedQuantity)} planned output${line.isIntermediate ? " / intermediate" : " / finished good"}</span>
+      </div>
+    `).join(""));
+  }
 
   if (!production.materials.length) {
     elements.productionMaterialsList.innerHTML = `<div class="empty-card">No materials needed yet</div>`;
@@ -5550,11 +5558,9 @@ function buildSummary(order) {
 function buildProductionSummary(order) {
   if (isCounterSaleOrder(order)) return "Counter sales use existing stock and do not create production work.";
   const production = getProductionPlan(order);
-  const buildLines = production.fulfillmentLines.length
-    ? production.fulfillmentLines.map(line =>
-      isInternalCraftOrder(order)
-        ? `${formatNumber(line.productionQuantity)}x ${line.label || line.name} to produce for storage`
-        : `${formatNumber(line.orderedQuantity)}x ${line.label || line.name} / ${formatNumber(line.existingQuantity)} existing / ${formatNumber(line.productionQuantity)} to produce`
+  const buildLines = production.buildLines.length
+    ? production.buildLines.map(line =>
+      `Stage ${formatNumber(line.stage)}: ${formatNumber(line.quantity)}x ${line.name}${line.isIntermediate ? " (intermediate)" : ""}`
     ).join("\n")
     : "No order lines";
   const materials = production.materials.length
@@ -5615,7 +5621,9 @@ async function queueActiveOrderProduction() {
     priority: activeOrder.priority,
     assignedTo: activeOrder.handler,
     notes: activeOrder.notes,
-    lines: plan.buildLines.map(line => ({ itemName: line.name, requestedQuantity: line.quantity })),
+    lines: plan.buildLines
+      .filter(line => !line.isIntermediate)
+      .map(line => ({ itemName: line.name, requestedQuantity: line.quantity })),
     stockAllocations: plan.stockAllocations,
     fulfillmentLines: plan.fulfillmentLines
   }, isInternalCraftOrder(activeOrder)
@@ -5651,7 +5659,8 @@ function openProductionSourceDialog(payload, successMessage) {
   pendingProductionQueue = {
     payload,
     successMessage,
-    fulfillmentLines: Array.isArray(payload.fulfillmentLines) ? structuredClone(payload.fulfillmentLines) : []
+    fulfillmentLines: Array.isArray(payload.fulfillmentLines) ? structuredClone(payload.fulfillmentLines) : [],
+    ingredientSources: {}
   };
   delete payload.fulfillmentLines;
   elements.productionSourceStatus.textContent = "";
@@ -5661,21 +5670,43 @@ function openProductionSourceDialog(payload, successMessage) {
 
 function renderProductionSourceDialog() {
   if (!pendingProductionQueue) return;
-  const { payload, fulfillmentLines } = pendingProductionQueue;
+  const { payload, fulfillmentLines, ingredientSources } = pendingProductionQueue;
+  let productionPlan = planRecipeStages(
+    payload.lines,
+    ingredientSources,
+    payload.sourceType === "Storefront Restock" ? "Storefront" : "Storage"
+  );
+  let seededSource = false;
+  productionPlan.components.forEach(component => {
+    const key = normalize(component.ingredient);
+    if (ingredientSources[key]) return;
+    ingredientSources[key] = component.sourceLocation;
+    seededSource = true;
+  });
+  if (seededSource) {
+    productionPlan = planRecipeStages(
+      payload.lines,
+      ingredientSources,
+      payload.sourceType === "Storefront Restock" ? "Storefront" : "Storage"
+    );
+  }
   const requirements = new Map();
-  payload.lines.forEach(line => {
-    const recipe = recipeCatalog[line.itemName] || [];
-    const crafts = Math.ceil(Number(line.requestedQuantity || 0) / Math.max(1, Number(recipeYieldCatalog[line.itemName] || 1)));
-    recipe.forEach(([ingredient, quantity, defaultSource]) => {
-      const key = normalize(ingredient);
-      const current = requirements.get(key) || {
-        ingredient,
-        needed: 0,
-        sourceLocation: normalizeProductionSourceClient(defaultSource)
-      };
-      current.needed += crafts * Number(quantity || 0);
-      requirements.set(key, current);
-    });
+  productionPlan.components.forEach(component => {
+    const key = normalize(component.ingredient);
+    const selectedSource = ingredientSources[key] || component.sourceLocation;
+    const current = requirements.get(key) || {
+      ingredient: component.ingredient,
+      needed: 0,
+      fromStock: 0,
+      toProduce: 0,
+      craftable: false,
+      sourceLocation: selectedSource
+    };
+    current.needed += Number(component.needed || 0);
+    current.fromStock += Number(component.fromStock || 0);
+    current.toProduce += Number(component.toProduce || 0);
+    current.craftable = current.craftable || component.craftable;
+    requirements.set(key, current);
   });
   const storage = getLatestCounts("Storage");
   const storefront = getLatestCounts("Storefront");
@@ -5705,17 +5736,33 @@ function renderProductionSourceDialog() {
       `).join("")}
     </section>
   ` : "";
+  const stageRows = productionPlan.buildLines.length ? `
+    <section class="production-source-section">
+      <div class="production-source-heading">
+        <strong>Production Stages</strong>
+        <span>${productionPlan.buildLines.length} ${productionPlan.buildLines.length === 1 ? "stage line" : "stage lines"}</span>
+      </div>
+      ${productionPlan.buildLines.map(line => `
+        <div class="production-source-row">
+          <div>
+            <strong>${escapeHtml(line.name)}</strong>
+            <span>Stage ${formatNumber(line.stage)} / ${formatNumber(line.requestedQuantity)} needed / ${formatNumber(line.producedQuantity)} planned output${line.isIntermediate ? " / intermediate" : " / finished good"}</span>
+          </div>
+        </div>
+      `).join("")}
+    </section>
+  ` : "";
   const materialRows = requirements.size ? `
     <section class="production-source-section">
       <div class="production-source-heading">
-        <strong>Production Materials</strong>
-        <span>${requirements.size} ${requirements.size === 1 ? "material" : "materials"}</span>
+        <strong>Production Inputs</strong>
+        <span>${productionPlan.materials.length} external ${productionPlan.materials.length === 1 ? "material" : "materials"}</span>
       </div>
       ${[...requirements.entries()].map(([key, requirement]) => `
         <div class="production-source-row" data-production-source-row="${escapeHtml(key)}">
           <div>
             <strong>${escapeHtml(requirement.ingredient)}</strong>
-            <span>${formatNumber(requirement.needed)} needed</span>
+            <span>${formatNumber(requirement.needed)} needed${requirement.craftable ? ` / ${formatNumber(requirement.fromStock)} existing / ${formatNumber(requirement.toProduce)} to craft` : ""}</span>
           </div>
           <label>
             Take From
@@ -5730,15 +5777,25 @@ function renderProductionSourceDialog() {
   ` : payload.lines.length
     ? ""
     : `<div class="empty-card">Existing stock covers the complete customer order</div>`;
-  elements.productionSourceList.innerHTML = `${allocationRows}${materialRows}`;
+  elements.productionSourceList.innerHTML = `${allocationRows}${stageRows}${materialRows}`;
   elements.productionSourceList.querySelectorAll("[data-stock-allocation-location]").forEach(input => {
     input.addEventListener("change", updatePendingProductionAllocation);
   });
+  elements.productionSourceList.querySelectorAll("[data-production-source-select]").forEach(select => {
+    select.addEventListener("change", () => {
+      const row = select.closest("[data-production-source-row]");
+      pendingProductionQueue.ingredientSources[row.dataset.productionSourceRow] = select.value;
+      renderProductionSourceDialog();
+    });
+  });
   const missing = fulfillmentLines.filter(line => line.productionQuantity > 0 && !recipeCatalog[line.name]);
-  elements.confirmProductionSource.disabled = missing.length > 0;
+  const planningIssues = productionPlan.issues.map(issue => issue.type === "recipe_cycle"
+    ? `Recipe cycle: ${issue.path.join(" -> ")}`
+    : `No recipe is attached to ${issue.itemName}`);
+  elements.confirmProductionSource.disabled = missing.length > 0 || planningIssues.length > 0;
   elements.productionSourceStatus.textContent = missing.length
     ? `No recipe is attached to ${missing.map(line => line.label || line.name).join(", ")}`
-    : "";
+    : planningIssues.join(" / ");
 }
 
 function updatePendingProductionAllocation() {
@@ -5790,7 +5847,7 @@ function closeProductionSourceDialog() {
 
 async function confirmProductionSourceSelection() {
   if (!pendingProductionQueue || productionActionPending) return;
-  const ingredientSources = {};
+  const ingredientSources = { ...pendingProductionQueue.ingredientSources };
   elements.productionSourceList.querySelectorAll("[data-production-source-row]").forEach(row => {
     ingredientSources[row.dataset.productionSourceRow] = row.querySelector("[data-production-source-select]").value;
   });
@@ -5967,7 +6024,7 @@ function renderProductionDetail(batch) {
       <div class="production-progress-row">
         <div>
           <strong>${escapeHtml(line.itemLabel || line.itemName)}</strong>
-          <span>${formatNumber(line.requestedQuantity)} requested / ${formatNumber(plannedCrafts * line.recipeYield)} planned output</span>
+          <span>Stage ${formatNumber(line.stage || 1)} / ${formatNumber(line.requestedQuantity)} requested / ${formatNumber(plannedCrafts * line.recipeYield)} planned output${line.isIntermediate ? " / intermediate" : " / finished good"}</span>
         </div>
         <div class="production-cycle-control">
           <span>${formatNumber(completedCrafts)} / ${formatNumber(plannedCrafts)}</span>
@@ -6011,19 +6068,47 @@ function getProductionBatchMaterialPlan(batch) {
 }
 
 function getProductionBatchMaterialNeeds(batch) {
-  const totals = new Map();
+  const current = productionBatchInventoryState(batch, line => Number(line.completedCrafts || 0));
+  const planned = productionBatchInventoryState(batch, line => Number(line.plannedCrafts || 0));
+  return [...planned.entries()].map(([key, material]) => ({
+    key,
+    ...material,
+    needed: Math.max(0, Number(material.needed || 0) - Number(current.get(key)?.needed || 0))
+  })).filter(material => material.needed > 0);
+}
+
+function productionBatchInventoryState(batch, craftsForLine) {
+  const requirements = new Map();
+  const intermediateOutputs = new Map();
   batch.lines.forEach(line => {
-    const remainingCrafts = Math.max(0, Number(line.plannedCrafts || 0) - Number(line.completedCrafts || 0));
+    const crafts = Math.max(0, Number(craftsForLine(line) || 0));
     line.recipe.forEach(component => {
       const sourceLocation = normalizeProductionSourceClient(component.sourceLocation);
       const itemKey = normalize(component.ingredient);
       const key = `${sourceLocation}:${itemKey}`;
-      const current = totals.get(key) || { ingredient: component.ingredient, sourceLocation, itemKey, needed: 0 };
-      current.needed += remainingCrafts * Number(component.quantity || 0);
-      totals.set(key, current);
+      const current = requirements.get(key) || {
+        ingredient: component.ingredient,
+        sourceLocation,
+        itemKey,
+        needed: 0
+      };
+      current.needed += crafts * Number(component.quantity || 0);
+      requirements.set(key, current);
     });
+    if (!line.isIntermediate) return;
+    const outputLocation = normalizeProductionSourceClient(line.outputLocation);
+    const itemKey = normalize(line.itemName);
+    const key = `${outputLocation}:${itemKey}`;
+    const produced = crafts * Number(line.recipeYield || 1);
+    intermediateOutputs.set(key, Number(intermediateOutputs.get(key) || 0)
+      + Math.min(produced, Number(line.requestedQuantity || 0)));
   });
-  return [...totals.entries()].map(([key, material]) => ({ key, ...material }));
+  const result = new Map();
+  requirements.forEach((requirement, key) => {
+    const needed = Math.max(0, requirement.needed - Number(intermediateOutputs.get(key) || 0));
+    if (needed > 0) result.set(key, { ...requirement, needed });
+  });
+  return result;
 }
 
 function getProductionReadinessPlans() {
@@ -6052,6 +6137,7 @@ function queuedProductionQuantity(itemName) {
   const wanted = normalize(itemName);
   return productionBatches.filter(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status))
     .flatMap(batch => batch.lines)
+    .filter(line => !line.isIntermediate)
     .filter(line => normalize(line.itemName) === wanted)
     .reduce((sum, line) => sum + Math.max(0,
       (Number(line.plannedCrafts || 0) - Number(line.completedCrafts || 0)) * Number(line.recipeYield || 1)
@@ -7190,7 +7276,6 @@ async function retryPendingSyncs() {
 
 function getReplenishmentPlan() {
   const storefrontCounts = getLatestCounts("Storefront");
-  const materialTotals = new Map();
   const missingRecipes = [];
 
   const missing = stockTargets
@@ -7207,35 +7292,24 @@ function getReplenishmentPlan() {
     .filter(line => line.missing > 0)
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  missing.forEach(line => {
-    const recipe = recipeCatalog[line.itemName];
-    if (!recipe) {
-      missingRecipes.push(line.label);
-      return;
-    }
-
-    const batches = recipeBatchCount(line.itemName, line.missing);
-    recipe.forEach(([ingredient, qty, source]) => {
-      const sourceLocation = normalizeProductionSourceClient(source);
-      const key = `${sourceLocation}:${normalize(ingredient)}`;
-      const current = materialTotals.get(key) || { ingredient, sourceLocation, needed: 0 };
-      current.needed += Number(qty || 0) * batches;
-      materialTotals.set(key, current);
-    });
+  const planningLines = missing.filter(line => {
+    if (recipeCatalog[line.itemName]) return true;
+    missingRecipes.push(line.label);
+    return false;
+  }).map(line => ({ itemName: line.itemName, requestedQuantity: line.missing }));
+  const production = planRecipeStages(planningLines, {}, "Storefront");
+  production.issues.forEach(issue => {
+    const label = issue.type === "recipe_cycle"
+      ? `Recipe cycle: ${issue.path.join(" -> ")}`
+      : issue.itemName;
+    if (!missingRecipes.includes(label)) missingRecipes.push(label);
   });
-
-  const materials = [...materialTotals.values()]
-    .map(material => {
-      const available = getLatestCounts(material.sourceLocation).get(normalize(material.ingredient)) || 0;
-      return {
-        ...material,
-        available,
-        shortage: Math.max(0, material.needed - available)
-      };
-    })
-    .sort((a, b) => b.shortage - a.shortage || a.ingredient.localeCompare(b.ingredient));
-
-  return { missing, materials, missingRecipes };
+  return {
+    missing,
+    materials: production.materials,
+    missingRecipes,
+    buildLines: production.buildLines
+  };
 }
 
 function getStorageAlertPlan() {
@@ -7319,13 +7393,26 @@ function getLatestCounts(location) {
   });
 }
 
+function planRecipeStages(lines, ingredientSources = {}, rootOutputLocation = "Storage") {
+  return window.BUSINESS_PRODUCTION_PLANNER.planProduction({
+    lines,
+    recipes: recipeCatalog,
+    recipeYields: recipeYieldCatalog,
+    counts: {
+      Storage: getLatestCounts("Storage"),
+      Storefront: getLatestCounts("Storefront")
+    },
+    ingredientSources,
+    rootOutputLocation
+  });
+}
+
 function stockKey(entry) {
   return normalize(entry.itemName || entry.itemLabel || entry.ingredient || entry.name);
 }
 
 function getProductionPlan(order, allocationOverrides = null) {
   const internal = isInternalCraftOrder(order);
-  const materialTotals = new Map();
   const buildMap = new Map();
   const missing = [];
   const orderLines = new Map();
@@ -7350,10 +7437,11 @@ function getProductionPlan(order, allocationOverrides = null) {
     normalize(allocation.itemName || allocation.itemLabel),
     allocation
   ]));
-  const linkedProduction = new Map((linkedBatch?.lines || []).map(line => [
-    normalize(line.itemName || line.itemLabel),
-    Number(line.requestedQuantity || 0)
-  ]));
+  const linkedProduction = new Map();
+  (linkedBatch?.lines || []).filter(line => !line.isIntermediate).forEach(line => {
+    const key = normalize(line.itemName || line.itemLabel);
+    linkedProduction.set(key, Number(linkedProduction.get(key) || 0) + Number(line.requestedQuantity || 0));
+  });
   const reservations = getFinishedStockReservations(order.id);
   const storageCounts = getLatestCounts("Storage");
   const storefrontCounts = getLatestCounts("Storefront");
@@ -7413,11 +7501,25 @@ function getProductionPlan(order, allocationOverrides = null) {
     };
   }).sort((a, b) => a.label.localeCompare(b.label));
 
-  buildMap.forEach((quantity, name) => {
-    const batches = recipeBatchCount(name, quantity);
-    recipeCatalog[name].forEach(([ingredient, qty]) => {
-      materialTotals.set(ingredient, (materialTotals.get(ingredient) || 0) + Number(qty || 0) * batches);
-    });
+  const staged = planRecipeStages(
+    [...buildMap.entries()].map(([itemName, requestedQuantity]) => ({ itemName, requestedQuantity })),
+    {},
+    "Storage"
+  );
+  staged.issues.forEach(issue => {
+    const label = issue.type === "recipe_cycle"
+      ? `Recipe cycle: ${issue.path.join(" -> ")}`
+      : issue.itemName;
+    if (!missing.includes(label)) missing.push(label);
+  });
+  const materials = staged.materials.map(material => {
+    const unitCost = Number(pricingCatalog.materials[material.ingredient]?.midpoint || 0);
+    return {
+      ...material,
+      qty: material.needed,
+      unitCost,
+      cost: material.needed * unitCost
+    };
   });
 
   return {
@@ -7428,35 +7530,14 @@ function getProductionPlan(order, allocationOverrides = null) {
       storageQuantity: line.storageQuantity,
       storefrontQuantity: line.storefrontQuantity
     })),
-    buildLines: [...buildMap.entries()]
-      .map(([name, quantity]) => {
-        const yieldQuantity = recipeYield(name);
-        const batches = recipeBatchCount(name, quantity);
-        const batchCost = recipeCatalog[name].reduce((sum, [ingredient, qty]) => {
-          const unitCost = Number(pricingCatalog.materials[ingredient]?.midpoint || 0);
-          return sum + Number(qty || 0) * unitCost;
-        }, 0);
-        return {
-          name,
-          quantity,
-          batches,
-          yield: yieldQuantity,
-          producedQuantity: batches * yieldQuantity,
-          unitCost: batchCost / yieldQuantity
-        };
-      })
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    materials: [...materialTotals.entries()]
-      .map(([ingredient, qty]) => {
-        const unitCost = Number(pricingCatalog.materials[ingredient]?.midpoint || 0);
-        return { ingredient, qty, unitCost, cost: qty * unitCost };
-      })
-      .sort((a, b) => a.ingredient.localeCompare(b.ingredient)),
-    materialCost: [...materialTotals.entries()]
-      .reduce((sum, [ingredient, qty]) => {
-        const unitCost = Number(pricingCatalog.materials[ingredient]?.midpoint || 0);
-        return sum + (qty * unitCost);
-      }, 0),
+    buildLines: staged.buildLines.map(line => ({
+      ...line,
+      quantity: line.requestedQuantity,
+      batches: line.plannedCrafts,
+      yield: line.recipeYield
+    })),
+    materials,
+    materialCost: materials.reduce((sum, material) => sum + material.cost, 0),
     missing
   };
 }

@@ -70,6 +70,8 @@ The customer register is part of the Sales/Order workbench. Registered customer 
 
 Internal crafts use the same workbench with **Internal Craft** selected. They always build the full entered quantity for storage, even when finished stock already exists. Prices, deposits, balances, ledger movements, and P&L entries are forced to zero. Completing production consumes the chosen recipe ingredients, adds the crafted output to storage, and closes the internal order automatically without a customer-delivery movement.
 
+Production plans expand recipes recursively. If a finished good needs another craftable product, the queue inserts that intermediate as an earlier stage, uses existing intermediate stock first, and continues until it reaches external materials. Shared intermediate demand, recipe yields, source locations, and yield surplus are netted across the complete batch. Cyclic recipes are rejected before queueing, and inventory movements record only external inputs, finished output, and genuine intermediate surplus.
+
 ## Finance Entry Rules
 
 Storefront sales and purchases, supplier receipts, payroll payouts, owner funds, and safekeeping movements create their own finance records. Use **Other Income** or **Other Expense** only for activity that has not already been recorded elsewhere. When cash merely enters or leaves the in-game ledger for an already-recorded transaction, use **Ledger Transfer In/Out**; it updates cash without duplicating revenue or expense in P&L.

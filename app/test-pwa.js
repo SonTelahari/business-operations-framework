@@ -54,6 +54,7 @@ assert(appHtml.includes('<option value="both">Product and material</option>'), "
 assert(appHtml.includes('data-section="catalog"'), "managers must have a catalog management tab");
 assert(appHtml.includes('id="recipeEditorForm"'), "catalog management must expose a recipe editor");
 assert(appHtml.includes('id="productionSourceDialog"'), "production queues must confirm ingredient source locations");
+assert(appHtml.includes('src="production-planner.js?v=20260820-multistage-production"'), "the production UI must load the shared multi-stage planner");
 assert(appHtml.includes('id="confirmProductionSourceButton"'), "customer fulfillment must confirm existing-stock allocations");
 assert(appHtml.includes('id="orderTypeSelect"'), "the workbench must expose customer-sale and internal-craft modes");
 assert(appHtml.includes('<option value="Internal Craft">Internal Craft</option>'), "internal stock builds must be selectable from the workbench");
@@ -128,6 +129,8 @@ assert(appScript.includes('function handleDashboardShortcut(event)'), "dashboard
 assert(appScript.includes('shortcut.disabled = !allowed'), "dashboard shortcuts must respect role and tab access");
 assert(appScript.includes('await saveActiveOrder({ syncInputs: false })'), "direct Sales transitions must survive form synchronization");
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
+assert(appScript.includes('function planRecipeStages('), "production and restock plans must expand nested recipes");
+assert(appScript.includes('function productionBatchInventoryState('), "production readiness must net intermediate work in progress");
 assert(appScript.includes('function isInternalCraftOrder(order)'), "the client must keep internal crafts distinct from customer sales");
 assert(appScript.includes('sourceType: orderProductionSourceType(activeOrder)'), "internal crafts must queue with their own production source type");
 assert(appScript.includes('signal: AbortSignal.timeout(45000)'), "production queue requests must stop waiting after a bounded timeout");

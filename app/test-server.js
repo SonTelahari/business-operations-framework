@@ -282,11 +282,14 @@ async function run() {
           { name: "Revolver Handle", unitCost: 1 },
           { name: "Revolver Barrel", unitCost: 1 },
           { name: "Revolver Cylinder", unitCost: 1 },
-          { name: "Bolts", unitCost: 0.05 }
+          { name: "Bolts", unitCost: 0.05 },
+          { name: "Tobacco", unitCost: 0.1 }
         ],
         products: [
           { name: "Navy Revolver", label: "Navy Revolver", tag: "WEAPON_REVOLVER_NAVY", category: "Revolvers", salePrice: 105, target: 5 },
-          { name: "Boltaction Rifle", label: "BoltAction Rifle", tag: "WEAPON_RIFLE_BOLTACTION", category: "Rifles", salePrice: 80, target: 5 }
+          { name: "Boltaction Rifle", label: "BoltAction Rifle", tag: "WEAPON_RIFLE_BOLTACTION", category: "Rifles", salePrice: 80, target: 5 },
+          { name: "Cigar", label: "Cigar", tag: "cigar", category: "Tobacco", salePrice: 2, target: 0 },
+          { name: "Cigar Box", label: "Cigar Box", tag: "cigar_box", category: "Tobacco", salePrice: 25, target: 0 }
         ],
         recipes: [{
           productName: "Navy Revolver",
@@ -299,6 +302,14 @@ async function run() {
             { name: "Revolver Cylinder", quantity: 1 },
             { name: "Bolts", quantity: 2 }
           ]
+        }, {
+          productName: "Cigar",
+          yield: 1,
+          ingredients: [{ name: "Tobacco", quantity: 2 }]
+        }, {
+          productName: "Cigar Box",
+          yield: 1,
+          ingredients: [{ name: "Cigar", quantity: 10 }]
         }]
       }
     }
@@ -1441,6 +1452,7 @@ async function run() {
   await post(`${baseUrl}/api/production-batches/production-reserved-first/cancel`, {}, managerCookie);
   await post(`${baseUrl}/api/production-batches/production-reserved-second/cancel`, {}, managerCookie);
 
+  await runMultiStageProductionScenario({ baseUrl, managerCookie, workerCookie });
   await runProductionCombinationMatrix({ baseUrl, managerCookie, workerCookie });
   await runOperationalFullCycleSimulations({ baseUrl, managerCookie, workerCookie });
 
@@ -1550,6 +1562,69 @@ async function run() {
   assert.match(logout.response.headers.get("set-cookie") || "", /Max-Age=0/);
 
   console.log("Personal accounts, manager permissions, and audit checks passed.");
+}
+
+async function runMultiStageProductionScenario({ baseUrl, managerCookie, workerCookie }) {
+  const originalTobacco = storageCounts.get("tobacco");
+  const originalCigars = storageCounts.get("cigar");
+  const originalBoxes = storageCounts.get("cigar box");
+  storageCounts.set("tobacco", 100);
+  storageCounts.set("cigar", 3);
+  storageCounts.set("cigar box", 0);
+  try {
+    const created = await post(`${baseUrl}/api/production-batches`, {
+      id: "production-multi-stage-cigars",
+      sourceType: "Manual",
+      reference: "Two cigar boxes",
+      lines: [{ itemName: "Cigar Box", quantity: 2 }]
+    }, managerCookie);
+    assert.equal(created.response.status, 200, JSON.stringify(created.body));
+    assert.deepEqual(created.body.batch.lines.map(line => ({
+      item: line.itemName,
+      quantity: line.requestedQuantity,
+      stage: line.stage,
+      intermediate: line.isIntermediate
+    })), [
+      { item: "Cigar", quantity: 17, stage: 1, intermediate: true },
+      { item: "Cigar Box", quantity: 2, stage: 2, intermediate: false }
+    ]);
+    assert.equal((await post(
+      `${baseUrl}/api/production-batches/production-multi-stage-cigars/start`,
+      {},
+      workerCookie
+    )).response.status, 200);
+    const writesBefore = receiverPayloads.length;
+    const completed = await post(`${baseUrl}/api/production-batches/production-multi-stage-cigars/progress`, {
+      completions: created.body.batch.lines.map(line => ({
+        lineId: line.id,
+        completedCrafts: line.plannedCrafts
+      }))
+    }, workerCookie);
+    assert.equal(completed.response.status, 200, JSON.stringify(completed.body));
+    assert.equal(completed.body.batch.status, "Completed");
+    const writes = receiverPayloads.slice(writesBefore).filter(payload => payload.action === "manual_operation");
+    assert(writes.some(payload => payload.entry.kind === "Production Use"
+      && mockInventoryKey(payload.entry.itemName) === "tobacco" && payload.entry.quantity === 34));
+    assert(writes.some(payload => payload.entry.kind === "Production Use"
+      && mockInventoryKey(payload.entry.itemName) === "cigar" && payload.entry.quantity === 3));
+    assert.equal(writes.some(payload => payload.entry.itemName === "Cigar"
+      && payload.entry.kind === "Production Output"), false);
+    assert(writes.some(payload => payload.entry.kind === "Production Output"
+      && payload.entry.itemName === "Cigar Box" && payload.entry.quantity === 2));
+    assert.equal(storageCounts.get("tobacco"), 66);
+    assert.equal(storageCounts.get("cigar"), 0);
+    assert.equal(storageCounts.get("cigar box"), 2);
+    console.log("Multi-stage production scenario passed: existing intermediates, nested inputs, and net stock movements.");
+  } finally {
+    restoreMapValue(storageCounts, "tobacco", originalTobacco);
+    restoreMapValue(storageCounts, "cigar", originalCigars);
+    restoreMapValue(storageCounts, "cigar box", originalBoxes);
+  }
+}
+
+function restoreMapValue(map, key, value) {
+  if (value === undefined) map.delete(key);
+  else map.set(key, value);
 }
 
 async function runProductionCombinationMatrix({ baseUrl, managerCookie, workerCookie }) {
