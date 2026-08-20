@@ -56,8 +56,9 @@ assert(appHtml.includes('data-section="catalog"'), "managers must have a catalog
 assert(appHtml.includes('id="recipeEditorForm"'), "catalog management must expose a recipe editor");
 assert(appHtml.includes('id="productionSourceDialog"'), "production queues must confirm ingredient source locations");
 assert(appHtml.includes('src="production-planner.js?v=20260820-multistage-production"'), "the production UI must load the shared multi-stage planner");
-assert(appHtml.includes('src="production-inventory.js?v=20260820-shared-inventory"'), "the production UI must load shared inventory calculations");
+assert(appHtml.includes('src="production-inventory.js?v=20260821-static-route"'), "the production UI must load shared inventory calculations");
 assert(appHtml.indexOf('src="production-inventory.js') < appHtml.indexOf('src="app.js'), "shared inventory calculations must load before the application");
+assert(server.includes('"/production-inventory.js"'), "the hosted server must serve the browser production inventory dependency");
 assert(appHtml.includes('id="confirmProductionSourceButton"'), "customer fulfillment must confirm existing-stock allocations");
 assert(appHtml.includes('id="orderTypeSelect"'), "the workbench must expose customer-sale and internal-craft modes");
 assert(appHtml.includes('<option value="Internal Craft">Internal Craft</option>'), "internal stock builds must be selectable from the workbench");

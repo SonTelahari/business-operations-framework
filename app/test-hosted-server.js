@@ -121,6 +121,11 @@ async function run() {
     assert.equal(firstSession.body.jobProfile.accountType, "local");
     assert.equal(firstSession.body.jobProfile.jobs.length, 1);
     assert.equal(firstSession.body.jobProfile.jobs[0].role, "admin");
+    const productionInventoryAsset = await fetch(`${baseUrl}/production-inventory.js`, {
+      headers: { cookie: first.cookie }
+    });
+    assert.equal(productionInventoryAsset.status, 200);
+    assert.match(await productionInventoryAsset.text(), /FRONTIER_PRODUCTION_INVENTORY/);
 
     const linkedSecondJob = await request("/api/workspaces/link", {
       method: "POST",
