@@ -10,6 +10,7 @@ const SENSITIVE_KEY = /^(?:password|passwordHash|password_hash|token|accessToken
 
 function createLegacyBusinessArchive({
   bootstrap,
+  customers = [],
   suppliers = [],
   supplyOrders = [],
   users = [],
@@ -45,6 +46,7 @@ function createLegacyBusinessArchive({
     business: {
       configuration,
       salesOrders: cleanArray(bootstrap.salesOrders, 5000),
+      customers: cleanArray(customers, 5000),
       supplyOrders: cleanArray(supplyOrders, 5000),
       suppliers: cleanArray(suppliers, 1000),
       storefrontBuyOrders: cleanArray(bootstrap.storefrontBuyOrders, 5000),
@@ -59,7 +61,7 @@ function createLegacyBusinessArchive({
       snapshot: sheet,
       finance: finance && typeof finance === "object" ? stripSensitive(finance) : null
     },
-    coverage: buildCoverage({ bootstrap, suppliers, supplyOrders, users, audit, finance, warnings })
+    coverage: buildCoverage({ bootstrap, customers, suppliers, supplyOrders, users, audit, finance, warnings })
   };
   archive.fingerprint = archiveFingerprint(archive);
   return validateBusinessArchive(archive);
@@ -93,6 +95,7 @@ function createBusinessArchive({
     business: {
       configuration: normalizedConfiguration,
       salesOrders: cleanArray(business.salesOrders, 5000),
+      customers: cleanArray(business.customers, 5000),
       supplyOrders: cleanArray(business.supplyOrders, 5000),
       suppliers: cleanArray(business.suppliers, 1000),
       storefrontBuyOrders: cleanArray(business.storefrontBuyOrders, 5000),
@@ -114,6 +117,7 @@ function createBusinessArchive({
       passwordCredentials: false,
       counts: {
         products: normalizedConfiguration.catalog.products.length,
+        customers: Array.isArray(business.customers) ? business.customers.length : 0,
         suppliers: Array.isArray(business.suppliers) ? business.suppliers.length : 0,
         supplyOrders: Array.isArray(business.supplyOrders) ? business.supplyOrders.length : 0,
         staffReferences: Array.isArray(users) ? users.length : 0,
@@ -160,6 +164,9 @@ function validateBusinessArchive(input) {
     business: {
       configuration,
       salesOrders: cleanArray(input.business.salesOrders, 5000),
+      ...(Array.isArray(input.business.customers)
+        ? { customers: cleanArray(input.business.customers, 5000) }
+        : {}),
       supplyOrders: cleanArray(input.business.supplyOrders, 5000),
       suppliers: cleanArray(input.business.suppliers, 1000),
       storefrontBuyOrders: cleanArray(input.business.storefrontBuyOrders, 5000),
@@ -198,6 +205,7 @@ function archiveSummary(input) {
     storageCounts: Array.isArray(inventory.storage) ? inventory.storage.length : 0,
     ledgerAvailable: Number.isFinite(Number(inventory.ledger?.balance)),
     salesOrders: archive.business.salesOrders.length,
+    customers: Array.isArray(archive.business.customers) ? archive.business.customers.length : 0,
     supplyOrders: archive.business.supplyOrders.length,
     suppliers: archive.business.suppliers.length,
     storefrontBuyOrders: archive.business.storefrontBuyOrders.length,
@@ -339,7 +347,7 @@ function inferSupplierCosts(suppliers) {
   return costs;
 }
 
-function buildCoverage({ bootstrap, suppliers, supplyOrders, users, audit, finance, warnings }) {
+function buildCoverage({ bootstrap, customers, suppliers, supplyOrders, users, audit, finance, warnings }) {
   const snapshot = bootstrap.sheet || {};
   const coverageWarnings = cleanArray(warnings, 100).map(value => cleanText(value, 300)).filter(Boolean);
   if (!finance?.ok) coverageWarnings.push("Detailed finance data was unavailable during export.");
@@ -352,6 +360,7 @@ function buildCoverage({ bootstrap, suppliers, supplyOrders, users, audit, finan
     passwordCredentials: false,
     counts: {
       products: Array.isArray(bootstrap.items) ? bootstrap.items.length : 0,
+      customers: Array.isArray(customers) ? customers.length : 0,
       suppliers: Array.isArray(suppliers) ? suppliers.length : 0,
       supplyOrders: Array.isArray(supplyOrders) ? supplyOrders.length : 0,
       staffReferences: Array.isArray(users) ? users.length : 0,

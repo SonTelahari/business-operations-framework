@@ -65,6 +65,19 @@ async function run() {
     assert.equal(updated.lines[0].receipts[1].receivedAt, "2026-07-22T09:00:00.000Z");
 
     const actor = { fullName: "William Winther" };
+    const legacyCustomer = await store.saveCustomer({
+      id: "customer-legacy",
+      name: "Legacy Customer",
+      customerType: "Individual"
+    }, actor);
+    assert.equal(legacyCustomer.stats.orderCount, 1, "matching historical customer names are linked on registration");
+    const renamedLegacyCustomer = await store.saveCustomer({
+      ...legacyCustomer,
+      name: "Legacy Client"
+    }, actor);
+    assert.equal(renamedLegacyCustomer.stats.orderCount, 1, "stable customer IDs preserve history after a rename");
+    assert.equal(store.getSalesOrder("legacy-sale").customer, "Legacy Customer", "historical order names remain snapshots");
+
     const internalOrder = await store.saveSalesOrder({
       id: "internal-stock-build",
       orderType: "Internal Craft",
@@ -112,11 +125,85 @@ async function run() {
     }, actor);
     await store.commitProductionProgress(internalBatch.id, "internal-progress", actor);
     assert.equal(store.getSalesOrder(internalOrder.id).status, "Completed");
+
+    const customer = await store.saveCustomer({
+      id: "customer-arthur",
+      name: "Arthur Morgan",
+      customerType: "Individual",
+      location: "Valentine",
+      telegram: "SW-184",
+      notes: "Prefers rifles"
+    }, actor);
+    assert.equal(customer.name, "Arthur Morgan");
+    assert.equal(customer.stats.orderCount, 0);
+    await assert.rejects(() => store.saveCustomer({
+      name: " arthur MORGAN "
+    }, actor), error => error.code === "customer_name_exists");
+
+    await store.saveSalesOrder({
+      id: "customer-completed-sale",
+      orderType: "Customer Sale",
+      customerId: customer.id,
+      customer: "Stale name ignored",
+      status: "Completed",
+      deposit: 0,
+      lines: [
+        { name: "Bolt Action Rifle", label: "Bolt Action Rifle", quantity: 1, unitPrice: 225 },
+        { name: "Rifle Ammo Express", label: "Rifle Ammo Express", quantity: 2, unitPrice: 2.25 }
+      ]
+    }, actor);
+    await store.saveSalesOrder({
+      id: "customer-active-order",
+      orderType: "Customer Sale",
+      customerId: customer.id,
+      status: "Reserved",
+      deposit: 50,
+      lines: [{ name: "Navy Revolver", label: "Navy Revolver", quantity: 2, unitPrice: 105 }]
+    }, actor);
+
+    const customerWithHistory = store.getCustomer(customer.id);
+    assert.equal(customerWithHistory.stats.orderCount, 2);
+    assert.equal(customerWithHistory.stats.completedSales, 1);
+    assert.equal(customerWithHistory.stats.activeOrders, 1);
+    assert.equal(customerWithHistory.stats.lifetimeSales, 229.5);
+    assert.equal(customerWithHistory.stats.outstandingBalance, 160);
+    assert.equal(customerWithHistory.stats.unitsPurchased, 3);
+    assert.equal(customerWithHistory.stats.topItems[0].label, "Rifle Ammo Express");
+
+    const counterSale = await store.saveSalesOrder({
+      id: "counter-cash-sale",
+      orderType: "Counter Sale",
+      customerId: customer.id,
+      customer: customer.name,
+      status: "Draft",
+      priority: "Expedite",
+      deliveryDate: "2026-07-30",
+      deposit: 0,
+      lines: [{ name: "Gun Cleaning Kit", label: "Gun Cleaning Kit", quantity: 2, unitPrice: 15 }]
+    }, actor);
+    assert.equal(counterSale.status, "Completed");
+    assert.equal(counterSale.customerId, "");
+    assert.equal(counterSale.customer, "");
+    assert.equal(counterSale.priority, "Normal");
+    assert.equal(counterSale.deliveryDate, "");
+    assert.equal(counterSale.deposit, 30);
+    assert.equal(counterSale.paymentMethod, "Cash");
+    assert.equal(store.getCustomer(customer.id).stats.orderCount, 2, "counter sales must not inflate a named customer's history");
+    await assert.rejects(() => store.createProductionBatch({
+      sourceType: "Customer Order",
+      sourceId: counterSale.id,
+      lines: [{ itemName: "Gun Cleaning Kit", requestedQuantity: 2, recipe: [{ ingredient: "Oil", quantity: 1 }] }]
+    }, actor), error => error.code === "counter_sale_production_forbidden");
+
+    const removedCustomer = await store.removeCustomer(customer.id);
+    assert.equal(removedCustomer.stats.orderCount, 2);
+    assert.equal(store.listCustomers().length, 1);
+    assert.equal(store.getSalesOrder("customer-completed-sale").customer, "Arthur Morgan", "historical sales retain the customer snapshot");
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 
-  console.log("Business-store receipt history migration checks passed.");
+  console.log("Business-store receipt, customer, and counter-sale checks passed.");
 }
 
 run().catch(error => {

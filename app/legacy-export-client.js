@@ -35,6 +35,13 @@ async function exportLegacyBusiness({
     request("/api/admin/audit?limit=1000")
   ]);
   const warnings = [];
+  let customers = [];
+  try {
+    const customersResponse = await request("/api/customers");
+    customers = Array.isArray(customersResponse.customers) ? customersResponse.customers : [];
+  } catch (error) {
+    warnings.push(`Customer export warning: ${error.message}`);
+  }
   let finance = null;
   try {
     finance = await request("/api/finance");
@@ -43,6 +50,7 @@ async function exportLegacyBusiness({
   }
   return createLegacyBusinessArchive({
     bootstrap,
+    customers,
     suppliers: suppliersResponse.suppliers,
     supplyOrders: supplyOrdersResponse.orders,
     users: usersResponse.users,

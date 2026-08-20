@@ -408,8 +408,29 @@ async function run() {
   assert.equal(employeeProductInsight.response.status, 403);
   assert.equal(employeeProductInsight.body.code, "manager_required");
 
+  const emptyCustomers = await getJson(`${baseUrl}/api/customers`, employeeCookie);
+  assert.equal(emptyCustomers.response.status, 200);
+  assert.equal(emptyCustomers.body.customers.length, 0);
+  const savedCustomer = await post(`${baseUrl}/api/customers`, {
+    id: "customer-arthur",
+    name: "Arthur Morgan",
+    customerType: "Individual",
+    location: "Valentine",
+    telegram: "SW-184",
+    notes: "Prefers rifles"
+  }, employeeCookie);
+  assert.equal(savedCustomer.response.status, 200);
+  assert.equal(savedCustomer.body.customer.name, "Arthur Morgan");
+  assert.equal(savedCustomer.body.customer.stats.orderCount, 0);
+  const duplicateCustomer = await post(`${baseUrl}/api/customers`, {
+    name: " arthur MORGAN "
+  }, employeeCookie);
+  assert.equal(duplicateCustomer.response.status, 409);
+  assert.equal(duplicateCustomer.body.code, "customer_name_exists");
+
   const createdSalesOrder = await post(`${baseUrl}/api/sales-orders`, {
     id: "sales-order-1",
+    customerId: savedCustomer.body.customer.id,
     customer: "Arthur Morgan",
     handler: "Ada Employee",
     status: "Draft",
@@ -498,6 +519,9 @@ async function run() {
   assert.equal(employeeBusinessProfileAttempt.body.code, "admin_required");
   const employeeSupplierAttempt = await getJson(`${baseUrl}/api/suppliers`, employeeCookie);
   assert.equal(employeeSupplierAttempt.response.status, 403);
+  const employeeCustomerRemoval = await remove(`${baseUrl}/api/customers/${savedCustomer.body.customer.id}`, employeeCookie);
+  assert.equal(employeeCustomerRemoval.response.status, 403);
+  assert.equal(employeeCustomerRemoval.body.code, "manager_required");
   const employeeDailyCloseAttempt = await getJson(`${baseUrl}/api/daily-closes`, employeeCookie);
   assert.equal(employeeDailyCloseAttempt.response.status, 403);
   const employeeBootstrap = await getJson(`${baseUrl}/api/bootstrap`, employeeCookie);
@@ -505,6 +529,7 @@ async function run() {
   assert.equal(employeeBootstrap.body.navigation.sections.store, true);
   assert.equal(Object.prototype.hasOwnProperty.call(employeeBootstrap.body.sheet, "reviewExceptions"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(employeeBootstrap.body.sheet.inventory, "ledger"), false);
+  assert.equal(employeeBootstrap.body.customers.length, 1);
   const employeeReviewAttempt = await post(`${baseUrl}/api/sync`, {
     action: "resolve_exception",
     exception: { webhookId: "review-1", itemName: "Navy Revolver", quantity: 1 }
@@ -1435,6 +1460,38 @@ async function run() {
   assert.equal(removedSupplier.response.status, 200);
   assert.deepEqual(removedSupplier.body.suppliers, []);
 
+  const counterSale = await post(`${baseUrl}/api/sales-orders`, {
+    id: "counter-sale-cleaning-kit",
+    orderType: "Counter Sale",
+    customerId: savedCustomer.body.customer.id,
+    customer: "Must be cleared",
+    status: "Draft",
+    priority: "Expedite",
+    deliveryDate: "2026-07-20",
+    lines: [{ name: "Gun Cleaning Kit", label: "Gun Cleaning Kit", quantity: 2, unitPrice: 15 }]
+  }, managerCookie);
+  assert.equal(counterSale.response.status, 200);
+  assert.equal(counterSale.body.order.status, "Completed");
+  assert.equal(counterSale.body.order.customerId, "");
+  assert.equal(counterSale.body.order.customer, "");
+  assert.equal(counterSale.body.order.deposit, 30);
+  assert.equal(counterSale.body.order.paymentMethod, "Cash");
+  const counterProduction = await post(`${baseUrl}/api/production-batches`, {
+    id: "counter-sale-production",
+    sourceType: "Customer Order",
+    sourceId: counterSale.body.order.id,
+    lines: [{ itemName: "Gun Cleaning Kit", quantity: 2 }]
+  }, managerCookie);
+  assert.equal(counterProduction.response.status, 409);
+  assert.equal(counterProduction.body.code, "counter_sale_production_forbidden");
+
+  const customerRegister = await getJson(`${baseUrl}/api/customers`, managerCookie);
+  assert.equal(customerRegister.response.status, 200);
+  const arthurCustomer = customerRegister.body.customers.find(customer => customer.id === savedCustomer.body.customer.id);
+  assert.equal(arthurCustomer.stats.orderCount, 1);
+  assert.equal(arthurCustomer.stats.completedSales, 1);
+  assert.equal(arthurCustomer.stats.lifetimeSales, 210);
+
   const managerAudit = await getJson(`${baseUrl}/api/admin/audit?limit=1000`, managerCookie);
   assert.equal(managerAudit.response.status, 200);
   assert(managerAudit.body.events.some(event => event.action === "account.role_changed"));
@@ -1443,6 +1500,7 @@ async function run() {
   assert(managerAudit.body.events.some(event => event.action === "supply_order.received" && event.details.quantity === 7));
   assert(managerAudit.body.events.some(event => event.action === "supplier.saved" && event.subjectName === "Van Horn Foundry"));
   assert(managerAudit.body.events.some(event => event.action === "supplier.removed" && event.subjectName === "Van Horn Foundry"));
+  assert(managerAudit.body.events.some(event => event.action === "customer.saved" && event.subjectName === "Arthur Morgan"));
   assert(managerAudit.body.events.some(event => event.action === "storefront_buy_order.saved" && event.subjectName === "Nitrite"));
   assert(managerAudit.body.events.some(event => event.action === "storefront_buy_order.fill_adjusted" && event.details.filledQuantity === 6));
   assert(managerAudit.body.events.some(event => event.action === "webhook_exception.resolved" && event.actorName === "Ada Employee"));
@@ -1456,6 +1514,12 @@ async function run() {
   assert(managerAudit.body.events.some(event => event.action === "daily_close.finalized" && event.details.ledgerDifference === -5));
   assert(managerAudit.body.events.some(event => event.action === "daily_close.reopened" && event.actorName === "Frontier Owner"));
   assert.equal(managerAudit.body.events.filter(event => event.action === "clock.in" && event.subjectName === "Grace Worker").length, 1);
+
+  const removedCustomer = await remove(`${baseUrl}/api/customers/${savedCustomer.body.customer.id}`, managerCookie);
+  assert.equal(removedCustomer.response.status, 200);
+  assert.deepEqual(removedCustomer.body.customers, []);
+  const historicalOrders = await getJson(`${baseUrl}/api/sales-orders`, managerCookie);
+  assert.equal(historicalOrders.body.orders.find(order => order.id === "sales-order-1").customer, "Arthur Morgan");
 
   const removedSupplyOrder = await remove(`${baseUrl}/api/supply-orders/supply-order-1`, managerCookie);
   assert.equal(removedSupplyOrder.response.status, 200);

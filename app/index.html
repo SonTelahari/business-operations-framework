@@ -723,14 +723,20 @@
               <label>
                 Order Type
                 <select id="orderTypeSelect">
-                  <option value="Customer Sale">Customer Sale</option>
+                  <option value="Customer Sale">Customer Order</option>
+                  <option value="Counter Sale">Over-the-counter Cash Sale</option>
                   <option value="Internal Craft">Internal Craft</option>
                 </select>
               </label>
-              <label id="customerField">
-                Customer
-                <input id="customerInput" type="text" autocomplete="off" placeholder="Customer name">
-              </label>
+              <div class="customer-selector-field" id="customerField">
+                <label>
+                  Customer
+                  <select id="customerInput">
+                    <option value="">Choose a registered customer</option>
+                  </select>
+                </label>
+                <button class="ghost-button" id="openCustomerRegisterButton" type="button">New Customer</button>
+              </div>
               <label>
                 Handler
                 <input id="handlerInput" type="text" autocomplete="off" placeholder="Employee">
@@ -739,14 +745,14 @@
                 Deposit Paid
                 <input id="depositInput" type="number" min="0" step="0.01" value="0">
               </label>
-              <label>
+              <label id="priorityField">
                 Priority
                 <select id="prioritySelect">
                   <option value="Normal">Normal</option>
                   <option value="Expedite">Expedite</option>
                 </select>
               </label>
-              <label>
+              <label id="deliveryDateField">
                 <span id="deliveryDateFieldLabel">Delivery Date</span>
                 <input id="deliveryDateInput" type="date">
               </label>
@@ -874,6 +880,88 @@
             </select>
           </div>
           <div class="orders-list" id="ordersList"></div>
+        </section>
+
+        <section class="panel customer-panel" id="customerPanel" aria-label="Customer register">
+          <div class="panel-header customer-panel-header">
+            <div>
+              <p class="eyebrow">Sales Ledger</p>
+              <h2>Customer Register</h2>
+              <p id="customerSavedCount">0 customers</p>
+            </div>
+            <div class="customer-header-actions">
+              <button id="newCustomerButton" class="ghost-button" type="button">New Customer</button>
+              <button id="saveCustomerButton" class="primary-button" type="button">Save Customer</button>
+            </div>
+          </div>
+          <p class="supply-data-status" id="customerDataStatus">Loading shared customers</p>
+
+          <div class="customer-layout">
+            <div class="customer-editor">
+              <div class="form-grid customer-main-fields">
+                <label>
+                  Customer or Business Name
+                  <input id="customerNameInput" type="text" autocomplete="off" placeholder="In-game character or business name">
+                </label>
+                <label>
+                  Type
+                  <select id="customerTypeInput">
+                    <option value="Individual">Individual</option>
+                    <option value="Business">Business</option>
+                    <option value="Organization">Organization</option>
+                  </select>
+                </label>
+                <label>
+                  Location
+                  <input id="customerLocationInput" type="text" autocomplete="off" placeholder="Town or region">
+                </label>
+                <label>
+                  Telegram
+                  <input id="customerTelegramInput" type="text" autocomplete="off" placeholder="In-game telegram number">
+                </label>
+              </div>
+
+              <div class="customer-stats" aria-label="Customer statistics">
+                <div><span>Orders</span><strong id="customerOrderCount">0</strong></div>
+                <div><span>Completed Sales</span><strong id="customerCompletedCount">0</strong></div>
+                <div><span>Lifetime Sales</span><strong id="customerLifetimeSales">$0</strong></div>
+                <div><span>Average Sale</span><strong id="customerAverageSale">$0</strong></div>
+                <div><span>Outstanding</span><strong id="customerOutstanding">$0</strong></div>
+                <div><span>Last Activity</span><strong id="customerLastActivity">-</strong></div>
+              </div>
+
+              <div class="notes-grid customer-notes-grid">
+                <label>
+                  Notes
+                  <textarea id="customerNotesInput" rows="4" placeholder="Preferences, standing terms, or business context"></textarea>
+                </label>
+              </div>
+
+              <div class="customer-detail-grid">
+                <section class="customer-detail-section" aria-labelledby="customerTopItemsHeading">
+                  <h3 id="customerTopItemsHeading">Top Purchases</h3>
+                  <div id="customerTopItems" class="customer-top-items"></div>
+                </section>
+                <section class="customer-detail-section" aria-labelledby="customerHistoryHeading">
+                  <h3 id="customerHistoryHeading">Sales History</h3>
+                  <div id="customerHistoryList" class="customer-history-list"></div>
+                </section>
+              </div>
+
+              <div class="customer-editor-footer">
+                <span id="customerEditMeta">New customer record</span>
+                <button id="deleteCustomerButton" class="danger-button management-only" type="button">Remove Customer</button>
+              </div>
+            </div>
+
+            <aside class="customer-directory" aria-label="Saved customers">
+              <label>
+                Find Customer
+                <input id="customerSearchInput" type="search" autocomplete="off" placeholder="Name, type, location, or telegram">
+              </label>
+              <div class="customer-card-list" id="customerCardList"></div>
+            </aside>
+          </div>
         </section>
       </main>
 

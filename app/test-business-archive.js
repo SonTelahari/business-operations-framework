@@ -27,6 +27,7 @@ async function run() {
       const path = new URL(url).pathname;
       const payloads = {
         "/api/bootstrap": fixture.bootstrap,
+        "/api/customers": { ok: true, customers: fixture.customers },
         "/api/suppliers": { ok: true, suppliers: fixture.suppliers },
         "/api/supply-orders": { ok: true, orders: fixture.supplyOrders },
         "/api/admin/users": { ok: true, users: fixture.users },
@@ -37,7 +38,7 @@ async function run() {
     }
   });
 
-  assert.equal(requested.length, 7);
+  assert.equal(requested.length, 8);
   assert.equal(archive.business.configuration.business.name, "Frontier Firearms");
   assert.equal(archive.business.configuration.catalog.products.length, 1);
   assert.equal(archive.business.configuration.catalog.materials.find(item => item.name === "Softwood").unitCost, 1.5);
@@ -52,6 +53,7 @@ async function run() {
   );
   assert.equal(Object.prototype.hasOwnProperty.call(archive.accounts.users[0], "password"), false);
   assert.equal(archive.coverage.rawTimeEntries, false);
+  assert.equal(archive.business.customers.length, 1);
   assert.equal(archiveSummary(archive).ledgerAvailable, true);
 
   const tampered = structuredClone(archive);
@@ -76,6 +78,7 @@ async function run() {
     });
     assert.equal(result.business.name, "Frontier Firearms");
     assert.equal(result.migration.businessDocuments.suppliers, 1);
+    assert.equal(result.migration.businessDocuments.customers, 1);
     assert.equal(result.migration.businessDocuments.supplyOrders, 1);
     assert.equal(result.migration.accounts.staffReferences, 1);
     assert.equal(result.context.accountStore.listUsers().length, 1);
@@ -227,6 +230,16 @@ function legacyFixture() {
   };
   return {
     bootstrap,
+    customers: [{
+      id: "CUSTOMER-1",
+      name: "Arthur Morgan",
+      customerType: "Individual",
+      location: "Valentine",
+      telegram: "SW-184",
+      notes: "Prefers rifles",
+      createdAt: at,
+      updatedAt: at
+    }],
     suppliers: [{
       id: "SUP-1",
       name: "Van Horn Smithy",

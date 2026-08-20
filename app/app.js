@@ -101,6 +101,8 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   "business.profile_updated": "Business profile updated",
   "supplier.saved": "Supplier record saved",
   "supplier.removed": "Supplier record removed",
+  "customer.saved": "Customer record saved",
+  "customer.removed": "Customer record removed",
   "storefront_buy_order.saved": "Storefront buy order saved",
   "storefront_buy_order.fill_adjusted": "Buy order fill adjusted",
   "storefront_buy_order.removed": "Storefront buy order removed",
@@ -144,6 +146,7 @@ let storageTargets = loadStorageTargets();
 let supplyOrders = [];
 let storefrontBuyOrders = [];
 let suppliers = [];
+let customers = [];
 let reviewExceptions = [];
 let webhookLog = [];
 let productionBatches = [];
@@ -161,8 +164,10 @@ let lastBackendRefreshAt = 0;
 let supplyReceiptPending = false;
 let productionActionPending = false;
 let salesOrderSavePending = false;
+let customerSavePending = false;
 let dailyCloseActionPending = false;
 let activeOrderDirty = false;
+let customerDirty = false;
 let storefrontBuyOrderDirty = false;
 let dailyCloseDirty = false;
 let activeOrder = newOrder();
@@ -170,6 +175,7 @@ let activeSupplyOrder = newSupplyOrder();
 let activeStorefrontBuyOrder = newStorefrontBuyOrder();
 let activeDailyClose = newDailyClose();
 let activeSupplier = newSupplier();
+let activeCustomer = newCustomer();
 let activeReviewExceptionId = "";
 let renderedReviewExceptionId = "";
 let reviewEditorDirty = false;
@@ -215,10 +221,13 @@ const elements = {
   activeOrderTitle: document.querySelector("#activeSalesOrderTitle"),
   customerField: document.querySelector("#customerField"),
   customer: document.querySelector("#customerInput"),
+  openCustomerRegister: document.querySelector("#openCustomerRegisterButton"),
   handler: document.querySelector("#handlerInput"),
   depositField: document.querySelector("#depositField"),
   deposit: document.querySelector("#depositInput"),
   priority: document.querySelector("#prioritySelect"),
+  priorityField: document.querySelector("#priorityField"),
+  deliveryDateField: document.querySelector("#deliveryDateField"),
   deliveryDateFieldLabel: document.querySelector("#deliveryDateFieldLabel"),
   deliveryDate: document.querySelector("#deliveryDateInput"),
   status: document.querySelector("#statusSelect"),
@@ -243,7 +252,11 @@ const elements = {
   filter: document.querySelector("#filterSelect"),
   orderMeta: document.querySelector("#orderMeta"),
   quoteTab: document.querySelector("#quoteTabButton"),
+  productionTab: document.querySelector("#productionTabButton"),
   copySummary: document.querySelector("#copySummaryButton"),
+  pauseOrder: document.querySelector("#pauseButton"),
+  expediteOrder: document.querySelector("#expediteButton"),
+  reserveOrder: document.querySelector("#reserveButton"),
   completeOrder: document.querySelector("#completeButton"),
   quoteView: document.querySelector("#quoteView"),
   productionView: document.querySelector("#productionView"),
@@ -345,6 +358,28 @@ const elements = {
   deleteSupplier: document.querySelector("#deleteSupplierButton"),
   addSupplierProduct: document.querySelector("#addSupplierProductButton"),
   addSupplierEmployee: document.querySelector("#addSupplierEmployeeButton"),
+  customerPanel: document.querySelector("#customerPanel"),
+  customerName: document.querySelector("#customerNameInput"),
+  customerType: document.querySelector("#customerTypeInput"),
+  customerLocation: document.querySelector("#customerLocationInput"),
+  customerTelegram: document.querySelector("#customerTelegramInput"),
+  customerNotes: document.querySelector("#customerNotesInput"),
+  customerOrderCount: document.querySelector("#customerOrderCount"),
+  customerCompletedCount: document.querySelector("#customerCompletedCount"),
+  customerLifetimeSales: document.querySelector("#customerLifetimeSales"),
+  customerAverageSale: document.querySelector("#customerAverageSale"),
+  customerOutstanding: document.querySelector("#customerOutstanding"),
+  customerLastActivity: document.querySelector("#customerLastActivity"),
+  customerTopItems: document.querySelector("#customerTopItems"),
+  customerHistoryList: document.querySelector("#customerHistoryList"),
+  customerSearch: document.querySelector("#customerSearchInput"),
+  customerCardList: document.querySelector("#customerCardList"),
+  customerSavedCount: document.querySelector("#customerSavedCount"),
+  customerDataStatus: document.querySelector("#customerDataStatus"),
+  customerEditMeta: document.querySelector("#customerEditMeta"),
+  newCustomer: document.querySelector("#newCustomerButton"),
+  saveCustomer: document.querySelector("#saveCustomerButton"),
+  deleteCustomer: document.querySelector("#deleteCustomerButton"),
   newDocument: document.querySelector("#newOrderButton"),
   saveDocument: document.querySelector("#saveOrderButton"),
   dashboardSection: document.querySelector("#dashboardSection"),
@@ -659,6 +694,7 @@ function newOrder() {
   return {
     id: crypto.randomUUID(),
     orderType: "Customer Sale",
+    customerId: "",
     customer: "",
     handler: currentUser?.fullName || "",
     status: "Draft",
@@ -680,12 +716,17 @@ function isInternalCraftOrder(order) {
   return order?.orderType === "Internal Craft";
 }
 
+function isCounterSaleOrder(order) {
+  return order?.orderType === "Counter Sale";
+}
+
 function orderProductionSourceType(order) {
   return isInternalCraftOrder(order) ? "Internal Craft" : "Customer Order";
 }
 
 function orderDisplayName(order) {
   if (isInternalCraftOrder(order)) return order.label || "Internal stock build";
+  if (isCounterSaleOrder(order)) return order.label || "Over-the-counter cash sale";
   return order.customer || "Unnamed customer";
 }
 
@@ -977,6 +1018,39 @@ function applyBusinessConfiguration(snapshot) {
   if (!canAccessSection(activeSection)) activeSection = "dashboard";
   renderSection();
   if (isAdmin() && !businessSettingsDirty) populateBusinessSettings();
+}
+
+function newCustomer() {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    name: "",
+    customerType: "Individual",
+    location: "",
+    telegram: "",
+    notes: "",
+    stats: emptyCustomerStats(),
+    createdAt: now,
+    updatedAt: now,
+    createdBy: currentUser?.fullName || "",
+    updatedBy: ""
+  };
+}
+
+function emptyCustomerStats() {
+  return {
+    orderCount: 0,
+    completedSales: 0,
+    activeOrders: 0,
+    cancelledOrders: 0,
+    lifetimeSales: 0,
+    averageSale: 0,
+    outstandingBalance: 0,
+    unitsPurchased: 0,
+    firstOrderAt: "",
+    lastActivityAt: "",
+    topItems: []
+  };
 }
 
 function pluralizeLabel(value) {
@@ -1339,6 +1413,11 @@ function wireEvents() {
   elements.addSupplierEmployee.addEventListener("click", addSupplierEmployee);
   elements.supplierProduct.addEventListener("input", updateSupplierProductDefaults);
   elements.supplierSearch.addEventListener("input", renderSupplierDirectory);
+  elements.newCustomer.addEventListener("click", startNewCustomer);
+  elements.openCustomerRegister.addEventListener("click", openNewCustomerRegister);
+  elements.saveCustomer.addEventListener("click", saveCustomer);
+  elements.deleteCustomer.addEventListener("click", removeActiveCustomer);
+  elements.customerSearch.addEventListener("input", renderCustomerDirectory);
   elements.storeOverviewSearch.addEventListener("input", renderStoreOverview);
   elements.closeProductCard.addEventListener("click", closeProductCard);
   elements.openCatalogItemDialog.addEventListener("click", () => openCatalogItemDialog());
@@ -1456,6 +1535,14 @@ function wireEvents() {
     elements.supplierOwnerTelegram
   ].forEach(field => field.addEventListener("input", updateSupplierFromInputs));
 
+  [
+    elements.customerName,
+    elements.customerType,
+    elements.customerLocation,
+    elements.customerTelegram,
+    elements.customerNotes
+  ].forEach(field => ["input", "change"].forEach(eventName => field.addEventListener(eventName, updateCustomerFromInputs)));
+
   document.querySelectorAll(".chip-button").forEach(button => {
     button.addEventListener("click", () => {
       activeOrder.lines.push({
@@ -1569,13 +1656,26 @@ function saveCurrentDocument() {
 }
 
 function updateActiveFromInputs() {
-  activeOrder.orderType = elements.orderType.value === "Internal Craft" ? "Internal Craft" : "Customer Sale";
-  activeOrder.customer = isInternalCraftOrder(activeOrder) ? "" : elements.customer.value.trim();
+  activeOrder.orderType = ["Internal Craft", "Counter Sale"].includes(elements.orderType.value)
+    ? elements.orderType.value
+    : "Customer Sale";
+  if (isInternalCraftOrder(activeOrder) || isCounterSaleOrder(activeOrder)) {
+    activeOrder.customerId = "";
+    activeOrder.customer = "";
+  } else if (!elements.customer.value.startsWith("legacy:")) {
+    const customer = customers.find(candidate => candidate.id === elements.customer.value);
+    activeOrder.customerId = customer?.id || "";
+    activeOrder.customer = customer?.name || "";
+  }
   activeOrder.handler = elements.handler.value.trim();
-  activeOrder.deposit = isInternalCraftOrder(activeOrder) ? 0 : Number(elements.deposit.value || 0);
-  activeOrder.priority = elements.priority.value;
-  activeOrder.deliveryDate = elements.deliveryDate.value;
-  activeOrder.status = elements.status.value;
+  activeOrder.deposit = isInternalCraftOrder(activeOrder)
+    ? 0
+    : isCounterSaleOrder(activeOrder)
+      ? getSubtotal(activeOrder)
+      : Number(elements.deposit.value || 0);
+  activeOrder.priority = isCounterSaleOrder(activeOrder) ? "Normal" : elements.priority.value;
+  activeOrder.deliveryDate = isCounterSaleOrder(activeOrder) ? "" : elements.deliveryDate.value;
+  activeOrder.status = isCounterSaleOrder(activeOrder) ? "Completed" : elements.status.value;
   activeOrder.label = elements.label.value;
   activeOrder.notes = elements.notes.value;
   touchActive();
@@ -1585,21 +1685,42 @@ function updateActiveFromInputs() {
 }
 
 function updateOrderTypeFromInput() {
-  const nextType = elements.orderType.value === "Internal Craft" ? "Internal Craft" : "Customer Sale";
+  const nextType = ["Internal Craft", "Counter Sale"].includes(elements.orderType.value)
+    ? elements.orderType.value
+    : "Customer Sale";
   if (activeOrder.orderType === nextType) return;
   const wasInternal = isInternalCraftOrder(activeOrder);
+  const wasCounterSale = isCounterSaleOrder(activeOrder);
   activeOrder.orderType = nextType;
   if (isInternalCraftOrder(activeOrder)) {
+    activeOrder.customerId = "";
     activeOrder.customer = "";
     activeOrder.deposit = 0;
     activeOrder.lines = activeOrder.lines
       .filter(line => !line.custom)
       .map(line => ({ ...line, unitPrice: 0 }));
+  } else if (isCounterSaleOrder(activeOrder)) {
+    activeOrder.customerId = "";
+    activeOrder.customer = "";
+    if (wasInternal) {
+      activeOrder.lines = activeOrder.lines.map(line => ({
+        ...line,
+        unitPrice: Number(findCatalogItem(line.name || line.label)?.price || 0)
+      }));
+    }
+    activeOrder.deposit = getSubtotal(activeOrder);
+    activeOrder.priority = "Normal";
+    activeOrder.deliveryDate = "";
+    activeOrder.status = "Completed";
+    activeView = "quote";
   } else if (wasInternal) {
     activeOrder.lines = activeOrder.lines.map(line => ({
       ...line,
       unitPrice: Number(findCatalogItem(line.name || line.label)?.price || 0)
     }));
+  } else if (wasCounterSale) {
+    activeOrder.deposit = 0;
+    activeOrder.status = "Draft";
   }
   touchActive();
   render();
@@ -1647,6 +1768,11 @@ function findCatalogItem(value) {
 async function saveActiveOrder() {
   if (salesOrderSavePending) return false;
   updateActiveFromInputs();
+  if (!isInternalCraftOrder(activeOrder) && !isCounterSaleOrder(activeOrder) && !activeOrder.customer) {
+    elements.orderMeta.textContent = "Choose a registered customer, or change the order type to an over-the-counter cash sale";
+    elements.customer.focus();
+    return false;
+  }
   salesOrderSavePending = true;
   elements.saveDocument.disabled = true;
   elements.orderMeta.textContent = "Saving to the shared order register";
@@ -1697,6 +1823,10 @@ async function setStatus(status) {
 
 async function completeActiveOrder() {
   const batch = productionBatchForOrder(activeOrder.id);
+  if (isCounterSaleOrder(activeOrder)) {
+    elements.orderMeta.textContent = "Counter sales are completed when they are recorded";
+    return;
+  }
   if (isInternalCraftOrder(activeOrder)) {
     if (batch) {
       activeProductionBatchId = batch.id;
@@ -2412,6 +2542,247 @@ function renderSupplierDirectory() {
   });
 }
 
+function startNewCustomer() {
+  activeCustomer = newCustomer();
+  customerDirty = false;
+  renderCustomerWorkspace();
+  elements.customerName.focus();
+}
+
+function openNewCustomerRegister() {
+  startNewCustomer();
+  elements.customerPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function loadCustomer(customerId) {
+  const customer = customers.find(candidate => candidate.id === customerId);
+  if (!customer) return;
+  activeCustomer = structuredClone(customer);
+  customerDirty = false;
+  renderCustomerWorkspace();
+  elements.customerPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function updateCustomerFromInputs() {
+  activeCustomer.name = elements.customerName.value.trim();
+  activeCustomer.customerType = elements.customerType.value;
+  activeCustomer.location = elements.customerLocation.value.trim();
+  activeCustomer.telegram = elements.customerTelegram.value.trim();
+  activeCustomer.notes = elements.customerNotes.value;
+  activeCustomer.updatedAt = new Date().toISOString();
+  customerDirty = true;
+}
+
+async function saveCustomer() {
+  if (customerSavePending) return;
+  updateCustomerFromInputs();
+  if (!activeCustomer.name) {
+    elements.customerDataStatus.textContent = "Enter a customer name before saving";
+    elements.customerName.focus();
+    return;
+  }
+  customerSavePending = true;
+  elements.saveCustomer.disabled = true;
+  elements.customerDataStatus.textContent = `Saving ${activeCustomer.name}`;
+  try {
+    const response = await fetch("/api/customers", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(activeCustomer)
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    activeCustomer = structuredClone(result.customer);
+    customers = Array.isArray(result.customers) ? result.customers : customers;
+    customerDirty = false;
+    if (!isInternalCraftOrder(activeOrder) && !isCounterSaleOrder(activeOrder) && !activeOrder.customerId) {
+      activeOrder.customerId = activeCustomer.id;
+      activeOrder.customer = activeCustomer.name;
+      touchActive();
+    }
+    elements.customerDataStatus.textContent = `${activeCustomer.name} saved`;
+    render();
+  } catch (error) {
+    elements.customerDataStatus.textContent = `Customer save failed: ${error.message}`;
+  } finally {
+    customerSavePending = false;
+    elements.saveCustomer.disabled = false;
+  }
+}
+
+async function removeActiveCustomer() {
+  const saved = customers.some(customer => customer.id === activeCustomer.id);
+  if (!saved) {
+    startNewCustomer();
+    return;
+  }
+  if (!window.confirm(`Remove ${activeCustomer.name} from the customer register? Historical orders will be kept.`)) return;
+  elements.deleteCustomer.disabled = true;
+  try {
+    const response = await fetch(`/api/customers/${encodeURIComponent(activeCustomer.id)}`, {
+      method: "DELETE",
+      headers: { accept: "application/json" }
+    });
+    const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
+    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    customers = Array.isArray(result.customers) ? result.customers : [];
+    activeCustomer = newCustomer();
+    customerDirty = false;
+    elements.customerDataStatus.textContent = "Customer removed; historical orders were kept";
+    render();
+  } catch (error) {
+    elements.customerDataStatus.textContent = `Customer removal failed: ${error.message}`;
+  } finally {
+    elements.deleteCustomer.disabled = false;
+  }
+}
+
+function customerOrders(customer) {
+  const customerKey = normalize(customer?.name);
+  return orders.filter(order =>
+    !isInternalCraftOrder(order)
+    && !isCounterSaleOrder(order)
+    && (order.customerId === customer?.id || (!order.customerId && normalize(order.customer) === customerKey))
+  );
+}
+
+function customerStats(customer) {
+  const relatedOrders = customerOrders(customer);
+  const completed = relatedOrders.filter(order => order.status === "Completed");
+  const active = relatedOrders.filter(order => !["Completed", "Cancelled"].includes(order.status));
+  const lifetimeSales = completed.reduce((sum, order) => sum + getSubtotal(order), 0);
+  const itemTotals = new Map();
+  completed.flatMap(order => order.lines || []).forEach(line => {
+    const key = normalize(line.name || line.label);
+    const current = itemTotals.get(key) || {
+      name: line.name || line.label,
+      label: line.label || line.name,
+      quantity: 0,
+      revenue: 0
+    };
+    current.quantity += Number(line.quantity || 0);
+    current.revenue += Number(line.quantity || 0) * Number(line.unitPrice || 0);
+    itemTotals.set(key, current);
+  });
+  const dates = relatedOrders
+    .flatMap(order => [order.createdAt, order.updatedAt])
+    .filter(Boolean)
+    .sort();
+  return {
+    orderCount: relatedOrders.length,
+    completedSales: completed.length,
+    activeOrders: active.length,
+    cancelledOrders: relatedOrders.filter(order => order.status === "Cancelled").length,
+    lifetimeSales,
+    averageSale: completed.length ? lifetimeSales / completed.length : 0,
+    outstandingBalance: active.reduce((sum, order) => sum + Math.max(0, getSubtotal(order) - Number(order.deposit || 0)), 0),
+    unitsPurchased: completed.reduce((sum, order) => sum + (order.lines || []).reduce((lineSum, line) => lineSum + Number(line.quantity || 0), 0), 0),
+    firstOrderAt: dates[0] || "",
+    lastActivityAt: dates.at(-1) || "",
+    topItems: [...itemTotals.values()]
+      .sort((left, right) => right.quantity - left.quantity || right.revenue - left.revenue || left.label.localeCompare(right.label))
+      .slice(0, 5)
+  };
+}
+
+function renderCustomerSelect() {
+  const sortedCustomers = [...customers].sort((left, right) => left.name.localeCompare(right.name));
+  const selectedCustomer = customers.find(customer => customer.id === activeOrder.customerId);
+  const historicalValue = activeOrder.customer && !selectedCustomer ? `legacy:${activeOrder.id}` : "";
+  const options = sortedCustomers.map(customer =>
+    `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}${customer.location ? ` / ${escapeHtml(customer.location)}` : ""}</option>`
+  );
+  if (historicalValue) {
+    options.push(`<option value="${escapeHtml(historicalValue)}">${escapeHtml(activeOrder.customer)} / historical record</option>`);
+  }
+  elements.customer.innerHTML = `<option value="">Choose a registered customer</option>${options.join("")}`;
+  elements.customer.value = selectedCustomer?.id || historicalValue || "";
+}
+
+function renderCustomerWorkspace() {
+  if (!elements.customerPanel) return;
+  const stats = customerStats(activeCustomer);
+  const relatedOrders = customerOrders(activeCustomer).sort((left, right) =>
+    String(right.updatedAt || right.createdAt).localeCompare(String(left.updatedAt || left.createdAt))
+  );
+  const saved = customers.some(customer => customer.id === activeCustomer.id);
+  elements.customerName.value = activeCustomer.name || "";
+  elements.customerType.value = activeCustomer.customerType || "Individual";
+  elements.customerLocation.value = activeCustomer.location || "";
+  elements.customerTelegram.value = activeCustomer.telegram || "";
+  elements.customerNotes.value = activeCustomer.notes || "";
+  elements.customerOrderCount.textContent = formatNumber(stats.orderCount);
+  elements.customerCompletedCount.textContent = formatNumber(stats.completedSales);
+  elements.customerLifetimeSales.textContent = formatCurrency(stats.lifetimeSales);
+  elements.customerAverageSale.textContent = formatCurrency(stats.averageSale);
+  elements.customerOutstanding.textContent = formatCurrency(stats.outstandingBalance);
+  elements.customerLastActivity.textContent = stats.lastActivityAt ? formatDateTime(stats.lastActivityAt) : "-";
+  elements.deleteCustomer.disabled = !saved;
+  elements.customerEditMeta.textContent = saved
+    ? `Updated ${formatDateTime(activeCustomer.updatedAt)} by ${activeCustomer.updatedBy || "Unknown"}`
+    : "New customer record";
+  elements.customerTopItems.innerHTML = stats.topItems.length
+    ? stats.topItems.map(item => `
+      <div class="customer-item-row">
+        <strong>${escapeHtml(item.label || item.name)}</strong>
+        <span>${formatNumber(item.quantity)} units / ${formatCurrency(item.revenue)}</span>
+      </div>
+    `).join("")
+    : `<div class="empty-card">No completed purchases yet</div>`;
+  elements.customerHistoryList.innerHTML = relatedOrders.length
+    ? relatedOrders.map(order => `
+      <button class="customer-history-row" type="button" data-customer-order-id="${escapeHtml(order.id)}">
+        <span class="status-pill ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
+        <strong>${escapeHtml(order.label || `${order.lines.length} ${order.lines.length === 1 ? "line" : "lines"}`)}</strong>
+        <span>${formatCurrency(getSubtotal(order))}</span>
+        <small>${formatDateTime(order.updatedAt || order.createdAt)}</small>
+      </button>
+    `).join("")
+    : `<div class="empty-card">No sales history recorded</div>`;
+  elements.customerHistoryList.querySelectorAll("[data-customer-order-id]").forEach(button => {
+    button.addEventListener("click", () => {
+      loadOrder(button.dataset.customerOrderId);
+      document.querySelector(".active-order")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+  renderCustomerDirectory();
+}
+
+function renderCustomerDirectory() {
+  const search = normalize(elements.customerSearch.value);
+  const visible = customers
+    .filter(customer => !search || normalize([
+      customer.name,
+      customer.customerType,
+      customer.location,
+      customer.telegram,
+      customer.notes
+    ].join(" ")).includes(search))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  elements.customerSavedCount.textContent = `${customers.length} ${customers.length === 1 ? "customer" : "customers"}`;
+  if (!visible.length) {
+    elements.customerCardList.innerHTML = `<div class="empty-card">No customers match this view</div>`;
+    return;
+  }
+  elements.customerCardList.innerHTML = visible.map(customer => {
+    const stats = customerStats(customer);
+    return `
+      <button class="customer-card ${customer.id === activeCustomer.id ? "selected" : ""}" type="button" data-customer-id="${escapeHtml(customer.id)}">
+        <span class="customer-card-heading">
+          <strong>${escapeHtml(customer.name)}</strong>
+          <span>${formatNumber(stats.completedSales)} sales</span>
+        </span>
+        <span>${escapeHtml(customer.customerType || "Individual")} / ${escapeHtml(customer.location || "Location not set")}</span>
+        <span>${formatCurrency(stats.lifetimeSales)} lifetime / ${formatCurrency(stats.outstandingBalance)} outstanding</span>
+        <small>${stats.lastActivityAt ? `Last activity ${formatDateTime(stats.lastActivityAt)}` : "No sales history yet"}</small>
+      </button>
+    `;
+  }).join("");
+  elements.customerCardList.querySelectorAll("[data-customer-id]").forEach(button => {
+    button.addEventListener("click", () => loadCustomer(button.dataset.customerId));
+  });
+}
+
 async function saveSupplyOrder() {
   updateSupplyFromInputs();
   const wasDraft = activeSupplyOrder.status === "Draft";
@@ -2552,10 +2923,10 @@ function preferredSupplyUnitPrice(name) {
 
 function render() {
   renderOrderMode();
-  elements.orderType.value = isInternalCraftOrder(activeOrder) ? "Internal Craft" : "Customer Sale";
-  elements.customer.value = activeOrder.customer;
+  elements.orderType.value = activeOrder.orderType || "Customer Sale";
+  renderCustomerSelect();
   elements.handler.value = activeOrder.handler;
-  elements.deposit.value = activeOrder.deposit || 0;
+  elements.deposit.value = isCounterSaleOrder(activeOrder) ? getSubtotal(activeOrder) : activeOrder.deposit || 0;
   elements.priority.value = activeOrder.priority;
   elements.deliveryDate.value = activeOrder.deliveryDate || "";
   elements.status.value = activeOrder.status;
@@ -2570,6 +2941,7 @@ function render() {
   renderSupplyWorkspace();
   renderStorefrontBuyOrderWorkspace();
   renderSupplierWorkspace();
+  renderCustomerWorkspace();
   renderProductionQueue();
   renderDailyCloseWorkspace();
   renderView();
@@ -2587,19 +2959,34 @@ function render() {
 
 function renderOrderMode() {
   const internal = isInternalCraftOrder(activeOrder);
-  elements.activeOrderTitle.textContent = internal ? "Internal Craft" : businessTerminology.salesOrder;
-  elements.customerField.classList.toggle("hidden", internal);
-  elements.depositField.classList.toggle("hidden", internal);
+  const counterSale = isCounterSaleOrder(activeOrder);
+  elements.activeOrderTitle.textContent = internal
+    ? "Internal Craft"
+    : counterSale
+      ? "Over-the-counter Cash Sale"
+      : businessTerminology.salesOrder;
+  elements.customerField.classList.toggle("hidden", internal || counterSale);
+  elements.depositField.classList.toggle("hidden", internal || counterSale);
   elements.linePriceField.classList.toggle("hidden", internal);
   elements.quickCustomWork.classList.toggle("hidden", internal);
-  elements.customer.disabled = internal;
-  elements.deposit.disabled = internal;
+  elements.priorityField.classList.toggle("hidden", counterSale);
+  elements.deliveryDateField.classList.toggle("hidden", counterSale);
+  elements.productionTab.classList.toggle("hidden", counterSale);
+  elements.customer.disabled = internal || counterSale;
+  elements.deposit.disabled = internal || counterSale;
   elements.price.disabled = internal;
   elements.deliveryDateFieldLabel.textContent = internal ? "Target Date" : "Delivery Date";
-  elements.quoteTab.textContent = internal ? "Plan" : "Quote";
-  elements.copySummary.textContent = internal ? "Copy Craft Plan" : "Copy Summary";
-  elements.completeOrder.disabled = internal;
+  elements.quoteTab.textContent = internal ? "Plan" : counterSale ? "Receipt" : "Quote";
+  elements.copySummary.textContent = internal ? "Copy Craft Plan" : counterSale ? "Copy Receipt" : "Copy Summary";
+  elements.saveDocument.textContent = counterSale ? "Record Sale" : internal ? "Save Craft" : "Save Order";
+  elements.pauseOrder.classList.toggle("hidden", counterSale);
+  elements.expediteOrder.classList.toggle("hidden", counterSale);
+  elements.reserveOrder.classList.toggle("hidden", counterSale);
+  elements.completeOrder.classList.toggle("hidden", counterSale);
+  elements.completeOrder.disabled = internal || counterSale;
   elements.completeOrder.title = internal ? "Internal crafts complete from the production queue" : "Complete order";
+  elements.status.disabled = counterSale;
+  if (counterSale) activeView = "quote";
   const completedOption = elements.status.querySelector('option[value="Completed"]');
   if (completedOption) completedOption.disabled = internal;
 }
@@ -2791,7 +3178,7 @@ function getSupplyReceivedUnits(order) {
 function renderTotals() {
   const internal = isInternalCraftOrder(activeOrder);
   const subtotal = internal ? 0 : getSubtotal(activeOrder);
-  const deposit = internal ? 0 : Number(activeOrder.deposit || 0);
+  const deposit = internal ? 0 : isCounterSaleOrder(activeOrder) ? subtotal : Number(activeOrder.deposit || 0);
   elements.subtotal.textContent = formatCurrency(subtotal);
   elements.depositValue.textContent = formatCurrency(deposit);
   elements.balance.textContent = formatCurrency(Math.max(0, subtotal - deposit));
@@ -2835,7 +3222,17 @@ function renderSection() {
   elements.newDocument.classList.toggle("hidden", !documentMode);
   elements.saveDocument.classList.toggle("hidden", !documentMode);
   elements.newDocument.textContent = supplyMode ? "New Supply" : buyOrderMode ? "New Buy Order" : closeMode ? "Today's Close" : "New Sale";
-  elements.saveDocument.textContent = supplyMode ? "Save Supply" : buyOrderMode ? "Save Buy Order" : closeMode ? "Save Draft" : "Save Sale";
+  elements.saveDocument.textContent = supplyMode
+    ? "Save Supply"
+    : buyOrderMode
+      ? "Save Buy Order"
+      : closeMode
+        ? "Save Draft"
+        : isCounterSaleOrder(activeOrder)
+          ? "Record Sale"
+          : isInternalCraftOrder(activeOrder)
+            ? "Save Craft"
+            : "Save Order";
 }
 
 function renderDashboard() {
@@ -4885,6 +5282,15 @@ function renderSupplyDeliveryCards(items) {
 }
 
 function renderProduction() {
+  if (isCounterSaleOrder(activeOrder)) {
+    elements.productionMeta.textContent = "Counter sales use existing stock and do not create production work";
+    elements.productionBuildList.innerHTML = `<div class="empty-card">No production for a counter sale</div>`;
+    elements.productionMaterialsList.innerHTML = `<div class="empty-card">No materials needed</div>`;
+    elements.missingRecipes.innerHTML = "";
+    elements.queueOrderProduction.disabled = true;
+    elements.queueOrderProduction.textContent = "Queue Production";
+    return;
+  }
   const production = getProductionPlan(activeOrder);
   const internal = isInternalCraftOrder(activeOrder);
   const existingUnits = production.stockAllocations.reduce((sum, allocation) =>
@@ -4944,7 +5350,7 @@ function renderOrdersList() {
     <button class="order-card ${order.id === activeOrder.id ? "selected" : ""}" type="button" data-order-id="${order.id}">
       <span class="status-pill ${order.status.toLowerCase()}">${escapeHtml(order.status)}</span>
       <strong>${escapeHtml(orderDisplayName(order))}</strong>
-      <span>${escapeHtml(isInternalCraftOrder(order) ? "Internal Craft" : "Customer Sale")} / ${order.lines.length} lines / ${formatCurrency(isInternalCraftOrder(order) ? 0 : getSubtotal(order))}</span>
+      <span>${escapeHtml(isInternalCraftOrder(order) ? "Internal Craft" : isCounterSaleOrder(order) ? "Counter Sale" : "Customer Order")} / ${order.lines.length} lines / ${formatCurrency(isInternalCraftOrder(order) ? 0 : getSubtotal(order))}</span>
       <span>${formatDelivery(order.deliveryDate)}</span>
       <small>${formatDateTime(order.updatedAt)}</small>
     </button>
@@ -4977,6 +5383,7 @@ async function copyProduction() {
 
 function buildSummary(order) {
   const internal = isInternalCraftOrder(order);
+  const counterSale = isCounterSaleOrder(order);
   const lines = order.lines.length
     ? order.lines.map(line => {
       if (internal) return `${formatNumber(line.quantity)}x ${line.label || line.name}`;
@@ -4986,29 +5393,31 @@ function buildSummary(order) {
     : "No items added";
 
   const subtotal = internal ? 0 : getSubtotal(order);
-  const deposit = internal ? 0 : Number(order.deposit || 0);
+  const deposit = internal ? 0 : counterSale ? subtotal : Number(order.deposit || 0);
   const balance = Math.max(0, subtotal - deposit);
   const details = [order.label, order.notes].filter(Boolean).join("\n");
 
   return [
-    `${businessProfile.name || "Business"} ${internal ? "Internal Craft" : "Quote"}`,
-    internal ? "Purpose: Build stock for storage" : `Customer: ${order.customer || ""}`,
+    `${businessProfile.name || "Business"} ${internal ? "Internal Craft" : counterSale ? "Cash Sale Receipt" : "Quote"}`,
+    internal ? "Purpose: Build stock for storage" : counterSale ? "Customer: Over-the-counter" : `Customer: ${order.customer || ""}`,
     order.handler ? `Handler: ${order.handler}` : "",
     order.deliveryDate
       ? `${internal ? "Target" : "Delivery"}: ${formatDelivery(order.deliveryDate)}`
-      : internal ? "Target: Not set" : "Order Type: In-store",
+      : internal ? "Target: Not set" : counterSale ? "Payment: Cash" : "Order Type: In-store",
     `Status: ${order.status}${order.priority === "Expedite" ? " / Expedite" : ""}`,
     "",
     lines,
     "",
     internal ? "Financial effect: None" : `Subtotal: ${formatCurrency(subtotal)}`,
-    internal ? "" : `Deposit Paid: ${formatCurrency(deposit)}`,
-    internal ? "" : `Balance Due: ${formatCurrency(balance)}`,
+    internal || counterSale ? "" : `Deposit Paid: ${formatCurrency(deposit)}`,
+    internal || counterSale ? "" : `Balance Due: ${formatCurrency(balance)}`,
+    counterSale ? "Paid in full: Cash" : "",
     details ? `\nNotes:\n${details}` : ""
   ].filter(line => line !== "").join("\n");
 }
 
 function buildProductionSummary(order) {
+  if (isCounterSaleOrder(order)) return "Counter sales use existing stock and do not create production work.";
   const production = getProductionPlan(order);
   const buildLines = production.fulfillmentLines.length
     ? production.fulfillmentLines.map(line =>
@@ -5040,6 +5449,10 @@ function buildProductionSummary(order) {
 
 async function queueActiveOrderProduction() {
   if (productionActionPending) return;
+  if (isCounterSaleOrder(activeOrder)) {
+    elements.productionMeta.textContent = "Counter sales use existing stock and cannot be queued for production";
+    return;
+  }
   const linkedBatch = productionBatchForOrder(activeOrder.id);
   if (linkedBatch) {
     activeProductionBatchId = linkedBatch.id;
@@ -6472,6 +6885,7 @@ async function performBackendRefresh({ silent = false, preserveReviewEditor = fa
     const nextSnapshot = await response.json();
     const dataReady = Boolean(nextSnapshot.sheet?.ok);
     hydrateSharedSalesOrders(nextSnapshot);
+    hydrateCustomers(nextSnapshot);
     hydrateDailyCloses(nextSnapshot);
     productionBatches = Array.isArray(nextSnapshot.productionBatches) ? nextSnapshot.productionBatches : productionBatches;
     if (!activeProductionBatchId || !productionBatches.some(batch => batch.id === activeProductionBatchId)) {
@@ -6555,6 +6969,20 @@ function hydrateSharedSalesOrders(snapshot) {
   }
   renderOrdersList();
   renderDashboard();
+}
+
+function hydrateCustomers(snapshot) {
+  if (!Array.isArray(snapshot?.customers)) return;
+  const activeWasSaved = customers.some(customer => customer.id === activeCustomer.id);
+  customers = snapshot.customers;
+  if (!customerDirty) {
+    const refreshed = customers.find(customer => customer.id === activeCustomer.id);
+    if (refreshed) activeCustomer = structuredClone(refreshed);
+    else if (activeWasSaved) activeCustomer = newCustomer();
+  }
+  elements.customerDataStatus.textContent = `${customers.length} shared ${customers.length === 1 ? "customer" : "customers"} loaded`;
+  renderCustomerSelect();
+  renderCustomerWorkspace();
 }
 
 function hydrateDailyCloses(snapshot) {

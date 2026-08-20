@@ -836,7 +836,7 @@ h2 {
   grid-template-areas:
     "active summary"
     "saved summary"
-    "suppliers suppliers";
+    "customers customers";
   gap: 16px;
   align-items: start;
 }
@@ -876,6 +876,189 @@ h2 {
   grid-area: suppliers;
   min-width: 0;
   padding: 18px;
+}
+
+.customer-panel {
+  grid-area: customers;
+  min-width: 0;
+  padding: 18px;
+}
+
+.customer-selector-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-column: span 2;
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
+}
+
+.customer-selector-field label,
+.customer-selector-field select {
+  min-width: 0;
+  width: 100%;
+}
+
+.customer-panel-header,
+.customer-header-actions,
+.customer-editor-footer,
+.customer-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.customer-header-actions {
+  flex-wrap: wrap;
+}
+
+.customer-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(260px, 0.75fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.customer-editor,
+.customer-directory {
+  min-width: 0;
+}
+
+.customer-main-fields {
+  grid-template-columns: minmax(210px, 1.4fr) repeat(3, minmax(130px, 0.8fr));
+}
+
+.customer-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 18px;
+  border-block: 1px solid var(--line);
+}
+
+.customer-stats > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+  border-right: 1px solid var(--line);
+}
+
+.customer-stats > div:nth-child(3n) {
+  border-right: 0;
+}
+
+.customer-stats > div:nth-child(-n + 3) {
+  border-bottom: 1px solid var(--line);
+}
+
+.customer-stats span,
+.customer-editor-footer,
+.customer-card span,
+.customer-card small,
+.customer-history-row small,
+.customer-item-row span {
+  color: var(--muted);
+}
+
+.customer-stats strong {
+  min-width: 0;
+  font-size: 1.12rem;
+  overflow-wrap: anywhere;
+}
+
+.customer-notes-grid {
+  margin-top: 16px;
+}
+
+.customer-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.35fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.customer-detail-section {
+  min-width: 0;
+}
+
+.customer-detail-section h3 {
+  margin: 0 0 10px;
+}
+
+.customer-top-items,
+.customer-history-list,
+.customer-card-list {
+  display: grid;
+  gap: 8px;
+}
+
+.customer-history-list,
+.customer-card-list {
+  max-height: 360px;
+  padding-right: 4px;
+  overflow-y: auto;
+}
+
+.customer-item-row,
+.customer-history-row,
+.customer-card {
+  min-width: 0;
+  padding: 10px;
+  color: var(--text);
+  background: rgba(255, 250, 232, 0.42);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+.customer-item-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.customer-history-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.customer-history-row small {
+  grid-column: 2 / -1;
+}
+
+.customer-card {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+}
+
+.customer-card.selected,
+.customer-history-row:hover,
+.customer-card:hover {
+  border-color: var(--green);
+  box-shadow: inset 4px 0 var(--green);
+}
+
+.customer-directory {
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.customer-directory > label,
+.customer-directory input {
+  width: 100%;
+}
+
+.customer-card-list {
+  margin-top: 12px;
+}
+
+.customer-editor-footer {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 
 .supplier-panel-header,
@@ -2097,7 +2280,7 @@ tr:last-child td {
       "active"
       "summary"
       "saved"
-      "suppliers";
+      "customers";
   }
 
   .summary-panel {
@@ -2134,8 +2317,17 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 
-  .supplier-layout {
+  .supplier-layout,
+  .customer-layout,
+  .customer-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .customer-directory {
+    padding-top: 18px;
+    padding-left: 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
   }
 }
 
@@ -2225,13 +2417,17 @@ tr:last-child td {
   }
 
   .supplier-panel-header,
-  .supplier-editor-footer {
+  .supplier-editor-footer,
+  .customer-panel-header,
+  .customer-editor-footer {
     align-items: stretch;
     flex-direction: column;
   }
 
   .supplier-header-actions,
   .supplier-header-actions button,
+  .customer-header-actions,
+  .customer-header-actions button,
   .supplier-product-add,
   .supplier-contact-add,
   .supplier-product-row,
@@ -2258,8 +2454,36 @@ tr:last-child td {
   .active-order,
   .summary-panel,
   .saved-panel,
-  .supplier-panel {
+  .supplier-panel,
+  .customer-panel {
     padding: 14px;
+  }
+
+
+  .customer-selector-field,
+  .customer-main-fields,
+  .customer-stats,
+  .customer-history-row {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-selector-field {
+    grid-column: auto;
+  }
+
+  .customer-stats > div,
+  .customer-stats > div:nth-child(3n),
+  .customer-stats > div:nth-child(-n + 3) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .customer-stats > div:last-child {
+    border-bottom: 0;
+  }
+
+  .customer-history-row small {
+    grid-column: auto;
   }
 }
 

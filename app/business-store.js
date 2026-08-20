@@ -9,7 +9,7 @@ const {
 const SUPPLY_ORDER_STATUSES = new Set(["Draft", "Active", "Ordered", "Partially Received", "Received", "Cancelled"]);
 const STOREFRONT_BUY_ORDER_STATUSES = new Set(["Active", "Paused", "Filled", "Cancelled"]);
 const PRODUCTION_BATCH_STATUSES = new Set(["Planned", "In Progress", "Completed", "Cancelled"]);
-const SALES_ORDER_TYPES = new Set(["Customer Sale", "Internal Craft"]);
+const SALES_ORDER_TYPES = new Set(["Customer Sale", "Counter Sale", "Internal Craft"]);
 const ORDER_PRODUCTION_SOURCE_TYPES = new Set(["Customer Order", "Internal Craft"]);
 const SALES_ORDER_STATUSES = new Set([
   "Draft",
@@ -28,9 +28,10 @@ class BusinessStore {
     this.filePath = filePath;
     this.repository = repository;
     this.data = {
-      version: 10,
+      version: 11,
       configuration: null,
       salesOrders: [],
+      customers: [],
       supplyOrders: [],
       suppliers: [],
       storefrontBuyOrders: [],
@@ -80,6 +81,7 @@ class BusinessStore {
       this.data = imported;
       return {
         salesOrders: imported.salesOrders.length,
+        customers: imported.customers.length,
         supplyOrders: imported.supplyOrders.length,
         suppliers: imported.suppliers.length,
         storefrontBuyOrders: imported.storefrontBuyOrders.length,
@@ -99,7 +101,7 @@ class BusinessStore {
       normalized.completedAt = new Date().toISOString();
       normalized.completedBy = cleanText(actor?.fullName, 100) || "Initial owner";
       this.data.configuration = normalized;
-      this.data.version = 10;
+      this.data.version = 11;
       return structuredClone(normalized);
     });
   }
@@ -183,6 +185,17 @@ class BusinessStore {
   getSalesOrder(orderId) {
     const order = this.data.salesOrders.find(candidate => candidate.id === cleanText(orderId, 100));
     return order ? structuredClone(order) : null;
+  }
+
+  listCustomers() {
+    return this.data.customers
+      .map(customer => customerWithStats(customer, this.data.salesOrders))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  getCustomer(customerId) {
+    const customer = this.data.customers.find(candidate => candidate.id === cleanText(customerId, 100));
+    return customer ? customerWithStats(customer, this.data.salesOrders) : null;
   }
 
   listDailyCloses() {
@@ -278,7 +291,17 @@ class BusinessStore {
           );
         }
       }
-      const saved = cleanSalesOrder(input, actor, { id, now, existing });
+      const source = { ...input };
+      const requestedCustomerId = cleanText(source.customerId || existing?.customerId, 100);
+      if ((source.orderType || existing?.orderType) === "Customer Sale" && requestedCustomerId) {
+        const customer = this.data.customers.find(candidate => candidate.id === requestedCustomerId);
+        if (!customer && existing?.customerId !== requestedCustomerId) {
+          throw businessError("The selected customer is no longer available", 409, "customer_not_found");
+        }
+        source.customerId = requestedCustomerId;
+        source.customer = customer?.name || existing?.customer || source.customer;
+      }
+      const saved = cleanSalesOrder(source, actor, { id, now, existing });
       if (existingIndex >= 0) this.data.salesOrders[existingIndex] = saved;
       else this.data.salesOrders.unshift(saved);
       return structuredClone(saved);
@@ -317,6 +340,39 @@ class BusinessStore {
     });
   }
 
+  async saveCustomer(input, actor) {
+    return this.mutate(async () => {
+      const now = new Date().toISOString();
+      const id = cleanText(input.id, 100) || crypto.randomUUID();
+      const existingIndex = this.data.customers.findIndex(customer => customer.id === id);
+      const existing = existingIndex >= 0 ? this.data.customers[existingIndex] : null;
+      const saved = cleanCustomer(input, actor, { id, now, existing });
+      const duplicate = this.data.customers.find(customer =>
+        customer.id !== id && normalizeKey(customer.name) === normalizeKey(saved.name)
+      );
+      if (duplicate) throw businessError("A customer with this name already exists", 409, "customer_name_exists");
+      if (existingIndex >= 0) this.data.customers[existingIndex] = saved;
+      else this.data.customers.push(saved);
+      const legacyNames = new Set([saved.name, existing?.name].filter(Boolean).map(normalizeKey));
+      this.data.salesOrders.forEach(order => {
+        if (order.orderType === "Customer Sale" && !order.customerId && legacyNames.has(normalizeKey(order.customer))) {
+          order.customerId = saved.id;
+        }
+      });
+      return customerWithStats(saved, this.data.salesOrders);
+    });
+  }
+
+  async removeCustomer(customerId) {
+    return this.mutate(async () => {
+      const id = cleanText(customerId, 100);
+      const existing = this.data.customers.find(customer => customer.id === id);
+      if (!existing) throw businessError("Customer not found", 404, "not_found");
+      this.data.customers = this.data.customers.filter(customer => customer.id !== id);
+      return customerWithStats(existing, this.data.salesOrders);
+    });
+  }
+
   listProductionBatches() {
     return this.data.productionBatches
       .map(batch => structuredClone(batch))
@@ -352,6 +408,9 @@ class BusinessStore {
       const sourceOrder = ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
         ? this.data.salesOrders.find(order => order.id === batch.sourceId)
         : null;
+      if (sourceOrder && isCounterSaleOrder(sourceOrder)) {
+        throw businessError("Counter sales use existing stock and cannot queue production", 409, "counter_sale_production_forbidden");
+      }
       if (ORDER_PRODUCTION_SOURCE_TYPES.has(batch.sourceType)
         && (!sourceOrder || ["Ready", "Completed", "Cancelled"].includes(sourceOrder.status))) {
         throw businessError("The linked order is unavailable or already closed", 409, "sales_order_unavailable");
@@ -663,9 +722,10 @@ class BusinessStore {
 
 function emptyBusinessData() {
   return {
-    version: 10,
+    version: 11,
     configuration: null,
     salesOrders: [],
+    customers: [],
     supplyOrders: [],
     suppliers: [],
     storefrontBuyOrders: [],
@@ -677,9 +737,10 @@ function emptyBusinessData() {
 function normalizeBusinessData(input) {
   const parsed = input && typeof input === "object" ? input : {};
   return {
-    version: 10,
+    version: 11,
     configuration: parsed.configuration ? normalizeStoredConfiguration(parsed.configuration) : null,
     salesOrders: cleanObjectArray(parsed.salesOrders).map(cleanStoredSalesOrder),
+    customers: cleanObjectArray(parsed.customers).map(cleanStoredCustomer),
     supplyOrders: cleanObjectArray(parsed.supplyOrders).map(cleanStoredSupplyOrder),
     suppliers: cleanObjectArray(parsed.suppliers).map(cleanStoredSupplier),
     storefrontBuyOrders: cleanObjectArray(parsed.storefrontBuyOrders).map(cleanStoredStorefrontBuyOrder),
@@ -695,6 +756,7 @@ function cleanObjectArray(value) {
 function hasOperationalData(data) {
   return [
     data.salesOrders,
+    data.customers,
     data.supplyOrders,
     data.suppliers,
     data.storefrontBuyOrders,
@@ -714,6 +776,7 @@ function cleanSalesOrder(input, actor, { id, now, existing }) {
   const requestedOrderType = input.orderType || existing?.orderType;
   const orderType = SALES_ORDER_TYPES.has(requestedOrderType) ? requestedOrderType : "Customer Sale";
   const internal = orderType === "Internal Craft";
+  const counterSale = orderType === "Counter Sale";
   let status = SALES_ORDER_STATUSES.has(input.status) ? input.status : "Draft";
   let priority = input.priority === "Expedite" ? "Expedite" : "Normal";
   if (status === "Expedited") priority = "Expedite";
@@ -722,15 +785,22 @@ function cleanSalesOrder(input, actor, { id, now, existing }) {
   if (internal && lines.some(line => line.custom)) {
     throw businessError("Internal crafts can only contain catalog goods with recipes", 400, "internal_craft_catalog_goods_only");
   }
+  const subtotal = lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0);
+  if (counterSale) {
+    status = "Completed";
+    priority = "Normal";
+  }
   return {
     id,
     orderType,
-    customer: internal ? "" : cleanText(input.customer, 120),
+    customerId: internal || counterSale ? "" : cleanText(input.customerId || existing?.customerId, 100),
+    customer: internal || counterSale ? "" : cleanText(input.customer, 120),
     handler: cleanText(input.handler, 100),
     status,
     priority,
-    deliveryDate: cleanDate(input.deliveryDate),
-    deposit: internal ? 0 : Math.max(0, finiteNumber(input.deposit, 0)),
+    deliveryDate: internal || counterSale ? "" : cleanDate(input.deliveryDate),
+    deposit: internal ? 0 : counterSale ? subtotal : Math.max(0, finiteNumber(input.deposit, 0)),
+    paymentMethod: counterSale ? "Cash" : cleanText(input.paymentMethod || existing?.paymentMethod, 40),
     lines,
     label: cleanText(input.label, 250),
     notes: cleanText(input.notes, 2500),
@@ -738,7 +808,10 @@ function cleanSalesOrder(input, actor, { id, now, existing }) {
     createdAt: existing?.createdAt || cleanDateTime(input.createdAt) || now,
     createdBy: existing?.createdBy || cleanText(actor?.fullName, 100),
     updatedAt: now,
-    updatedBy: cleanText(actor?.fullName, 100)
+    updatedBy: cleanText(actor?.fullName, 100),
+    completedAt: status === "Completed"
+      ? cleanDateTime(existing?.completedAt || input.completedAt) || now
+      : ""
   };
 }
 
@@ -945,6 +1018,7 @@ function cleanProductionStockAllocation(allocation) {
 function transitionSalesOrder(order, status, actor, now) {
   if (!order || order.status === "Completed" || order.status === "Cancelled" || order.status === status) return;
   order.status = status;
+  if (status === "Completed") order.completedAt = cleanDateTime(order.completedAt) || now;
   order.revision = Number(order.revision || 0) + 1;
   order.updatedAt = now;
   order.updatedBy = cleanText(actor?.fullName, 100);
@@ -952,6 +1026,10 @@ function transitionSalesOrder(order, status, actor, now) {
 
 function isInternalCraftOrder(order) {
   return order?.orderType === "Internal Craft";
+}
+
+function isCounterSaleOrder(order) {
+  return order?.orderType === "Counter Sale";
 }
 
 function productionSourceTypeForOrder(order) {
@@ -1123,6 +1201,100 @@ function refreshStorefrontBuyOrder(order, actor, at = new Date().toISOString()) 
   if (order.status !== "Cancelled" && order.filledQuantity >= Number(order.quantity || 0)) order.status = "Filled";
   order.updatedAt = cleanDateTime(at) || new Date().toISOString();
   order.updatedBy = cleanText(actor?.fullName, 100);
+}
+
+function cleanCustomer(input, actor, { id, now, existing }) {
+  const name = cleanText(input.name, 120);
+  if (!name) throw businessError("Customer name is required", 400, "customer_name_required");
+  const customerType = new Set(["Individual", "Business", "Organization"]).has(input.customerType)
+    ? input.customerType
+    : "Individual";
+  return {
+    id,
+    name,
+    customerType,
+    location: cleanText(input.location, 100),
+    telegram: cleanText(input.telegram, 60),
+    notes: cleanMultilineText(input.notes, 2500),
+    createdAt: existing?.createdAt || now,
+    createdBy: existing?.createdBy || cleanText(actor?.fullName, 100),
+    updatedAt: now,
+    updatedBy: cleanText(actor?.fullName, 100)
+  };
+}
+
+function cleanStoredCustomer(customer) {
+  const updatedAt = cleanDateTime(customer.updatedAt) || cleanDateTime(customer.createdAt) || new Date().toISOString();
+  const cleaned = cleanCustomer(customer, { fullName: customer.updatedBy || customer.createdBy }, {
+    id: cleanText(customer.id, 100) || crypto.randomUUID(),
+    now: updatedAt,
+    existing: {
+      createdAt: cleanDateTime(customer.createdAt) || updatedAt,
+      createdBy: cleanText(customer.createdBy, 100)
+    }
+  });
+  cleaned.updatedAt = updatedAt;
+  cleaned.updatedBy = cleanText(customer.updatedBy, 100);
+  return cleaned;
+}
+
+function customerWithStats(customer, salesOrders) {
+  const customerKey = normalizeKey(customer.name);
+  const orders = (Array.isArray(salesOrders) ? salesOrders : []).filter(order =>
+    order.orderType !== "Internal Craft"
+    && order.orderType !== "Counter Sale"
+    && (order.customerId === customer.id || (!order.customerId && normalizeKey(order.customer) === customerKey))
+  );
+  const completed = orders.filter(order => order.status === "Completed");
+  const active = orders.filter(order => order.status !== "Completed" && order.status !== "Cancelled");
+  const orderTotal = order => (order.lines || []).reduce((sum, line) =>
+    sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0
+  );
+  const lifetimeSales = completed.reduce((sum, order) => sum + orderTotal(order), 0);
+  const outstandingBalance = active.reduce((sum, order) =>
+    sum + Math.max(0, orderTotal(order) - Number(order.deposit || 0)), 0
+  );
+  const topItems = new Map();
+  completed.flatMap(order => order.lines || []).forEach(line => {
+    const key = normalizeKey(line.name || line.label);
+    const current = topItems.get(key) || {
+      name: cleanText(line.name || line.label, 120),
+      label: cleanText(line.label || line.name, 120),
+      quantity: 0,
+      revenue: 0
+    };
+    current.quantity += Number(line.quantity || 0);
+    current.revenue += Number(line.quantity || 0) * Number(line.unitPrice || 0);
+    topItems.set(key, current);
+  });
+  const dates = orders
+    .flatMap(order => [cleanDateTime(order.createdAt), cleanDateTime(order.updatedAt)])
+    .filter(Boolean)
+    .sort();
+  return structuredClone({
+    ...customer,
+    stats: {
+      orderCount: orders.length,
+      completedSales: completed.length,
+      activeOrders: active.length,
+      cancelledOrders: orders.filter(order => order.status === "Cancelled").length,
+      lifetimeSales: roundCustomerMoney(lifetimeSales),
+      averageSale: completed.length ? roundCustomerMoney(lifetimeSales / completed.length) : 0,
+      outstandingBalance: roundCustomerMoney(outstandingBalance),
+      unitsPurchased: completed.reduce((sum, order) => sum + (order.lines || [])
+        .reduce((lineSum, line) => lineSum + Number(line.quantity || 0), 0), 0),
+      firstOrderAt: dates[0] || "",
+      lastActivityAt: dates.at(-1) || "",
+      topItems: [...topItems.values()]
+        .sort((left, right) => right.quantity - left.quantity || right.revenue - left.revenue || left.label.localeCompare(right.label))
+        .slice(0, 5)
+        .map(item => ({ ...item, revenue: roundCustomerMoney(item.revenue) }))
+    }
+  });
+}
+
+function roundCustomerMoney(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
 function cleanSupplier(input, actor, { id, now, existing }) {

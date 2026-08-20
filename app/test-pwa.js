@@ -49,6 +49,10 @@ assert(appHtml.includes('id="productionSourceDialog"'), "production queues must 
 assert(appHtml.includes('id="confirmProductionSourceButton"'), "customer fulfillment must confirm existing-stock allocations");
 assert(appHtml.includes('id="orderTypeSelect"'), "the workbench must expose customer-sale and internal-craft modes");
 assert(appHtml.includes('<option value="Internal Craft">Internal Craft</option>'), "internal stock builds must be selectable from the workbench");
+assert(appHtml.includes('<option value="Counter Sale">Over-the-counter Cash Sale</option>'), "cash sales must be distinct from registered customer orders");
+assert(appHtml.includes('id="customerInput"'), "customer orders must select a registered customer");
+assert(appHtml.includes('id="customerPanel"'), "the sales workspace must expose a customer register");
+assert(appHtml.includes('id="customerHistoryList"'), "customer records must expose sales history");
 assert(appHtml.includes('id="storefrontOverviewValue"'), "the Store overview must show storefront value");
 assert(appHtml.includes('id="storageOverviewValue"'), "the Store overview must show storage value");
 assert(appHtml.includes('<div class="management-only">\n              <span>Storefront Value</span>'), "storefront value must remain management-only");
@@ -78,6 +82,10 @@ assert(appScript.includes('elements.ignoreReview.classList.toggle("hidden", cash
 assert(appScript.includes("function renderWebhookLog"), "the review workspace must render retained webhook activity");
 assert(appScript.includes("let reviewEditorDirty = false"), "webhook review must track unsaved editor changes");
 assert(appScript.includes("preserveReviewEditor: true"), "background refreshes must preserve unsaved webhook review input");
+assert(appScript.includes("function renderCustomerWorkspace"), "the sales workspace must render customer statistics and history");
+assert(appScript.includes("let customerDirty = false"), "background refreshes must preserve unsaved customer edits");
+assert(appScript.includes("function isCounterSaleOrder"), "counter sales must use their own workflow");
+assert(styles.includes(".customer-history-list"), "customer sales history must use a bounded ledger list");
 assert(appScript.includes("if (!keepDraft) renderReviewEditor(activeEntry)"), "review refreshes must not overwrite a dirty active editor");
 assert(appScript.includes("let storefrontBuyOrderDirty = false"), "storefront buy orders must track unsaved editor changes");
 assert(appScript.includes("refreshed && !storefrontBuyOrderDirty"), "buy-order refreshes must preserve unsaved input");

@@ -252,6 +252,7 @@ async function handleApplicationRequest(request, response, url) {
       }
       if (await handleBusinessProfileRoute(request, response, url, user)) return;
       if (await handleBusinessIntegrationRoute(request, response, url, user)) return;
+      if (await handleCustomerRoute(request, response, url, user)) return;
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
@@ -312,6 +313,7 @@ async function handleApplicationRequest(request, response, url) {
       }
       if (await handleBusinessProfileRoute(request, response, url, user)) return;
       if (await handleBusinessIntegrationRoute(request, response, url, user)) return;
+      if (await handleCustomerRoute(request, response, url, user)) return;
       if (await handleSupplierRoute(request, response, url, user)) return;
       if (await handleSupplyOrderRoute(request, response, url, user)) return;
       if (await handleStorefrontBuyOrderRoute(request, response, url, user)) return;
@@ -1353,6 +1355,39 @@ function isManagementRole(user) {
   return user?.role === "admin" || user?.role === "manager";
 }
 
+async function handleCustomerRoute(request, response, url, user) {
+  if (!url.pathname.startsWith("/api/customers")) return false;
+
+  try {
+    if (url.pathname === "/api/customers" && request.method === "GET") {
+      sendJson(response, { ok: true, customers: businessStore.listCustomers() });
+      return true;
+    }
+    if (url.pathname === "/api/customers" && request.method === "POST") {
+      const customer = await businessStore.saveCustomer(await readJsonBody(request), user);
+      await recordCustomerAudit("customer.saved", customer, user);
+      sendJson(response, { ok: true, customer, customers: businessStore.listCustomers() });
+      return true;
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/customers/")) {
+      if (!requireManagement(response, user)) return true;
+      const customerId = decodeURIComponent(url.pathname.slice("/api/customers/".length));
+      const customer = await businessStore.removeCustomer(customerId);
+      await recordCustomerAudit("customer.removed", customer, user);
+      sendJson(response, { ok: true, customer, customers: businessStore.listCustomers() });
+      return true;
+    }
+    sendJson(response, { ok: false, error: "Customer route not found", code: "not_found" }, 404);
+  } catch (error) {
+    sendJson(response, {
+      ok: false,
+      error: error.message || "Customer request failed",
+      code: error.code || "customer_error"
+    }, error.status || 500);
+  }
+  return true;
+}
+
 async function handleSupplierRoute(request, response, url, user) {
   if (!url.pathname.startsWith("/api/suppliers")) return false;
   if (!requireManagement(response, user)) return true;
@@ -2170,12 +2205,18 @@ function isInternalCraftOrder(order) {
   return order?.orderType === "Internal Craft";
 }
 
+function isCounterSaleOrder(order) {
+  return order?.orderType === "Counter Sale";
+}
+
 function productionSourceTypeForOrder(order) {
   return isInternalCraftOrder(order) ? "Internal Craft" : "Customer Order";
 }
 
 function salesOrderDisplayName(order) {
-  return isInternalCraftOrder(order) ? order?.label || "Internal stock build" : order?.customer || "Unnamed customer";
+  if (isInternalCraftOrder(order)) return order?.label || "Internal stock build";
+  if (isCounterSaleOrder(order)) return order?.label || "Over-the-counter cash sale";
+  return order?.customer || "Unnamed customer";
 }
 
 async function handleDailyCloseRoute(request, response, url, user) {
@@ -2239,6 +2280,14 @@ async function handleProductionBatchRoute(request, response, url, user) {
       let sourceOrder = null;
       if (ORDER_PRODUCTION_SOURCE_TYPES.has(payload.sourceType)) {
         sourceOrder = businessStore.getSalesOrder(payload.sourceId);
+        if (isCounterSaleOrder(sourceOrder)) {
+          sendJson(response, {
+            ok: false,
+            error: "Counter sales use existing stock and cannot queue production",
+            code: "counter_sale_production_forbidden"
+          }, 409);
+          return true;
+        }
         if (!sourceOrder || ["Ready", "Completed", "Cancelled"].includes(sourceOrder.status)) {
           sendJson(response, {
             ok: false,
@@ -2603,7 +2652,10 @@ function salesOrderProductionShape(order) {
     quantity: Number(line.quantity || 0)
   })).sort((left, right) => left.key.localeCompare(right.key) || left.quantity - right.quantity);
   return JSON.stringify({
-    orderType: order?.orderType === "Internal Craft" ? "Internal Craft" : "Customer Sale",
+    orderType: order?.orderType === "Internal Craft"
+      ? "Internal Craft"
+      : order?.orderType === "Counter Sale" ? "Counter Sale" : "Customer Sale",
+    customerId: String(order?.customerId || ""),
     customer: String(order?.customer || "").trim(),
     handler: String(order?.handler || "").trim(),
     priority: order?.priority === "Expedite" ? "Expedite" : "Normal",
@@ -3078,6 +3130,26 @@ async function recordSupplierAudit(action, supplier, user) {
       employeeContacts: supplier.employees.length
     }
   }).catch(error => console.error("Unable to write supplier audit event:", error.message));
+}
+
+async function recordCustomerAudit(action, customer, user) {
+  if (!accountStore) return;
+  await accountStore.recordAudit({
+    category: "sales",
+    action,
+    actorId: user.id,
+    actorName: user.fullName,
+    subjectId: customer.id,
+    subjectName: customer.name,
+    fingerprint: `${action}:${customer.id}:${customer.updatedAt}`,
+    details: {
+      customerType: customer.customerType,
+      location: customer.location,
+      orderCount: Number(customer.stats?.orderCount || 0),
+      completedSales: Number(customer.stats?.completedSales || 0),
+      lifetimeSales: Number(customer.stats?.lifetimeSales || 0)
+    }
+  }).catch(error => console.error("Unable to write customer audit event:", error.message));
 }
 
 async function recordProductionBatchAudit(action, batch, user, progress = null) {
@@ -3662,6 +3734,7 @@ async function getBootstrapData(user) {
     materials: data.materials,
     pricing: data.pricing,
     salesOrders: businessStore.listSalesOrders(),
+    customers: businessStore.listCustomers(),
     storefrontBuyOrders: canManage ? businessStore.listStorefrontBuyOrders() : [],
     productionBatches: businessStore.listProductionBatches(),
     dailyCloses,
@@ -3677,6 +3750,7 @@ async function getBootstrapData(user) {
       webhookReview: "/api/sync",
       productionBatches: "/api/production-batches",
       salesOrders: "/api/sales-orders",
+      customers: "/api/customers",
       dailyCloses: "/api/daily-closes",
       finance: "/api/finance"
     }

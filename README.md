@@ -54,7 +54,7 @@ Set `AUTH_SESSION_SECRET` and `BRIDGE_API_TOKEN` before starting Compose. Add `-
 
 ## Accounts and Roles
 
-- **Employees** see the daily desk, store, workbench, production queue, and ordinary shift tools. They can create customer orders and internal stock builds, queue those saved orders for production, start batches, record completed production cycles, and mark ready customer orders delivered. Inventory values, production costs, stock adjustments, cancellations, and administrative controls stay hidden.
+- **Employees** see the daily desk, store, workbench, production queue, customer register, and ordinary shift tools. They can register customers, create customer orders and over-the-counter cash sales, build internal stock, queue eligible saved orders for production, start batches, record completed production cycles, and mark ready customer orders delivered. Inventory values, production costs, stock adjustments, customer deletion, cancellations, and administrative controls stay hidden.
 - **Managers** can additionally count and adjust stock, maintain targets and suppliers, create storefront-restock or manual production, cancel batches, reconcile webhook exceptions, approve staff, and inspect the audit ledger.
 - **Admins** additionally control finance, payroll, owner funds, manager promotion, and protected corrections.
 
@@ -65,6 +65,8 @@ One personal profile can hold jobs at several businesses. Discord memberships ap
 Admins can tailor each workspace's navigation from **Business Settings**. Dashboard and Business Settings remain available; every other tab can be shown or hidden for that business without changing the underlying employee, manager, or admin permissions.
 
 Customer-order fulfillment first reserves available finished goods from storage or storefront stock, then creates production work only for the remaining quantity. The allocation can be adjusted before queueing and is persisted so another order cannot claim the same units. Orders covered entirely by existing stock move directly to **Ready**; otherwise, completing every production line marks the order **Ready**, and the employee marks it **Completed** only after delivery. The production register includes an **Assigned to Me** filter for the employee named as the order handler.
+
+The customer register is part of the Sales/Order workbench. Registered customer orders store a stable customer link plus a historical name snapshot, and customer cards derive order count, completed sales, lifetime value, average sale, outstanding balance, top purchases, and activity history from those orders. **Over-the-counter Cash Sale** records an anonymous paid-in-full sale immediately and cannot be sent to production; it is intentionally excluded from named-customer statistics.
 
 Internal crafts use the same workbench with **Internal Craft** selected. They always build the full entered quantity for storage, even when finished stock already exists. Prices, deposits, balances, ledger movements, and P&L entries are forced to zero. Completing production consumes the chosen recipe ingredients, adds the crafted output to storage, and closes the internal order automatically without a customer-delivery movement.
 
@@ -122,7 +124,7 @@ The first-launch ledger also accepts optional Discord server, storage/ledger eve
 
 ## Business Archive Migration
 
-The preferred migration path is a portable, versioned business archive. `npm run export:business` signs into the current hosted app with an admin account and exports the catalog, recipes, current inventory and ledger, orders, suppliers, production, finance summary, and sanitized staff audit history. Password hashes, sessions, API tokens, and database credentials are never included.
+The preferred migration path is a portable, versioned business archive. `npm run export:business` signs into the current hosted app with an admin account and exports the catalog, recipes, current inventory and ledger, customers, orders, suppliers, production, finance summary, and sanitized staff audit history. Password hashes, sessions, API tokens, and database credentials are never included.
 
 On Windows, `scripts/export-business-preview.ps1` provides an interactive credential prompt so the legacy password never needs to be placed in the shell history or an environment file.
 
