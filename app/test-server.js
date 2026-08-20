@@ -1442,6 +1442,7 @@ async function run() {
   await post(`${baseUrl}/api/production-batches/production-reserved-second/cancel`, {}, managerCookie);
 
   await runProductionCombinationMatrix({ baseUrl, managerCookie, workerCookie });
+  await runOperationalFullCycleSimulations({ baseUrl, managerCookie, workerCookie });
 
   const clockPayload = {
     action: "time_clock",
@@ -1807,6 +1808,304 @@ async function runProductionCombinationMatrix({ baseUrl, managerCookie, workerCo
     for (const product of inventoryProducts) {
       if (originalProductStock.has(product.itemName)) product.currentStock = originalProductStock.get(product.itemName);
     }
+    storageCounts.clear();
+    for (const [key, quantity] of originalStorage) storageCounts.set(key, quantity);
+  }
+}
+
+async function runOperationalFullCycleSimulations({ baseUrl, managerCookie, workerCookie }) {
+  const ingredients = [
+    { name: "Iron", key: "iron", perCraft: 2 },
+    { name: "Softwood", key: "softwood", perCraft: 2 },
+    { name: "Revolver Handle", key: "revolver handle", perCraft: 1 },
+    { name: "Revolver Barrel", key: "revolver barrel", perCraft: 1 },
+    { name: "Revolver Cylinder", key: "revolver cylinder", perCraft: 1 },
+    { name: "Bolts", key: "bolts", perCraft: 2 }
+  ];
+  const originalStorage = new Map(storageCounts);
+  const originalProductStock = new Map(inventoryProducts.map(product => [product, product.currentStock]));
+  const addedProducts = [];
+  const navy = inventoryProducts.find(product => product.itemName === "Navy Revolver");
+
+  const storefrontIngredient = ingredient => {
+    let product = inventoryProducts.find(candidate => mockInventoryKey(candidate.itemName) === ingredient.key);
+    if (!product) {
+      product = {
+        itemName: ingredient.name,
+        itemLabel: ingredient.name,
+        itemTag: `SIM_${ingredient.key.replace(/\s+/g, "_").toUpperCase()}`,
+        category: "Production Components",
+        salePrice: 0,
+        target: 0,
+        currentStock: 0,
+        active: true
+      };
+      inventoryProducts.push(product);
+      addedProducts.push(product);
+    }
+    return product;
+  };
+  const resetRecipeInventory = quantity => {
+    ingredients.forEach(ingredient => {
+      storageCounts.set(ingredient.key, quantity);
+      storefrontIngredient(ingredient).currentStock = quantity;
+    });
+  };
+  const operationWritesSince = index => receiverPayloads.slice(index)
+    .filter(payload => payload.action === "manual_operation");
+
+  let scenarios = 0;
+  try {
+    resetRecipeInventory(20);
+    storageCounts.set("navy revolver", 1);
+    navy.currentStock = 1;
+    const mixedOrder = await post(`${baseUrl}/api/sales-orders`, {
+      id: "simulation-mixed-order",
+      customer: "Mixed Source Customer",
+      handler: "Grace Worker",
+      status: "Reserved",
+      priority: "Expedite",
+      deliveryDate: "2026-08-20",
+      lines: [{ name: "Navy Revolver", label: "Navy Revolver", category: "Revolvers", quantity: 4, unitPrice: 105 }]
+    }, workerCookie);
+    assert.equal(mixedOrder.response.status, 200, JSON.stringify(mixedOrder.body));
+    const mixedSources = {
+      iron: "Storage",
+      softwood: "Storefront",
+      "revolver handle": "Storage",
+      "revolver barrel": "Storefront",
+      "revolver cylinder": "Storage",
+      bolts: "Storefront"
+    };
+    const mixedBatch = await post(`${baseUrl}/api/production-batches`, {
+      id: "simulation-mixed-batch",
+      sourceType: "Customer Order",
+      sourceId: mixedOrder.body.order.id,
+      reference: "Mixed source full cycle",
+      lines: [{ itemName: "Navy Revolver", quantity: 2, ingredientSources: mixedSources }],
+      stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 1, storefrontQuantity: 1 }]
+    }, workerCookie);
+    assert.equal(mixedBatch.response.status, 200, JSON.stringify(mixedBatch.body));
+    const mixedLine = mixedBatch.body.batch.lines[0];
+    assert.equal((await post(`${baseUrl}/api/production-batches/simulation-mixed-batch/start`, {}, workerCookie)).response.status, 200);
+    const mixedWritesStart = receiverPayloads.length;
+    const mixedPartial = await post(`${baseUrl}/api/production-batches/simulation-mixed-batch/progress`, {
+      completions: [{ lineId: mixedLine.id, completedCrafts: 1 }]
+    }, workerCookie);
+    assert.equal(mixedPartial.response.status, 200, JSON.stringify(mixedPartial.body));
+    assert.equal(mixedPartial.body.batch.status, "In Progress");
+    const mixedComplete = await post(`${baseUrl}/api/production-batches/simulation-mixed-batch/progress`, {
+      completions: [{ lineId: mixedLine.id, completedCrafts: 2 }]
+    }, workerCookie);
+    assert.equal(mixedComplete.response.status, 200, JSON.stringify(mixedComplete.body));
+    assert.equal(mixedComplete.body.batch.status, "Completed");
+    assert.equal(mixedComplete.body.order.status, "Ready");
+    const mixedProductionWrites = operationWritesSince(mixedWritesStart);
+    assert.equal(new Set(mixedProductionWrites.map(payload => payload.entry.id)).size, mixedProductionWrites.length);
+    ingredients.forEach(ingredient => {
+      const uses = mixedProductionWrites.filter(payload =>
+        payload.entry.kind === "Production Use"
+        && mockInventoryKey(payload.entry.itemName) === ingredient.key
+        && payload.entry.location === mixedSources[ingredient.key]
+      );
+      assert.equal(uses.reduce((sum, payload) => sum + Number(payload.entry.quantity || 0), 0), ingredient.perCraft * 2);
+    });
+    assert.equal(
+      mixedProductionWrites.filter(payload => payload.entry.kind === "Production Output")
+        .reduce((sum, payload) => sum + Number(payload.entry.quantity || 0), 0),
+      2
+    );
+    const deliveryWritesStart = receiverPayloads.length;
+    const mixedDelivered = await post(`${baseUrl}/api/sales-orders`, {
+      ...mixedComplete.body.order,
+      status: "Completed"
+    }, workerCookie);
+    assert.equal(mixedDelivered.response.status, 200, JSON.stringify(mixedDelivered.body));
+    const deliveryWrites = operationWritesSince(deliveryWritesStart);
+    assert(deliveryWrites.some(payload => payload.entry.kind === "Correction Out"
+      && payload.entry.location === "Storage" && payload.entry.quantity === 3));
+    assert(deliveryWrites.some(payload => payload.entry.kind === "Correction Out"
+      && payload.entry.location === "Storefront" && payload.entry.quantity === 1));
+    assert.equal(storageCounts.get("navy revolver"), 0);
+    assert.equal(navy.currentStock, 0);
+    scenarios += 1;
+
+    storageCounts.set("navy revolver", 2);
+    navy.currentStock = 0;
+    const raceOrders = await Promise.all(["a", "b"].map(suffix => post(`${baseUrl}/api/sales-orders`, {
+      id: `simulation-race-order-${suffix}`,
+      customer: `Race Customer ${suffix.toUpperCase()}`,
+      status: "Reserved",
+      lines: [{ name: "Navy Revolver", label: "Navy Revolver", quantity: 2, unitPrice: 105 }]
+    }, workerCookie)));
+    assert(raceOrders.every(result => result.response.status === 200));
+    const raceResults = await Promise.all(raceOrders.map((order, index) => post(`${baseUrl}/api/production-batches`, {
+      id: `simulation-race-batch-${index + 1}`,
+      sourceType: "Customer Order",
+      sourceId: order.body.order.id,
+      stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 2 }]
+    }, workerCookie)));
+    assert.deepEqual(raceResults.map(result => result.response.status).sort(), [200, 409]);
+    const raceWinner = raceResults.find(result => result.response.status === 200);
+    const raceLoser = raceResults.find(result => result.response.status === 409);
+    assert.equal(raceLoser.body.code, "production_stock_allocation_shortage");
+    const raceWritesStart = receiverPayloads.length;
+    const raceDelivered = await post(`${baseUrl}/api/sales-orders`, {
+      ...raceWinner.body.order,
+      status: "Completed"
+    }, workerCookie);
+    assert.equal(raceDelivered.response.status, 200, JSON.stringify(raceDelivered.body));
+    assert.equal(storageCounts.get("navy revolver"), 0);
+    assert.equal(operationWritesSince(raceWritesStart).filter(payload => payload.entry.kind === "Correction Out").length, 1);
+    scenarios += 1;
+
+    resetRecipeInventory(0);
+    ingredients.forEach(ingredient => storageCounts.set(ingredient.key, ingredient.perCraft));
+    const competingBatches = await Promise.all([{
+      id: "simulation-priority-first",
+      dueDate: "2026-08-20"
+    }, {
+      id: "simulation-priority-second",
+      dueDate: "2026-08-21"
+    }].map(input => post(`${baseUrl}/api/production-batches`, {
+      ...input,
+      sourceType: "Manual",
+      reference: input.id,
+      lines: [{ itemName: "Navy Revolver", quantity: 1 }]
+    }, managerCookie)));
+    assert(competingBatches.every(result => result.response.status === 200));
+    const contentionWritesStart = receiverPayloads.length;
+    const contention = await Promise.all(competingBatches.map(result => post(
+      `${baseUrl}/api/production-batches/${result.body.batch.id}/progress`,
+      { completions: [{ lineId: result.body.batch.lines[0].id, completedCrafts: 1 }] },
+      workerCookie
+    )));
+    assert.deepEqual(contention.map(result => result.response.status).sort(), [200, 409]);
+    assert.equal(contention.find(result => result.response.status === 409).body.code, "production_material_shortage");
+    ingredients.forEach(ingredient => assert(Number(storageCounts.get(ingredient.key) || 0) >= 0));
+    const contentionWrites = operationWritesSince(contentionWritesStart);
+    assert.equal(contentionWrites.filter(payload => payload.entry.kind === "Production Output").length, 1);
+    ingredients.forEach(ingredient => storageCounts.set(ingredient.key, ingredient.perCraft));
+    const blockedBatch = contention.find(result => result.response.status === 409);
+    const blockedId = blockedBatch === contention[0] ? competingBatches[0].body.batch.id : competingBatches[1].body.batch.id;
+    const blockedLineId = blockedBatch === contention[0]
+      ? competingBatches[0].body.batch.lines[0].id
+      : competingBatches[1].body.batch.lines[0].id;
+    const recovered = await post(`${baseUrl}/api/production-batches/${blockedId}/progress`, {
+      completions: [{ lineId: blockedLineId, completedCrafts: 1 }]
+    }, workerCookie);
+    assert.equal(recovered.response.status, 200, JSON.stringify(recovered.body));
+    assert.equal(recovered.body.batch.status, "Completed");
+    scenarios += 1;
+
+    resetRecipeInventory(10);
+    storageCounts.set("navy revolver", 1);
+    const cancellableOrder = await post(`${baseUrl}/api/sales-orders`, {
+      id: "simulation-cancellable-order",
+      customer: "Cancellation Customer",
+      status: "Reserved",
+      lines: [{ name: "Navy Revolver", label: "Navy Revolver", quantity: 2, unitPrice: 105 }]
+    }, workerCookie);
+    const cancellableBatch = await post(`${baseUrl}/api/production-batches`, {
+      id: "simulation-cancellable-batch",
+      sourceType: "Customer Order",
+      sourceId: cancellableOrder.body.order.id,
+      lines: [{ itemName: "Navy Revolver", quantity: 1 }],
+      stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 1 }]
+    }, workerCookie);
+    assert.equal(cancellableBatch.response.status, 200, JSON.stringify(cancellableBatch.body));
+    const waitingOrder = await post(`${baseUrl}/api/sales-orders`, {
+      id: "simulation-waiting-order",
+      customer: "Waiting Customer",
+      status: "Reserved",
+      lines: [{ name: "Navy Revolver", label: "Navy Revolver", quantity: 1, unitPrice: 105 }]
+    }, workerCookie);
+    const blockedAllocation = await post(`${baseUrl}/api/production-batches`, {
+      id: "simulation-waiting-blocked",
+      sourceType: "Customer Order",
+      sourceId: waitingOrder.body.order.id,
+      stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 1 }]
+    }, workerCookie);
+    assert.equal(blockedAllocation.response.status, 409);
+    const cancellationWritesStart = receiverPayloads.length;
+    const cancelled = await post(`${baseUrl}/api/production-batches/simulation-cancellable-batch/cancel`, {}, managerCookie);
+    assert.equal(cancelled.response.status, 200, JSON.stringify(cancelled.body));
+    assert.equal(operationWritesSince(cancellationWritesStart).length, 0);
+    const releasedAllocation = await post(`${baseUrl}/api/production-batches`, {
+      id: "simulation-waiting-released",
+      sourceType: "Customer Order",
+      sourceId: waitingOrder.body.order.id,
+      stockAllocations: [{ itemName: "Navy Revolver", storageQuantity: 1 }]
+    }, workerCookie);
+    assert.equal(releasedAllocation.response.status, 200, JSON.stringify(releasedAllocation.body));
+    assert.equal(releasedAllocation.body.order.status, "Ready");
+    scenarios += 1;
+
+    resetRecipeInventory(10);
+    storageCounts.set("navy revolver", 0);
+    const internalOrder = await post(`${baseUrl}/api/sales-orders`, {
+      id: "simulation-internal-order",
+      orderType: "Internal Craft",
+      label: "Build reserve stock",
+      status: "Reserved",
+      lines: [{ name: "Navy Revolver", label: "Navy Revolver", quantity: 2, unitPrice: 105 }]
+    }, workerCookie);
+    assert.equal(internalOrder.response.status, 200, JSON.stringify(internalOrder.body));
+    const internalWritesStart = receiverPayloads.length;
+    const internalBatch = await post(`${baseUrl}/api/production-batches`, {
+      id: "simulation-internal-batch",
+      sourceType: "Internal Craft",
+      sourceId: internalOrder.body.order.id,
+      lines: [{ itemName: "Navy Revolver", quantity: 2, ingredientSources: mixedSources }]
+    }, workerCookie);
+    assert.equal(internalBatch.response.status, 200, JSON.stringify(internalBatch.body));
+    const internalComplete = await post(`${baseUrl}/api/production-batches/simulation-internal-batch/progress`, {
+      completions: [{ lineId: internalBatch.body.batch.lines[0].id, completedCrafts: 2 }]
+    }, workerCookie);
+    assert.equal(internalComplete.response.status, 200, JSON.stringify(internalComplete.body));
+    assert.equal(internalComplete.body.order.status, "Completed");
+    assert.equal(storageCounts.get("navy revolver"), 2);
+    const internalWrites = operationWritesSince(internalWritesStart);
+    assert(internalWrites.some(payload => payload.entry.kind === "Production Output" && payload.entry.quantity === 2));
+    assert.equal(internalWrites.some(payload => payload.entry.kind === "Correction Out"), false);
+    assert(internalWrites.every(payload => Number(payload.entry.amount || 0) === 0));
+    scenarios += 1;
+
+    const counterWritesStart = receiverPayloads.length;
+    const counterSale = await post(`${baseUrl}/api/sales-orders`, {
+      id: "simulation-counter-sale",
+      orderType: "Counter Sale",
+      customer: "Must be ignored",
+      deliveryDate: "2026-08-21",
+      status: "Draft",
+      lines: [{ name: "Navy Revolver", label: "Navy Revolver", quantity: 1, unitPrice: 105 }]
+    }, workerCookie);
+    assert.equal(counterSale.response.status, 200, JSON.stringify(counterSale.body));
+    assert.equal(counterSale.body.order.status, "Completed");
+    assert.equal(counterSale.body.order.customer, "");
+    assert.equal(counterSale.body.order.deliveryDate, "");
+    assert.equal(counterSale.body.order.deposit, 105);
+    assert.equal(operationWritesSince(counterWritesStart).length, 0);
+    const counterProduction = await post(`${baseUrl}/api/production-batches`, {
+      id: "simulation-counter-production",
+      sourceType: "Customer Order",
+      sourceId: counterSale.body.order.id,
+      lines: [{ itemName: "Navy Revolver", quantity: 1 }]
+    }, workerCookie);
+    assert.equal(counterProduction.response.status, 409);
+    assert.equal(counterProduction.body.code, "counter_sale_production_forbidden");
+    scenarios += 1;
+
+    console.log(
+      `Operational full-cycle simulations passed: ${scenarios} scenarios covering mixed-source delivery, `
+      + "simultaneous stock contention, production contention and recovery, cancellation release, internal stock building, and counter sales."
+    );
+  } finally {
+    for (const product of addedProducts) {
+      const index = inventoryProducts.indexOf(product);
+      if (index >= 0) inventoryProducts.splice(index, 1);
+    }
+    for (const [product, currentStock] of originalProductStock) product.currentStock = currentStock;
     storageCounts.clear();
     for (const [key, quantity] of originalStorage) storageCounts.set(key, quantity);
   }
