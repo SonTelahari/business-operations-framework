@@ -29,18 +29,24 @@ const SECTION_MIN_ROLE = Object.freeze({
   "business-settings": "admin"
 });
 const NAVIGATION_TAB_DEFINITIONS = Object.freeze([
-  { section: "workbench", label: "Sales", role: "Employee" },
-  { section: "production", label: "Production", role: "Employee" },
-  { section: "store", label: "Store", role: "Employee" },
-  { section: "catalog", label: "Catalog", role: "Manager" },
-  { section: "restock", label: "Restock", role: "Manager" },
-  { section: "supplies", label: "Supplies", role: "Manager" },
-  { section: "buy-orders", label: "Buy Orders", role: "Manager" },
-  { section: "operations", label: "Operations", role: "Manager" },
-  { section: "daily-close", label: "Daily Close", role: "Manager" },
-  { section: "review", label: "Review", role: "Manager" },
-  { section: "employees", label: "Staff", role: "Manager" },
-  { section: "finance", label: "Finance", role: "Admin" }
+  { section: "workbench", label: "Sales", role: "Employee", group: "daily" },
+  { section: "production", label: "Production", role: "Employee", group: "daily" },
+  { section: "store", label: "Store", role: "Employee", group: "daily" },
+  { section: "catalog", label: "Catalog", role: "Manager", group: "inventory" },
+  { section: "restock", label: "Restock", role: "Manager", group: "inventory" },
+  { section: "supplies", label: "Supplies", role: "Manager", group: "inventory" },
+  { section: "buy-orders", label: "Buy Orders", role: "Manager", group: "inventory" },
+  { section: "operations", label: "Operations", role: "Manager", group: "management" },
+  { section: "daily-close", label: "Daily Close", role: "Manager", group: "management" },
+  { section: "review", label: "Review", role: "Manager", group: "management" },
+  { section: "employees", label: "Staff", role: "Manager", group: "management" },
+  { section: "finance", label: "Finance", role: "Admin", group: "owner" }
+]);
+const NAVIGATION_GROUP_DEFINITIONS = Object.freeze([
+  { id: "daily", label: "Daily Work", role: "Employee" },
+  { id: "inventory", label: "Inventory", role: "Manager" },
+  { id: "management", label: "Management", role: "Manager" },
+  { id: "owner", label: "Owner", role: "Admin" }
 ]);
 const DEFAULT_NAVIGATION_SECTIONS = Object.freeze(Object.fromEntries(
   NAVIGATION_TAB_DEFINITIONS.map(tab => [tab.section, true])
@@ -402,6 +408,7 @@ const elements = {
   employeesSection: document.querySelector("#employeesSection"),
   businessSettingsSection: document.querySelector("#businessSettingsSection"),
   exceptionNavCount: document.querySelector("#exceptionNavCount"),
+  managementNavCount: document.querySelector("#managementNavCount"),
   dashboardReviewCount: document.querySelector("#dashboardReviewCount"),
   reviewDataStatus: document.querySelector("#reviewDataStatus"),
   reviewActionStatus: document.querySelector("#reviewActionStatus"),
@@ -777,6 +784,17 @@ function updateDraftIndicators() {
     button.setAttribute("aria-label", dirty ? `${label}, unsaved changes` : label);
     if (dirty) button.title = "Unsaved changes";
     else if (button.title === "Unsaved changes") button.removeAttribute("title");
+  });
+  document.querySelectorAll("[data-navigation-menu]").forEach(menu => {
+    const dirty = [...menu.querySelectorAll("[data-section]")]
+      .some(button => Boolean(dirtySections[button.dataset.section]));
+    menu.classList.toggle("has-unsaved-draft", dirty);
+    const trigger = menu.querySelector(".navigation-menu-trigger");
+    if (!trigger) return;
+    const label = trigger.querySelector(".navigation-menu-label")?.textContent.trim() || "Navigation";
+    trigger.setAttribute("aria-label", dirty ? `${label}, unsaved changes` : label);
+    if (dirty) trigger.title = "Unsaved changes";
+    else if (trigger.title === "Unsaved changes") trigger.removeAttribute("title");
   });
 }
 
@@ -1166,6 +1184,25 @@ function applyNavigationVisibility() {
   document.querySelectorAll(".section-tabs [data-section]").forEach(control => {
     control.classList.toggle("navigation-disabled", !isNavigationSectionEnabled(control.dataset.section));
   });
+  updateNavigationMenus();
+}
+
+function updateNavigationMenus() {
+  document.querySelectorAll("[data-navigation-menu]").forEach(menu => {
+    const controls = [...menu.querySelectorAll("[data-section]")];
+    const hasEnabledSection = controls.some(control => isNavigationSectionEnabled(control.dataset.section)
+      && (control.dataset.section !== "employees" || Boolean(currentUser?.accountManagement)));
+    const active = controls.some(control => control.dataset.section === activeSection);
+    menu.classList.toggle("navigation-disabled", !hasEnabledSection);
+    menu.classList.toggle("active", active);
+    menu.querySelector(".navigation-menu-trigger")?.setAttribute("aria-current", active ? "page" : "false");
+  });
+}
+
+function closeNavigationMenus(except = null) {
+  document.querySelectorAll("[data-navigation-menu][open]").forEach(menu => {
+    if (menu !== except) menu.removeAttribute("open");
+  });
 }
 
 function populateBusinessSettings() {
@@ -1192,15 +1229,26 @@ function populateBusinessSettings() {
 
 function renderBusinessNavigationSettings() {
   if (!elements.settingsNavigationTabs) return;
-  elements.settingsNavigationTabs.innerHTML = NAVIGATION_TAB_DEFINITIONS.map(tab => `
-    <label class="business-navigation-tab">
-      <input type="checkbox" data-navigation-section="${escapeHtml(tab.section)}"${navigationSections[tab.section] !== false ? " checked" : ""}>
-      <span>
-        <strong>${escapeHtml(tab.label)}</strong>
-        <small>${escapeHtml(tab.role)}</small>
-      </span>
-    </label>
-  `).join("");
+  elements.settingsNavigationTabs.innerHTML = NAVIGATION_GROUP_DEFINITIONS.map(group => {
+    const tabs = NAVIGATION_TAB_DEFINITIONS.filter(tab => tab.group === group.id);
+    if (!tabs.length) return "";
+    return `
+      <section class="business-navigation-group">
+        <header class="business-navigation-group-heading">
+          <strong>${escapeHtml(group.label)}</strong>
+          <small>${escapeHtml(group.role)}</small>
+        </header>
+        <div class="business-navigation-group-tabs">
+          ${tabs.map(tab => `
+            <label class="business-navigation-tab">
+              <input type="checkbox" data-navigation-section="${escapeHtml(tab.section)}"${navigationSections[tab.section] !== false ? " checked" : ""}>
+              <span><strong>${escapeHtml(tab.label)}</strong></span>
+            </label>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }).join("");
 }
 
 function renderBusinessSettingsPreview() {
@@ -1703,6 +1751,14 @@ function wireEvents() {
       if (activeSection === "production") loadProductionBatches({ silent: true });
       if (activeSection === "daily-close" && isManagement()) renderDailyCloseWorkspace();
     });
+  });
+  document.querySelectorAll("[data-navigation-menu]").forEach(menu => {
+    menu.addEventListener("toggle", () => {
+      if (menu.open) closeNavigationMenus(menu);
+    });
+  });
+  document.addEventListener("click", event => {
+    if (!event.target.closest(".section-tabs")) closeNavigationMenus();
   });
 
   ["input", "change"].forEach(eventName => {
@@ -3251,6 +3307,7 @@ function renderSectionWorkspace(section = activeSection, options = {}) {
 function showSection(section, options = {}) {
   if (!canAccessSection(section)) return false;
   activeSection = section;
+  closeNavigationMenus();
   renderSectionWorkspace(section, options);
   renderSection();
   return true;
@@ -3556,6 +3613,7 @@ function renderSection() {
   document.querySelectorAll("[data-section]").forEach(button => {
     button.classList.toggle("active", button.dataset.section === activeSection);
   });
+  updateNavigationMenus();
   elements.dashboardSection.classList.toggle("hidden", activeSection !== "dashboard");
   elements.storeSection.classList.toggle("hidden", activeSection !== "store");
   elements.catalogSection.classList.toggle("hidden", activeSection !== "catalog");
@@ -4917,6 +4975,7 @@ function renderRole() {
   if (!isAdmin() && elements.ledgerType?.selectedOptions[0]?.dataset.adminOnlyOption !== undefined) {
     elements.ledgerType.value = "Ledger Count";
   }
+  applyNavigationVisibility();
   if (!canAccessSection(activeSection)) {
     activeSection = "dashboard";
     renderSection();
@@ -4948,6 +5007,8 @@ function renderReviewIndicators() {
   elements.reviewIgnoredCount.textContent = formatNumber(ignoredCount);
   elements.exceptionNavCount.textContent = formatNumber(openCount);
   elements.exceptionNavCount.classList.toggle("hidden", openCount === 0);
+  elements.managementNavCount.textContent = formatNumber(openCount);
+  elements.managementNavCount.classList.toggle("hidden", openCount === 0);
 }
 
 function renderReviewWorkspace({ preserveEditor = false } = {}) {

@@ -11,7 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/operations-ledger-32.png">
     <link rel="apple-touch-icon" href="/assets/operations-ledger-192.png">
-  <link rel="stylesheet" href="styles.css?v=20260820-scoped-rendering">
+    <link rel="stylesheet" href="styles.css?v=20260821-grouped-navigation">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -45,18 +45,43 @@
           Production <span class="nav-count hidden" id="productionNavCount">0</span>
         </button>
         <button class="section-button" data-section="store" type="button">Store</button>
-        <button class="section-button management-only" data-section="catalog" type="button">Catalog</button>
-        <button class="section-button management-only" data-section="restock" type="button">Restock</button>
-        <button class="section-button management-only" data-section="supplies" type="button">Supplies</button>
-        <button class="section-button management-only" data-section="buy-orders" type="button">Buy Orders</button>
-        <button class="section-button management-only" data-section="operations" type="button">Operations</button>
-        <button class="section-button management-only" data-section="daily-close" type="button">Daily Close</button>
-        <button class="section-button management-only review-tab-button" data-section="review" type="button">
-          Review <span class="nav-count hidden" id="exceptionNavCount">0</span>
-        </button>
-        <button class="section-button management-only accounts-only" data-section="employees" type="button">Staff</button>
-        <button class="section-button admin-only" data-section="finance" type="button">Finance</button>
-        <button class="section-button admin-only" data-section="business-settings" type="button">Business Settings</button>
+        <details class="navigation-menu management-only" data-navigation-menu="inventory">
+          <summary class="navigation-menu-trigger" aria-haspopup="menu">
+            <span class="navigation-menu-label">Inventory</span>
+            <span class="navigation-menu-caret" aria-hidden="true"></span>
+          </summary>
+          <div class="navigation-menu-panel" role="menu" aria-label="Inventory sections">
+            <button class="section-button management-only" data-section="catalog" type="button" role="menuitem">Catalog</button>
+            <button class="section-button management-only" data-section="restock" type="button" role="menuitem">Restock</button>
+            <button class="section-button management-only" data-section="supplies" type="button" role="menuitem">Supplies</button>
+            <button class="section-button management-only" data-section="buy-orders" type="button" role="menuitem">Buy Orders</button>
+          </div>
+        </details>
+        <details class="navigation-menu management-only" data-navigation-menu="management">
+          <summary class="navigation-menu-trigger" aria-haspopup="menu">
+            <span class="navigation-menu-label">Management</span>
+            <span class="nav-count hidden" id="managementNavCount">0</span>
+            <span class="navigation-menu-caret" aria-hidden="true"></span>
+          </summary>
+          <div class="navigation-menu-panel" role="menu" aria-label="Management sections">
+            <button class="section-button management-only" data-section="operations" type="button" role="menuitem">Operations</button>
+            <button class="section-button management-only" data-section="daily-close" type="button" role="menuitem">Daily Close</button>
+            <button class="section-button management-only review-tab-button" data-section="review" type="button" role="menuitem">
+              Review <span class="nav-count hidden" id="exceptionNavCount">0</span>
+            </button>
+            <button class="section-button management-only accounts-only" data-section="employees" type="button" role="menuitem">Staff</button>
+          </div>
+        </details>
+        <details class="navigation-menu admin-only" data-navigation-menu="owner">
+          <summary class="navigation-menu-trigger" aria-haspopup="menu">
+            <span class="navigation-menu-label">Owner</span>
+            <span class="navigation-menu-caret" aria-hidden="true"></span>
+          </summary>
+          <div class="navigation-menu-panel" role="menu" aria-label="Owner sections">
+            <button class="section-button admin-only" data-section="finance" type="button" role="menuitem">Finance</button>
+            <button class="section-button admin-only" data-section="business-settings" type="button" role="menuitem">Business Settings</button>
+          </div>
+        </details>
       </nav>
 
       <main class="dashboard workspace-section" id="dashboardSection">
@@ -2258,7 +2283,7 @@
     <script src="supply-telegram.js?v=20260714-telegram"></script>
     <script src="production-planner.js?v=20260820-multistage-production"></script>
     <script src="production-inventory.js?v=20260820-shared-inventory"></script>
-    <script src="app.js?v=20260820-shared-inventory"></script>
+    <script src="app.js?v=20260821-grouped-navigation"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>
