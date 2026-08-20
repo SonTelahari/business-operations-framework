@@ -143,9 +143,12 @@ npm start                 Start the GUI and API
 npm run start:bridge      Start the Discord bridge
 npm test                  Run the full regression suite
 npm run test:pwa          Check desktop-install assets and cache boundaries
+npm run test:e2e          Run the hosted sign-in and workspace browser journey
 npm run export:business   Export the current hosted business
 npm run import:business   Validate a business archive (dry run)
 npm run import:legacy     Preview a legacy snapshot import
 ```
+
+The browser journey uses Playwright and an isolated in-memory PostgreSQL database. Install its local browser once with `pnpm exec playwright install chromium`. GitHub Actions installs Chromium automatically and retains desktop, mobile, and failure diagnostics for 14 days.
 
 See `docs/hosting.md` for Railway, backups, bridge variables, and cutover steps.

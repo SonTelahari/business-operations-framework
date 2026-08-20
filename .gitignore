@@ -13,4 +13,5 @@ discord-bridge/captures/
 *.xlsx
 outputs/
 exports/
+test-results/
 *.business-archive.json

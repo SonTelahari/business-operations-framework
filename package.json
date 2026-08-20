@@ -1,6 +1,6 @@
 {
   "name": "business-operations-framework",
-  "version": "0.3.0-beta.52",
+  "version": "0.3.0-beta.53",
   "private": true,
   "type": "commonjs",
   "engines": {
@@ -10,7 +10,8 @@
     "pg": "^8.16.3"
   },
   "devDependencies": {
-    "pg-mem": "^3.0.5"
+    "pg-mem": "^3.0.5",
+    "playwright": "^1.62.1"
   },
   "scripts": {
     "postinstall": "npm --prefix discord-bridge install",
@@ -27,6 +28,7 @@
     "test:discord-identity": "node app/test-discord-identity.js",
     "test:local-identity": "node app/test-local-identity.js",
     "test:hosted-server": "node app/test-hosted-server.js",
+    "test:e2e": "node app/test-browser-e2e.js",
     "test:standalone": "node app/test-standalone-store.js",
     "test:inventory": "node app/test-inventory-counts.js",
     "test:webhook": "node webhook/test-code.js",
