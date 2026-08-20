@@ -480,6 +480,7 @@ const elements = {
   auditList: document.querySelector("#auditList"),
   refreshAudit: document.querySelector("#refreshAuditButton"),
   dataStatus: document.querySelector("#dataStatusText"),
+  appStartupStatus: document.querySelector("#appStartupStatus"),
   catalogCategoryOptions: document.querySelector("#catalogCategoryOptions"),
   storeOverviewSearch: document.querySelector("#storeOverviewSearchInput"),
   storeOverviewMeta: document.querySelector("#storeOverviewMeta"),
@@ -724,9 +725,20 @@ function bootstrapApplication() {
 
 function reportWorkspaceStartupIssue(message, error) {
   console.error(`${message}:`, error);
+  const detail = error?.message ? `: ${error.message}` : "";
+  if (elements.appStartupStatus) {
+    elements.appStartupStatus.textContent = `${message}${detail}`;
+    elements.appStartupStatus.classList.remove("hidden");
+  }
   if (elements.dataStatus) {
     elements.dataStatus.textContent = `${message}. The account remains signed in; retrying shared data.`;
   }
+}
+
+function clearWorkspaceStartupIssue() {
+  if (!elements.appStartupStatus) return;
+  elements.appStartupStatus.textContent = "";
+  elements.appStartupStatus.classList.add("hidden");
 }
 
 function scheduleSessionRetry(error) {
@@ -3336,23 +3348,39 @@ function showSection(section, options = {}) {
 }
 
 function render() {
-  renderSalesWorkspace();
-  renderSupplyWorkspace();
-  renderStorefrontBuyOrderWorkspace();
-  renderSupplierWorkspace();
-  renderProductionWorkspace();
-  renderDailyCloseWorkspace();
-  renderDashboard();
-  renderLatestHandoff();
-  renderStoreOverview();
-  renderFinance();
-  renderTimeClock();
-  renderOperations();
-  renderReviewWorkspace();
-  renderEmployees();
-  renderRole();
-  renderSection();
-  updateDraftIndicators();
+  const stages = [
+    ["Account and navigation", renderRole],
+    ["Sales", renderSalesWorkspace],
+    ["Supplies", renderSupplyWorkspace],
+    ["Buy orders", renderStorefrontBuyOrderWorkspace],
+    ["Suppliers", renderSupplierWorkspace],
+    ["Production", renderProductionWorkspace],
+    ["Daily close", renderDailyCloseWorkspace],
+    ["Dashboard", renderDashboard],
+    ["Handoff", renderLatestHandoff],
+    ["Store", renderStoreOverview],
+    ["Finance", renderFinance],
+    ["Time clock", renderTimeClock],
+    ["Operations", renderOperations],
+    ["Review", renderReviewWorkspace],
+    ["Staff", renderEmployees],
+    ["Active section", renderSection],
+    ["Draft indicators", updateDraftIndicators]
+  ];
+  const failures = [];
+  stages.forEach(([label, renderer]) => {
+    try {
+      renderer();
+    } catch (error) {
+      console.error(`${label} render failed:`, error);
+      failures.push(`${label}: ${error.message || "Unknown error"}`);
+    }
+  });
+  if (failures.length) {
+    reportWorkspaceStartupIssue("Some workspace panels could not be rendered", new Error(failures.join(" / ")));
+  } else {
+    clearWorkspaceStartupIssue();
+  }
 }
 
 function renderOrderMode() {

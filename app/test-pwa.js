@@ -175,6 +175,9 @@ assert(appScript.includes("if (elements.managementNavCount)"), "grouped navigati
 assert(appScript.includes("function scheduleSessionRetry(error)"), "transient session failures must retry without starting a login redirect loop");
 assert(appScript.includes('reportWorkspaceStartupIssue("Authenticated workspace render failed"'), "authenticated rendering failures must remain separate from authentication failures");
 assert(appScript.includes('reportWorkspaceStartupIssue("Workspace data startup failed"'), "workspace data failures must not sign out an authenticated user");
+assert(appHtml.includes('id="appStartupStatus"'), "render failures must be visible without opening developer tools");
+assert(appScript.includes('["Account and navigation", renderRole]'), "account identity and role navigation must render before optional workspace panels");
+assert(appScript.includes("const failures = []"), "workspace panels must render independently so one failure cannot freeze the ledger");
 assert(appHtml.includes('id="discordSettingsForm"'), "business settings must expose editable Discord channels");
 assert(appHtml.includes('id="discordStorageLedgerChannelIdInput"'), "business settings must distinguish storage and ledger events");
 assert(setupHtml.includes('id="discordStorageLedgerChannelIdInput"'), "first launch must collect the storage and ledger event channel");
