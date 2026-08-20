@@ -167,6 +167,8 @@ let salesOrderSavePending = false;
 let customerSavePending = false;
 let dailyCloseActionPending = false;
 let activeOrderDirty = false;
+let supplyOrderDirty = false;
+let supplierDirty = false;
 let customerDirty = false;
 let storefrontBuyOrderDirty = false;
 let dailyCloseDirty = false;
@@ -194,6 +196,7 @@ let pendingProductionQueue = null;
 let businessSettingsSavePending = false;
 let businessSettingsDirty = false;
 let discordSettingsSavePending = false;
+let discordSettingsDirty = false;
 let discordIntegration = null;
 const productInsightCache = new Map();
 
@@ -694,9 +697,88 @@ const elements = {
 document.body.append(elements.catalogItemDialog);
 seedDatalist();
 wireEvents();
+window.addEventListener("beforeunload", event => {
+  if (!hasUnsavedDrafts()) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 setFinancePeriod("month", false);
 render();
 loadSessionAndData();
+
+function markDraftDirty(scope) {
+  if (scope === "sales") activeOrderDirty = true;
+  if (scope === "supply") supplyOrderDirty = true;
+  if (scope === "supplier") supplierDirty = true;
+  if (scope === "customer") customerDirty = true;
+  if (scope === "buy-order") storefrontBuyOrderDirty = true;
+  if (scope === "daily-close") dailyCloseDirty = true;
+  if (scope === "review") reviewEditorDirty = true;
+  if (scope === "business-settings") businessSettingsDirty = true;
+  if (scope === "discord-settings") discordSettingsDirty = true;
+  updateDraftIndicators();
+}
+
+function clearDraftDirty(scope) {
+  if (scope === "sales") activeOrderDirty = false;
+  if (scope === "supply") supplyOrderDirty = false;
+  if (scope === "supplier") supplierDirty = false;
+  if (scope === "customer") customerDirty = false;
+  if (scope === "buy-order") storefrontBuyOrderDirty = false;
+  if (scope === "daily-close") dailyCloseDirty = false;
+  if (scope === "review") reviewEditorDirty = false;
+  if (scope === "business-settings") businessSettingsDirty = false;
+  if (scope === "discord-settings") discordSettingsDirty = false;
+  updateDraftIndicators();
+}
+
+function hasUnsavedDrafts() {
+  return activeOrderDirty
+    || supplyOrderDirty
+    || supplierDirty
+    || customerDirty
+    || storefrontBuyOrderDirty
+    || dailyCloseDirty
+    || reviewEditorDirty
+    || businessSettingsDirty
+    || discordSettingsDirty;
+}
+
+function isDraftDirty(scope) {
+  if (scope === "sales") return activeOrderDirty;
+  if (scope === "supply") return supplyOrderDirty;
+  if (scope === "supplier") return supplierDirty;
+  if (scope === "customer") return customerDirty;
+  if (scope === "buy-order") return storefrontBuyOrderDirty;
+  if (scope === "daily-close") return dailyCloseDirty;
+  if (scope === "review") return reviewEditorDirty;
+  if (scope === "business-settings") return businessSettingsDirty;
+  if (scope === "discord-settings") return discordSettingsDirty;
+  return false;
+}
+
+function confirmDiscardDraft(scope, label) {
+  return !isDraftDirty(scope) || window.confirm(`Discard unsaved changes to ${label}?`);
+}
+
+function updateDraftIndicators() {
+  const dirtySections = {
+    workbench: activeOrderDirty || customerDirty,
+    supplies: supplyOrderDirty || supplierDirty,
+    "buy-orders": storefrontBuyOrderDirty,
+    "daily-close": dailyCloseDirty,
+    review: reviewEditorDirty,
+    "business-settings": businessSettingsDirty || discordSettingsDirty
+  };
+  document.querySelectorAll(".section-tabs [data-section]").forEach(button => {
+    const dirty = Boolean(dirtySections[button.dataset.section]);
+    button.classList.toggle("has-unsaved-draft", dirty);
+    const label = button.textContent.trim();
+    button.setAttribute("aria-label", dirty ? `${label}, unsaved changes` : label);
+    if (dirty) button.title = "Unsaved changes";
+    else if (button.title === "Unsaved changes") button.removeAttribute("title");
+  });
+}
 
 function newOrder() {
   const now = new Date().toISOString();
@@ -1027,7 +1109,7 @@ function applyBusinessConfiguration(snapshot) {
   applyNavigationVisibility();
   if (!canAccessSection(activeSection)) activeSection = "dashboard";
   renderSection();
-  if (isAdmin() && !businessSettingsDirty) populateBusinessSettings();
+  if (isAdmin() && activeSection === "business-settings" && !businessSettingsDirty) populateBusinessSettings();
 }
 
 function newCustomer() {
@@ -1189,7 +1271,7 @@ async function saveBusinessSettings() {
       return;
     }
     if (!response.ok) throw new Error(result.error || `API ${response.status}`);
-    businessSettingsDirty = false;
+    clearDraftDirty("business-settings");
     if (result.workspace) currentWorkspace = result.workspace;
     applyBusinessConfiguration({
       business: result.business,
@@ -1218,6 +1300,7 @@ function populateDiscordSettings(integration = discordIntegration) {
 
 async function loadDiscordSettings({ silent = false } = {}) {
   if (!isAdmin() || !elements.discordSettingsPanel) return;
+  if (silent && discordSettingsDirty) return;
   if (!silent) elements.discordSettingsStatus.textContent = "Loading Discord configuration";
   try {
     const response = await fetch("/api/integrations/discord/configuration", {
@@ -1235,6 +1318,7 @@ async function loadDiscordSettings({ silent = false } = {}) {
     if (!response.ok) throw new Error(result.error || `API ${response.status}`);
     discordIntegration = result.integration || {};
     populateDiscordSettings();
+    clearDraftDirty("discord-settings");
     elements.discordSettingsPanel.classList.remove("hidden");
     elements.discordSettingsStatus.textContent = discordIntegration.eventChannelId
       ? "Discord channels loaded"
@@ -1270,6 +1354,7 @@ async function saveDiscordSettings() {
     if (!response.ok) throw new Error(result.error || `API ${response.status}`);
     discordIntegration = result.integration || {};
     populateDiscordSettings();
+    clearDraftDirty("discord-settings");
     elements.discordSettingsStatus.textContent = "Discord channels saved";
   } catch (error) {
     elements.discordSettingsStatus.textContent = error.message;
@@ -1322,7 +1407,7 @@ function wireEvents() {
     elements.dailyCloseHandoff
   ].forEach(field => ["input", "change"].forEach(eventName => field.addEventListener(eventName, () => {
     updateDailyCloseFromInputs();
-    dailyCloseDirty = true;
+    markDraftDirty("daily-close");
     renderDailyCloseDifference();
   })));
   document.querySelector("#addItemButton").addEventListener("click", addItemLine);
@@ -1488,7 +1573,7 @@ function wireEvents() {
     saveBusinessSettings();
   });
   elements.resetBusinessSettings.addEventListener("click", () => {
-    businessSettingsDirty = false;
+    clearDraftDirty("business-settings");
     populateBusinessSettings();
     elements.businessSettingsStatus.textContent = "Saved profile restored";
   });
@@ -1506,20 +1591,34 @@ function wireEvents() {
     elements.settingsStorageLocation,
     elements.settingsSalesOrder
   ].forEach(field => field.addEventListener("input", () => {
-    businessSettingsDirty = true;
+    markDraftDirty("business-settings");
     elements.businessSettingsStatus.textContent = "Unsaved changes";
     renderBusinessSettingsPreview();
   }));
   elements.settingsNavigationTabs.addEventListener("change", event => {
     if (!event.target.matches("[data-navigation-section]")) return;
-    businessSettingsDirty = true;
+    markDraftDirty("business-settings");
     elements.businessSettingsStatus.textContent = "Unsaved changes";
   });
   elements.discordSettingsForm.addEventListener("submit", event => {
     event.preventDefault();
     saveDiscordSettings();
   });
-  elements.reloadDiscordSettings.addEventListener("click", () => loadDiscordSettings());
+  [
+    elements.discordGuildId,
+    elements.discordEventChannelId,
+    elements.discordStorageLedgerChannelId,
+    elements.discordInventoryChannelId,
+    elements.discordAlertChannelId
+  ].forEach(field => field.addEventListener("input", () => {
+    markDraftDirty("discord-settings");
+    elements.discordSettingsStatus.textContent = "Unsaved changes";
+  }));
+  elements.reloadDiscordSettings.addEventListener("click", () => {
+    if (!confirmDiscardDraft("discord-settings", "the Discord channel settings")) return;
+    clearDraftDirty("discord-settings");
+    loadDiscordSettings();
+  });
   elements.settingsLogoPreview.addEventListener("error", () => {
     elements.settingsLogoPreview.classList.add("hidden");
     elements.settingsMonogramPreview.classList.remove("hidden");
@@ -1571,7 +1670,7 @@ function wireEvents() {
         custom: true
       });
       touchActive();
-      render();
+      renderSalesWorkspace();
     });
   });
 
@@ -1585,8 +1684,7 @@ function wireEvents() {
   document.querySelectorAll("[data-section]").forEach(button => {
     button.addEventListener("click", () => {
       if (!canAccessSection(button.dataset.section)) return;
-      activeSection = button.dataset.section;
-      renderSection();
+      showSection(button.dataset.section, { preserveReviewEditor: true });
       if (activeSection === "employees" && isManagement()) loadStaffData();
       if (activeSection === "supplies" && isManagement()) {
         loadSupplyOrders({ silent: true });
@@ -1640,22 +1738,25 @@ function wireEvents() {
 }
 
 function startNewSalesOrder() {
+  if (!confirmDiscardDraft("sales", "the current sales order")) return;
   activeOrder = newOrder();
-  activeOrderDirty = false;
-  activeSection = "workbench";
-  render();
+  clearDraftDirty("sales");
+  showSection("workbench");
 }
 
 function startNewSupplyOrder() {
+  if (!confirmDiscardDraft("supply", "the current supply order")) return;
   activeSupplyOrder = newSupplyOrder();
+  clearDraftDirty("supply");
   renderSupplyWorkspace();
   elements.supplyProducer.focus();
 }
 
 function startTodayDailyClose() {
+  if (!confirmDiscardDraft("daily-close", "the current daily close")) return;
   const todayClose = dailyCloses.find(close => close.businessDate === todayKey());
   activeDailyClose = structuredClone(todayClose || newDailyClose());
-  dailyCloseDirty = false;
+  clearDraftDirty("daily-close");
   renderDailyCloseWorkspace();
 }
 
@@ -1714,14 +1815,14 @@ function updateOrderCustomer() {
   activeOrder.pricingTier = customer?.pricingTier === "Reseller" ? "Reseller" : "Storefront";
   repriceActiveOrderLines();
   touchActive();
-  render();
+  renderSalesWorkspace();
 }
 
 function updateOrderPricingTier() {
   activeOrder.pricingTier = elements.resellerPricing.checked ? "Reseller" : "Storefront";
   repriceActiveOrderLines();
   touchActive();
-  render();
+  renderSalesWorkspace();
 }
 
 function updateOrderTypeFromInput() {
@@ -1757,12 +1858,12 @@ function updateOrderTypeFromInput() {
     activeOrder.status = "Draft";
   }
   touchActive();
-  render();
+  renderSalesWorkspace();
 }
 
 function touchActive() {
   activeOrder.updatedAt = new Date().toISOString();
-  activeOrderDirty = true;
+  markDraftDirty("sales");
 }
 
 function addItemLine() {
@@ -1794,7 +1895,7 @@ function addItemLine() {
   elements.quantity.value = "1";
   elements.price.value = "";
   touchActive();
-  render();
+  renderSalesWorkspace();
 }
 
 function findCatalogItem(value) {
@@ -1826,9 +1927,9 @@ async function saveActiveOrder({ syncInputs = true } = {}) {
     }
     orders = Array.isArray(result.orders) ? result.orders : [];
     activeOrder = structuredClone(result.order);
-    activeOrderDirty = false;
+    clearDraftDirty("sales");
     legacyOrdersPendingMigration = legacyOrdersPendingMigration.filter(order => order.id !== activeOrder.id);
-    render();
+    renderSalesWorkspace();
     if (result.fulfillmentSynced) await loadBackendSnapshot({ silent: true });
     elements.orderMeta.textContent = `${activeOrder.status} / Shared revision ${activeOrder.revision} / Saved by ${activeOrder.updatedBy}`;
     return true;
@@ -1839,8 +1940,8 @@ async function saveActiveOrder({ syncInputs = true } = {}) {
       const latest = orders.find(order => order.id === activeOrder.id);
       if (latest && window.confirm("Another employee changed this order. Reload their latest version? Your unsaved changes will be replaced.")) {
         activeOrder = structuredClone(latest);
-        activeOrderDirty = false;
-        render();
+        clearDraftDirty("sales");
+        renderSalesWorkspace();
       }
     }
     return false;
@@ -1857,7 +1958,7 @@ async function setStatus(status, { priority = activeOrder.priority } = {}) {
   activeOrder.status = status;
   activeOrder.priority = priority;
   elements.priority.value = priority;
-  activeOrderDirty = true;
+  markDraftDirty("sales");
   const saved = await saveActiveOrder({ syncInputs: false });
   if (!saved) {
     activeOrder.status = previousStatus;
@@ -1897,8 +1998,7 @@ async function completeActiveOrder() {
   if (isInternalCraftOrder(activeOrder)) {
     if (batch) {
       activeProductionBatchId = batch.id;
-      activeSection = "production";
-      render();
+      showSection("production");
       elements.productionActionStatus.textContent = batch.status === "Completed"
         ? "This internal stock build is complete"
         : "Finish this production batch to complete the internal craft";
@@ -1909,8 +2009,7 @@ async function completeActiveOrder() {
   }
   if (batch && PRODUCTION_ACTIVE_STATUSES.has(batch.status)) {
     activeProductionBatchId = batch.id;
-    activeSection = "production";
-    render();
+    showSection("production");
     elements.productionActionStatus.textContent = "Finish this production batch before completing the customer order";
     return;
   }
@@ -1921,8 +2020,8 @@ async function removeActiveOrder() {
   const saved = orders.some(order => order.id === activeOrder.id);
   if (!saved) {
     activeOrder = newOrder();
-    activeOrderDirty = false;
-    render();
+    clearDraftDirty("sales");
+    renderSalesWorkspace();
     return;
   }
   const recordLabel = isInternalCraftOrder(activeOrder)
@@ -1938,8 +2037,8 @@ async function removeActiveOrder() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     orders = Array.isArray(result.orders) ? result.orders : [];
     activeOrder = newOrder();
-    activeOrderDirty = false;
-    render();
+    clearDraftDirty("sales");
+    renderSalesWorkspace();
   } catch (error) {
     elements.orderMeta.textContent = `Remove failed: ${error.message}`;
   }
@@ -1983,15 +2082,17 @@ async function migrateLegacySalesOrders() {
 function loadOrder(orderId) {
   const order = orders.find(savedOrder => savedOrder.id === orderId);
   if (!order) return;
+  if (order.id === activeOrder.id) return;
+  if (!confirmDiscardDraft("sales", "the current sales order")) return;
   activeOrder = structuredClone(order);
-  activeOrderDirty = false;
-  render();
+  clearDraftDirty("sales");
+  renderSalesWorkspace();
 }
 
 function removeLine(lineId) {
   activeOrder.lines = activeOrder.lines.filter(line => line.id !== lineId);
   touchActive();
-  render();
+  renderSalesWorkspace();
 }
 
 function updateLineQuantity(lineId, input, final = false) {
@@ -2036,6 +2137,7 @@ function updateSupplyFromInputs() {
 
 function touchSupplyOrder() {
   activeSupplyOrder.updatedAt = new Date().toISOString();
+  markDraftDirty("supply");
 }
 
 function findRecipeIngredient(value) {
@@ -2129,7 +2231,10 @@ function removeSupplyLine(lineId) {
 function loadSupplyOrder(orderId) {
   const order = supplyOrders.find(candidate => candidate.id === orderId);
   if (!order) return;
+  if (order.id === activeSupplyOrder.id) return;
+  if (!confirmDiscardDraft("supply", "the current supply order")) return;
   activeSupplyOrder = structuredClone(order);
+  clearDraftDirty("supply");
   renderSupplyWorkspace();
 }
 
@@ -2144,18 +2249,21 @@ async function loadSupplyOrders({ silent = false } = {}) {
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     supplyOrders = Array.isArray(result.orders) ? result.orders : [];
+    const refreshed = supplyOrders.find(order => order.id === activeSupplyOrder.id);
+    if (refreshed && !supplyOrderDirty) activeSupplyOrder = structuredClone(refreshed);
     elements.supplyDataStatus.textContent = `${supplyOrders.length} shared producer orders loaded`;
     seedProducerOptions();
-    renderSupplyOrdersList();
-    renderDashboard();
+    if (activeSection === "supplies") renderSupplyWorkspace();
+    if (activeSection === "dashboard") renderDashboard();
   } catch (error) {
     if (!silent) elements.supplyDataStatus.textContent = `Unable to load producer orders: ${error.message}`;
   }
 }
 
 function startNewStorefrontBuyOrder() {
+  if (!confirmDiscardDraft("buy-order", "the current storefront buy order")) return;
   activeStorefrontBuyOrder = newStorefrontBuyOrder();
-  storefrontBuyOrderDirty = false;
+  clearDraftDirty("buy-order");
   renderStorefrontBuyOrderWorkspace();
   elements.buyOrderItem.focus();
 }
@@ -2170,7 +2278,7 @@ function updateStorefrontBuyOrderFromInputs() {
     || activeStorefrontBuyOrder.postedAt;
   activeStorefrontBuyOrder.status = elements.buyOrderStatus.value;
   activeStorefrontBuyOrder.notes = elements.buyOrderNotes.value.trim();
-  storefrontBuyOrderDirty = true;
+  markDraftDirty("buy-order");
 }
 
 function updateStorefrontBuyOrderItemDefaults() {
@@ -2224,7 +2332,7 @@ async function saveStorefrontBuyOrder() {
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     activeStorefrontBuyOrder = structuredClone(result.order);
-    storefrontBuyOrderDirty = false;
+    clearDraftDirty("buy-order");
     storefrontBuyOrders = result.orders || [];
     elements.buyOrderDataStatus.textContent = `${activeStorefrontBuyOrder.itemLabel} saved as ${activeStorefrontBuyOrder.status}`;
     renderStorefrontBuyOrderWorkspace();
@@ -2249,7 +2357,7 @@ async function adjustStorefrontBuyOrderFill() {
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     activeStorefrontBuyOrder = structuredClone(result.order);
-    storefrontBuyOrderDirty = false;
+    clearDraftDirty("buy-order");
     storefrontBuyOrders = result.orders || [];
     elements.buyOrderDataStatus.textContent = `Fill adjusted to ${formatNumber(activeStorefrontBuyOrder.filledQuantity)}`;
     renderStorefrontBuyOrderWorkspace();
@@ -2273,7 +2381,7 @@ async function removeActiveStorefrontBuyOrder() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     storefrontBuyOrders = result.orders || [];
     activeStorefrontBuyOrder = newStorefrontBuyOrder();
-    storefrontBuyOrderDirty = false;
+    clearDraftDirty("buy-order");
     elements.buyOrderDataStatus.textContent = "Buy order removed";
     renderStorefrontBuyOrderWorkspace();
   } catch (error) {
@@ -2284,8 +2392,10 @@ async function removeActiveStorefrontBuyOrder() {
 function loadStorefrontBuyOrder(orderId) {
   const order = storefrontBuyOrders.find(candidate => candidate.id === orderId);
   if (!order) return;
+  if (order.id === activeStorefrontBuyOrder.id) return;
+  if (!confirmDiscardDraft("buy-order", "the current storefront buy order")) return;
   activeStorefrontBuyOrder = structuredClone(order);
-  storefrontBuyOrderDirty = false;
+  clearDraftDirty("buy-order");
   renderStorefrontBuyOrderWorkspace();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -2374,17 +2484,19 @@ async function loadSuppliers({ silent = false } = {}) {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     suppliers = Array.isArray(result.suppliers) ? result.suppliers : [];
     const refreshed = suppliers.find(supplier => supplier.id === activeSupplier.id);
-    if (refreshed) activeSupplier = structuredClone(refreshed);
+    if (refreshed && !supplierDirty) activeSupplier = structuredClone(refreshed);
     elements.supplierDataStatus.textContent = `${suppliers.length} shared ${suppliers.length === 1 ? "supplier" : "suppliers"} loaded`;
     seedProducerOptions();
-    renderSupplierWorkspace();
+    if (activeSection === "supplies") renderSupplierWorkspace();
   } catch (error) {
     if (!silent) elements.supplierDataStatus.textContent = `Unable to load suppliers: ${error.message}`;
   }
 }
 
 function startNewSupplier() {
+  if (!confirmDiscardDraft("supplier", "the current supplier")) return;
   activeSupplier = newSupplier();
+  clearDraftDirty("supplier");
   renderSupplierWorkspace();
   elements.supplierName.focus();
 }
@@ -2392,7 +2504,10 @@ function startNewSupplier() {
 function loadSupplier(supplierId) {
   const supplier = suppliers.find(candidate => candidate.id === supplierId);
   if (!supplier) return;
+  if (supplier.id === activeSupplier.id) return;
+  if (!confirmDiscardDraft("supplier", "the current supplier")) return;
   activeSupplier = structuredClone(supplier);
+  clearDraftDirty("supplier");
   renderSupplierWorkspace();
   elements.supplierPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -2405,6 +2520,7 @@ function updateSupplierFromInputs() {
   activeSupplier.ownerName = elements.supplierOwnerName.value.trim();
   activeSupplier.ownerTelegram = elements.supplierOwnerTelegram.value.trim();
   activeSupplier.updatedAt = new Date().toISOString();
+  markDraftDirty("supplier");
 }
 
 async function saveSupplier() {
@@ -2426,6 +2542,7 @@ async function saveSupplier() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     activeSupplier = structuredClone(result.supplier);
     suppliers = Array.isArray(result.suppliers) ? result.suppliers : [];
+    clearDraftDirty("supplier");
     elements.supplierDataStatus.textContent = `${activeSupplier.name} saved`;
     seedProducerOptions();
     renderSupplierWorkspace();
@@ -2453,6 +2570,7 @@ async function removeActiveSupplier() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     suppliers = Array.isArray(result.suppliers) ? result.suppliers : [];
     activeSupplier = newSupplier();
+    clearDraftDirty("supplier");
     elements.supplierDataStatus.textContent = "Supplier removed; historical orders were kept";
     seedProducerOptions();
     renderSupplierWorkspace();
@@ -2490,6 +2608,7 @@ function addSupplierProduct() {
     });
   }
   activeSupplier.updatedAt = new Date().toISOString();
+  markDraftDirty("supplier");
   elements.supplierProduct.value = "";
   elements.supplierProductPrice.value = "0";
   renderSupplierProducts();
@@ -2509,6 +2628,7 @@ function addSupplierEmployee() {
   }
   activeSupplier.employees.push({ id: crypto.randomUUID(), name, telegram });
   activeSupplier.updatedAt = new Date().toISOString();
+  markDraftDirty("supplier");
   elements.supplierEmployeeName.value = "";
   elements.supplierEmployeeTelegram.value = "";
   renderSupplierEmployees();
@@ -2552,13 +2672,18 @@ function renderSupplierProducts() {
   elements.supplierProductList.querySelectorAll("[data-supplier-product-price]").forEach(input => {
     input.addEventListener("input", () => {
       const product = activeSupplier.products.find(candidate => candidate.id === input.dataset.supplierProductPrice);
-      if (product) product.unitPrice = Math.max(0, Number(input.value || 0));
+      if (product) {
+        product.unitPrice = Math.max(0, Number(input.value || 0));
+        activeSupplier.updatedAt = new Date().toISOString();
+        markDraftDirty("supplier");
+      }
     });
   });
   elements.supplierProductList.querySelectorAll("[data-remove-supplier-product]").forEach(button => {
     button.addEventListener("click", () => {
       activeSupplier.products = activeSupplier.products.filter(product => product.id !== button.dataset.removeSupplierProduct);
       activeSupplier.updatedAt = new Date().toISOString();
+      markDraftDirty("supplier");
       renderSupplierProducts();
     });
   });
@@ -2582,19 +2707,28 @@ function renderSupplierEmployees() {
   elements.supplierEmployeeList.querySelectorAll("[data-supplier-employee-name]").forEach(input => {
     input.addEventListener("input", () => {
       const contact = activeSupplier.employees.find(candidate => candidate.id === input.dataset.supplierEmployeeName);
-      if (contact) contact.name = input.value;
+      if (contact) {
+        contact.name = input.value;
+        activeSupplier.updatedAt = new Date().toISOString();
+        markDraftDirty("supplier");
+      }
     });
   });
   elements.supplierEmployeeList.querySelectorAll("[data-supplier-employee-telegram]").forEach(input => {
     input.addEventListener("input", () => {
       const contact = activeSupplier.employees.find(candidate => candidate.id === input.dataset.supplierEmployeeTelegram);
-      if (contact) contact.telegram = input.value;
+      if (contact) {
+        contact.telegram = input.value;
+        activeSupplier.updatedAt = new Date().toISOString();
+        markDraftDirty("supplier");
+      }
     });
   });
   elements.supplierEmployeeList.querySelectorAll("[data-remove-supplier-employee]").forEach(button => {
     button.addEventListener("click", () => {
       activeSupplier.employees = activeSupplier.employees.filter(contact => contact.id !== button.dataset.removeSupplierEmployee);
       activeSupplier.updatedAt = new Date().toISOString();
+      markDraftDirty("supplier");
       renderSupplierEmployees();
     });
   });
@@ -2640,8 +2774,9 @@ function renderSupplierDirectory() {
 }
 
 function startNewCustomer() {
+  if (!confirmDiscardDraft("customer", "the current customer")) return;
   activeCustomer = newCustomer();
-  customerDirty = false;
+  clearDraftDirty("customer");
   renderCustomerWorkspace();
   elements.customerName.focus();
 }
@@ -2654,8 +2789,10 @@ function openNewCustomerRegister() {
 function loadCustomer(customerId) {
   const customer = customers.find(candidate => candidate.id === customerId);
   if (!customer) return;
+  if (customer.id === activeCustomer.id) return;
+  if (!confirmDiscardDraft("customer", "the current customer")) return;
   activeCustomer = structuredClone(customer);
-  customerDirty = false;
+  clearDraftDirty("customer");
   renderCustomerWorkspace();
   elements.customerPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -2668,7 +2805,7 @@ function updateCustomerFromInputs() {
   activeCustomer.telegram = elements.customerTelegram.value.trim();
   activeCustomer.notes = elements.customerNotes.value;
   activeCustomer.updatedAt = new Date().toISOString();
-  customerDirty = true;
+  markDraftDirty("customer");
 }
 
 async function saveCustomer() {
@@ -2692,7 +2829,7 @@ async function saveCustomer() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     activeCustomer = structuredClone(result.customer);
     customers = Array.isArray(result.customers) ? result.customers : customers;
-    customerDirty = false;
+    clearDraftDirty("customer");
     if (!isInternalCraftOrder(activeOrder) && !isCounterSaleOrder(activeOrder) && !activeOrder.customerId) {
       activeOrder.customerId = activeCustomer.id;
       activeOrder.customer = activeCustomer.name;
@@ -2701,7 +2838,7 @@ async function saveCustomer() {
       touchActive();
     }
     elements.customerDataStatus.textContent = `${activeCustomer.name} saved`;
-    render();
+    renderSalesWorkspace();
   } catch (error) {
     elements.customerDataStatus.textContent = `Customer save failed: ${error.message}`;
   } finally {
@@ -2727,9 +2864,9 @@ async function removeActiveCustomer() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     customers = Array.isArray(result.customers) ? result.customers : [];
     activeCustomer = newCustomer();
-    customerDirty = false;
+    clearDraftDirty("customer");
     elements.customerDataStatus.textContent = "Customer removed; historical orders were kept";
-    render();
+    renderSalesWorkspace();
   } catch (error) {
     elements.customerDataStatus.textContent = `Customer removal failed: ${error.message}`;
   } finally {
@@ -2905,6 +3042,7 @@ async function saveSupplyOrder() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     activeSupplyOrder = structuredClone(result.order);
     supplyOrders = result.orders || [];
+    clearDraftDirty("supply");
     if (wasDraft) elements.supplyFilter.value = "Active";
     elements.supplyDataStatus.textContent = `Saved as ${activeSupplyOrder.status} for ${activeSupplyOrder.producer}`;
     seedProducerOptions();
@@ -2921,6 +3059,7 @@ async function removeActiveSupplyOrder() {
   const saved = supplyOrders.some(order => order.id === activeSupplyOrder.id);
   if (!saved) {
     activeSupplyOrder = newSupplyOrder();
+    clearDraftDirty("supply");
     renderSupplyWorkspace();
     return;
   }
@@ -2934,6 +3073,7 @@ async function removeActiveSupplyOrder() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     supplyOrders = result.orders || [];
     activeSupplyOrder = newSupplyOrder();
+    clearDraftDirty("supply");
     elements.supplyDataStatus.textContent = "Supply order removed";
     seedProducerOptions();
     renderSupplyWorkspace();
@@ -2976,6 +3116,7 @@ async function receiveSupplyOrder() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     activeSupplyOrder = structuredClone(result.order);
     supplyOrders = result.orders || [];
+    clearDraftDirty("supply");
     renderSupplyWorkspace();
     renderDashboard();
     await loadBackendSnapshot({ silent: true });
@@ -2984,7 +3125,10 @@ async function receiveSupplyOrder() {
   } catch (error) {
     await loadSupplyOrders({ silent: true });
     const latest = supplyOrders.find(order => order.id === orderId);
-    if (latest) activeSupplyOrder = structuredClone(latest);
+    if (latest) {
+      activeSupplyOrder = structuredClone(latest);
+      clearDraftDirty("supply");
+    }
     await loadBackendSnapshot({ silent: true });
     renderSupplyWorkspace();
     elements.supplyDataStatus.textContent = `Receipt failed: ${error.message}`;
@@ -3023,7 +3167,7 @@ function preferredSupplyUnitPrice(name) {
   return product ? Number(product.unitPrice || 0) : materialUnitPrice(name);
 }
 
-function render() {
+function renderSalesWorkspace() {
   renderOrderMode();
   elements.orderType.value = activeOrder.orderType || "Customer Sale";
   elements.resellerPricing.checked = activeOrder.pricingTier === "Reseller";
@@ -3040,13 +3184,85 @@ function render() {
   renderOrdersList();
   renderMeta();
   renderProduction();
+  renderCustomerWorkspace();
+  renderView();
+  updateDraftIndicators();
+}
+
+function renderProductionWorkspace() {
+  renderProductionQueue();
+  updateDraftIndicators();
+}
+
+function renderSectionWorkspace(section = activeSection, options = {}) {
+  switch (section) {
+    case "dashboard":
+      renderDashboard();
+      renderLatestHandoff();
+      renderTimeClock();
+      break;
+    case "workbench":
+      renderSalesWorkspace();
+      break;
+    case "production":
+      renderProductionWorkspace();
+      break;
+    case "store":
+      renderStoreOverview();
+      break;
+    case "catalog":
+      renderCatalogLedger();
+      break;
+    case "finance":
+      renderFinance();
+      break;
+    case "restock":
+      renderTargets();
+      renderReplenishment();
+      break;
+    case "supplies":
+      renderSupplyWorkspace();
+      renderSupplierWorkspace();
+      break;
+    case "buy-orders":
+      renderStorefrontBuyOrderWorkspace();
+      break;
+    case "operations":
+      renderOperations();
+      break;
+    case "daily-close":
+      renderDailyCloseWorkspace();
+      break;
+    case "review":
+      renderReviewWorkspace({ preserveEditor: Boolean(options.preserveReviewEditor) });
+      break;
+    case "employees":
+      renderEmployees();
+      break;
+    case "business-settings":
+      if (!businessSettingsDirty) populateBusinessSettings();
+      break;
+    default:
+      break;
+  }
+  updateDraftIndicators();
+}
+
+function showSection(section, options = {}) {
+  if (!canAccessSection(section)) return false;
+  activeSection = section;
+  renderSectionWorkspace(section, options);
+  renderSection();
+  return true;
+}
+
+function render() {
+  renderSalesWorkspace();
   renderSupplyWorkspace();
   renderStorefrontBuyOrderWorkspace();
   renderSupplierWorkspace();
-  renderCustomerWorkspace();
-  renderProductionQueue();
+  renderProductionWorkspace();
   renderDailyCloseWorkspace();
-  renderView();
   renderDashboard();
   renderLatestHandoff();
   renderStoreOverview();
@@ -3057,6 +3273,7 @@ function render() {
   renderEmployees();
   renderRole();
   renderSection();
+  updateDraftIndicators();
 }
 
 function renderOrderMode() {
@@ -3391,15 +3608,13 @@ function renderDashboard() {
    ...elements.inStoreList.querySelectorAll("[data-dashboard-order]")]
     .forEach(button => button.addEventListener("click", () => {
       loadOrder(button.dataset.dashboardOrder);
-      activeSection = "workbench";
-      renderSection();
+      showSection("workbench");
     }));
 
   elements.expectedDeliveryTodayList.querySelectorAll("[data-dashboard-supply-order]")
     .forEach(button => button.addEventListener("click", () => {
       loadSupplyOrder(button.dataset.dashboardSupplyOrder);
-      activeSection = "supplies";
-      renderSection();
+      showSection("supplies");
       window.scrollTo({ top: 0, behavior: "smooth" });
     }));
 }
@@ -3421,22 +3636,19 @@ function handleDashboardShortcut(event) {
 
   if (section === "workbench") {
     if (filter) elements.filter.value = filter;
-    renderOrdersList();
   } else if (section === "supplies") {
     if (filter) elements.supplyFilter.value = filter;
-    renderSupplyOrdersList();
+  } else if (section === "review") {
+    if (filter) elements.reviewStatusFilter.value = filter;
+  }
+
+  showSection(section, { preserveReviewEditor: true });
+  if (section === "supplies") {
     loadSupplyOrders({ silent: true });
     loadSuppliers({ silent: true });
   } else if (section === "review") {
-    if (filter) elements.reviewStatusFilter.value = filter;
-    renderReviewWorkspace({ preserveEditor: true });
     loadBackendSnapshot({ silent: true, preserveReviewEditor: true });
-  } else if (section === "restock") {
-    renderReplenishment();
   }
-
-  activeSection = section;
-  renderSection();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -4265,7 +4477,7 @@ async function saveDailyClose({ silent = false } = {}) {
       throw error;
     }
     applyDailyCloseResult(result);
-    dailyCloseDirty = false;
+    clearDraftDirty("daily-close");
     elements.dailyCloseDataStatus.textContent = `Draft saved ${formatDateTime(activeDailyClose.updatedAt)} by ${activeDailyClose.updatedBy}`;
     return true;
   } catch (error) {
@@ -4295,7 +4507,7 @@ async function finalizeActiveDailyClose() {
     const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     applyDailyCloseResult(result);
-    dailyCloseDirty = false;
+    clearDraftDirty("daily-close");
     elements.dailyCloseDataStatus.textContent = `Finalized ${formatDateTime(activeDailyClose.finalizedAt)} by ${activeDailyClose.finalizedBy}`;
   } catch (error) {
     elements.dailyCloseDataStatus.textContent = `Finalize failed: ${error.message}`;
@@ -4318,7 +4530,7 @@ async function reopenActiveDailyClose() {
     const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     applyDailyCloseResult(result);
-    dailyCloseDirty = false;
+    clearDraftDirty("daily-close");
     elements.dailyCloseDataStatus.textContent = `Reopened ${formatDateTime(activeDailyClose.updatedAt)} by ${activeDailyClose.updatedBy}`;
   } catch (error) {
     elements.dailyCloseDataStatus.textContent = `Reopen failed: ${error.message}`;
@@ -4353,8 +4565,10 @@ async function refreshDailyCloses({ preserveActive = false } = {}) {
 function loadDailyClose(closeId) {
   const close = dailyCloses.find(candidate => candidate.id === closeId);
   if (!close) return;
+  if (close.id === activeDailyClose.id) return;
+  if (!confirmDiscardDraft("daily-close", "the current daily close")) return;
   activeDailyClose = structuredClone(close);
-  dailyCloseDirty = false;
+  clearDraftDirty("daily-close");
   renderDailyCloseWorkspace();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -4785,8 +4999,10 @@ function renderReviewWorkspace({ preserveEditor = false } = {}) {
     : `<div class="empty-card">No webhook events in this view</div>`;
   elements.reviewEventList.querySelectorAll("[data-review-id]").forEach(button => {
     button.addEventListener("click", () => {
+      if (button.dataset.reviewId === activeReviewExceptionId) return;
+      if (!confirmDiscardDraft("review", "the current webhook review")) return;
       activeReviewExceptionId = button.dataset.reviewId;
-      reviewEditorDirty = false;
+      clearDraftDirty("review");
       renderReviewWorkspace();
     });
   });
@@ -4801,7 +5017,7 @@ function renderReviewWorkspace({ preserveEditor = false } = {}) {
 
 function markReviewEditorDirty() {
   if (activeReviewExceptionId && renderedReviewExceptionId === activeReviewExceptionId) {
-    reviewEditorDirty = true;
+    markDraftDirty("review");
   }
 }
 
@@ -4855,7 +5071,7 @@ function renderWebhookLog() {
 
 function renderReviewEditor(entry) {
   renderedReviewExceptionId = entry?.webhookId || "";
-  reviewEditorDirty = false;
+  clearDraftDirty("review");
   elements.reviewActionStatus.textContent = "";
   if (!entry) {
     elements.reviewEditorTitle.textContent = "No event selected";
@@ -5248,7 +5464,7 @@ async function resolveReviewException() {
     setReviewEditorDisabled(false);
     return;
   }
-  reviewEditorDirty = false;
+  clearDraftDirty("review");
   activeReviewExceptionId = "";
   await loadBackendSnapshot({ silent: true });
 }
@@ -5294,7 +5510,7 @@ async function resolveCashReviewException(entry) {
     return;
   }
   const complete = result.status === "Resolved" || Number(result.cashRemaining || 0) <= 0.005;
-  reviewEditorDirty = false;
+  clearDraftDirty("review");
   if (complete) activeReviewExceptionId = "";
   await loadBackendSnapshot({ silent: true });
   if (!complete) {
@@ -5327,7 +5543,7 @@ async function ignoreReviewException() {
     setReviewEditorDisabled(false);
     return;
   }
-  reviewEditorDirty = false;
+  clearDraftDirty("review");
   activeReviewExceptionId = "";
   await loadBackendSnapshot({ silent: true });
 }
@@ -5632,8 +5848,7 @@ async function queueActiveOrderProduction() {
   const linkedBatch = productionBatchForOrder(activeOrder.id);
   if (linkedBatch) {
     activeProductionBatchId = linkedBatch.id;
-    activeSection = "production";
-    render();
+    showSection("production");
     return;
   }
   updateActiveFromInputs();
@@ -5917,9 +6132,8 @@ async function createProductionBatch(payload, successMessage) {
     applySalesOrdersFromResult(result);
     activeProductionBatchId = result.batch.id;
     if (result.batch.status === "Completed" && !result.batch.lines.length) elements.productionFilter.value = "All";
-    activeSection = "production";
     elements.productionActionStatus.textContent = successMessage;
-    render();
+    showSection("production");
     return true;
   } catch (error) {
     const message = error.name === "TimeoutError" || error.name === "AbortError"
@@ -7181,7 +7395,6 @@ async function performBackendRefresh({ silent = false, preserveReviewEditor = fa
         || productionBatches[0]?.id
         || "";
     }
-    renderProductionQueue();
     if (!dataReady && previousSnapshot?.sheet?.ok) {
       elements.dataStatus.textContent = `Data refresh delayed / last synced ${formatDateTime(lastBackendRefreshAt)}`;
       return;
@@ -7189,7 +7402,6 @@ async function performBackendRefresh({ silent = false, preserveReviewEditor = fa
     backendSnapshot = nextSnapshot;
     applyBusinessConfiguration(nextSnapshot);
     hydrateSharedCatalog(nextSnapshot);
-    if (isManagement()) renderCatalogLedger();
     if (isManagement()) {
       reviewExceptions = Array.isArray(nextSnapshot.sheet?.reviewExceptions)
         ? nextSnapshot.sheet.reviewExceptions
@@ -7215,16 +7427,12 @@ async function performBackendRefresh({ silent = false, preserveReviewEditor = fa
     elements.dataStatus.textContent = `Data synced ${formatDateTime(lastBackendRefreshAt)} / ${backendSnapshot.items.length} items${backendText}`;
     if (dataReady) {
       hydrateSheetInventory();
-      renderDashboard();
-      renderStoreOverview();
-      renderOperations();
-      renderSupplyWorkspace();
-      renderStorefrontBuyOrderWorkspace();
-      renderReviewWorkspace({ preserveEditor: preserveReviewEditor });
+      renderReviewIndicators();
+      renderSectionWorkspace(activeSection, { preserveReviewEditor });
       if (activeSection === "finance" && isAdmin()) loadFinance({ silent: true });
       if (!silent) retryPendingSyncs();
     } else {
-      renderStoreOverview();
+      renderSectionWorkspace(activeSection, { preserveReviewEditor });
     }
   } catch {
     if (previousSnapshot) {
@@ -7255,8 +7463,6 @@ function hydrateSharedSalesOrders(snapshot) {
     if (refreshed) activeOrder = structuredClone(refreshed);
     else if (activeOrder.revision > 0) activeOrder = newOrder();
   }
-  renderOrdersList();
-  renderDashboard();
 }
 
 function hydrateCustomers(snapshot) {
@@ -7269,8 +7475,6 @@ function hydrateCustomers(snapshot) {
     else if (activeWasSaved) activeCustomer = newCustomer();
   }
   elements.customerDataStatus.textContent = `${customers.length} shared ${customers.length === 1 ? "customer" : "customers"} loaded`;
-  renderCustomerSelect();
-  renderCustomerWorkspace();
 }
 
 function hydrateDailyCloses(snapshot) {
@@ -7281,8 +7485,6 @@ function hydrateDailyCloses(snapshot) {
       || dailyCloses.find(close => close.businessDate === todayKey());
     if (refreshed) activeDailyClose = structuredClone(refreshed);
   }
-  renderDailyCloseWorkspace();
-  renderLatestHandoff();
 }
 
 function hydrateSheetInventory() {

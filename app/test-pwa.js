@@ -121,6 +121,13 @@ assert(styles.includes(".customer-history-list"), "customer sales history must u
 assert(appScript.includes("if (!keepDraft) renderReviewEditor(activeEntry)"), "review refreshes must not overwrite a dirty active editor");
 assert(appScript.includes("let storefrontBuyOrderDirty = false"), "storefront buy orders must track unsaved editor changes");
 assert(appScript.includes("refreshed && !storefrontBuyOrderDirty"), "buy-order refreshes must preserve unsaved input");
+assert(appScript.includes("function renderSectionWorkspace("), "workspace navigation must use section-scoped rendering");
+assert(appScript.includes("renderSectionWorkspace(activeSection, { preserveReviewEditor })"), "background refreshes must redraw only the active workspace");
+assert.equal((appScript.match(/^\s*render\(\);\s*$/gm) || []).length, 2, "full-application rendering must be limited to initial startup and authenticated session setup");
+assert(appScript.includes("let supplyOrderDirty = false"), "supply orders must preserve unsaved editor changes");
+assert(appScript.includes("let supplierDirty = false"), "supplier records must preserve unsaved editor changes");
+assert(appScript.includes('window.addEventListener("beforeunload"'), "leaving the app must warn about unsaved drafts");
+assert(styles.includes(".section-button.has-unsaved-draft::after"), "tabs with unsaved drafts must show a stable visual marker");
 assert(appScript.includes('calculateInventoryValuation("Storefront"'), "storefront value must be calculated from current counts");
 assert(appScript.includes('calculateInventoryValuation("Storage"'), "storage value must be calculated from current counts");
 assert(appScript.includes('function completeActiveOrder()'), "customer-order completion must respect linked production");

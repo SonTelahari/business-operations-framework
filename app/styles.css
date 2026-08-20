@@ -2833,6 +2833,25 @@ h2 {
   outline-offset: 2px;
 }
 
+.section-button.has-unsaved-draft::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  background: #f1d17d;
+  border: 1px solid rgba(38, 24, 18, 0.7);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(248, 239, 217, 0.2);
+}
+
+.section-button.active.has-unsaved-draft::after {
+  background: #8b3e35;
+  border-color: #5b211c;
+  box-shadow: 0 0 0 2px rgba(139, 62, 53, 0.12);
+}
+
 .section-button.active {
   z-index: 2;
   min-height: 46px;
