@@ -172,6 +172,9 @@ assert(appHtml.includes('data-navigation-menu="owner"'), "administrator pages mu
 assert(appHtml.includes('id="managementNavCount"'), "open review work must remain visible on the collapsed management menu");
 assert(appScript.includes("function bootstrapApplication()"), "the client must guard initial rendering before loading the authenticated session");
 assert(appScript.includes("if (elements.managementNavCount)"), "grouped navigation badges must tolerate mixed-version app assets during rolling deploys");
+assert(appScript.includes("function scheduleSessionRetry(error)"), "transient session failures must retry without starting a login redirect loop");
+assert(appScript.includes('reportWorkspaceStartupIssue("Authenticated workspace render failed"'), "authenticated rendering failures must remain separate from authentication failures");
+assert(appScript.includes('reportWorkspaceStartupIssue("Workspace data startup failed"'), "workspace data failures must not sign out an authenticated user");
 assert(appHtml.includes('id="discordSettingsForm"'), "business settings must expose editable Discord channels");
 assert(appHtml.includes('id="discordStorageLedgerChannelIdInput"'), "business settings must distinguish storage and ledger events");
 assert(setupHtml.includes('id="discordStorageLedgerChannelIdInput"'), "first launch must collect the storage and ledger event channel");

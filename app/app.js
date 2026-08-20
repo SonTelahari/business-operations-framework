@@ -709,6 +709,7 @@ window.addEventListener("beforeunload", event => {
   event.preventDefault();
   event.returnValue = "";
 });
+let sessionRetryTimer = null;
 setFinancePeriod("month", false);
 bootstrapApplication();
 
@@ -716,9 +717,22 @@ function bootstrapApplication() {
   try {
     render();
   } catch (error) {
-    console.error("Initial workspace render failed:", error);
+    reportWorkspaceStartupIssue("Initial workspace render failed", error);
   }
   loadSessionAndData();
+}
+
+function reportWorkspaceStartupIssue(message, error) {
+  console.error(`${message}:`, error);
+  if (elements.dataStatus) {
+    elements.dataStatus.textContent = `${message}. The account remains signed in; retrying shared data.`;
+  }
+}
+
+function scheduleSessionRetry(error) {
+  reportWorkspaceStartupIssue("Unable to verify the account session", error);
+  window.clearTimeout(sessionRetryTimer);
+  sessionRetryTimer = window.setTimeout(loadSessionAndData, 3000);
 }
 
 function markDraftDirty(scope) {
@@ -6882,30 +6896,46 @@ function resolveStockItem(value) {
 }
 
 async function loadSessionAndData() {
+  let response;
+  let result;
   try {
-    const response = await fetch("/api/auth/session", { headers: { accept: "application/json" } });
-    const result = await response.json();
-    if (!response.ok || !result.user) throw new Error("Authentication required");
-    currentUser = result.user;
-    currentWorkspace = result.workspace || null;
-    workspaceProfile = result.jobProfile || {
-      accountType: currentUser.accountType || "local",
-      currentBusinessId: currentWorkspace?.id || "",
-      jobs: currentWorkspace ? [{
-        businessId: currentWorkspace.id,
-        workspaceCode: currentWorkspace.code,
-        businessName: currentWorkspace.name,
-        fullName: currentUser.fullName,
-        role: currentUser.role,
-        status: "active",
-        current: true
-      }] : []
-    };
-    currentRole = currentUser.role;
-    timeClock = loadTimeClock(timeClockStorageKey());
-    migrateLegacyTimeClock();
+    response = await fetch("/api/auth/session", { headers: { accept: "application/json" } });
+    result = await response.json();
+  } catch (error) {
+    scheduleSessionRetry(error);
+    return;
+  }
+  if (!response.ok || !result.user) {
+    window.location.replace("/login.html");
+    return;
+  }
+  window.clearTimeout(sessionRetryTimer);
+  sessionRetryTimer = null;
+  currentUser = result.user;
+  currentWorkspace = result.workspace || null;
+  workspaceProfile = result.jobProfile || {
+    accountType: currentUser.accountType || "local",
+    currentBusinessId: currentWorkspace?.id || "",
+    jobs: currentWorkspace ? [{
+      businessId: currentWorkspace.id,
+      workspaceCode: currentWorkspace.code,
+      businessName: currentWorkspace.name,
+      fullName: currentUser.fullName,
+      role: currentUser.role,
+      status: "active",
+      current: true
+    }] : []
+  };
+  currentRole = currentUser.role;
+  timeClock = loadTimeClock(timeClockStorageKey());
+  migrateLegacyTimeClock();
+  try {
     applyIdentityDefaults();
     render();
+  } catch (error) {
+    reportWorkspaceStartupIssue("Authenticated workspace render failed", error);
+  }
+  try {
     await migrateLegacySalesOrders();
     await loadBackendSnapshot();
     startBackendRefreshLoop();
@@ -6913,8 +6943,8 @@ async function loadSessionAndData() {
       await Promise.all([loadSupplyOrders(), loadSuppliers()]);
       await loadStaffData();
     }
-  } catch {
-    window.location.replace("/login.html");
+  } catch (error) {
+    reportWorkspaceStartupIssue("Workspace data startup failed", error);
   }
 }
 
