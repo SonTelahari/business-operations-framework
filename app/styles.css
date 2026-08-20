@@ -1571,6 +1571,14 @@ textarea:focus {
   border-collapse: collapse;
 }
 
+.sales-line-quantity {
+  width: 74px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 5px 7px;
+  text-align: center;
+}
+
 th,
 td {
   padding: 11px 12px;

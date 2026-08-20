@@ -1994,6 +1994,36 @@ function removeLine(lineId) {
   render();
 }
 
+function updateLineQuantity(lineId, input, final = false) {
+  const line = activeOrder.lines.find(candidate => candidate.id === lineId);
+  if (!line) return;
+  const quantity = Number(input.value);
+  const valid = Number.isInteger(quantity) && quantity >= 1;
+  input.setCustomValidity(valid ? "" : "Enter a whole quantity of at least 1");
+  input.toggleAttribute("aria-invalid", !valid);
+  if (!valid) {
+    if (final) {
+      input.value = String(line.quantity);
+      input.setCustomValidity("");
+      input.removeAttribute("aria-invalid");
+    }
+    return;
+  }
+  if (quantity === Number(line.quantity || 0)) return;
+  line.quantity = quantity;
+  if (isCounterSaleOrder(activeOrder)) {
+    activeOrder.deposit = getSubtotal(activeOrder);
+    elements.deposit.value = activeOrder.deposit;
+  }
+  touchActive();
+  const totalCell = input.closest("tr")?.querySelector("[data-line-total]");
+  if (totalCell) totalCell.textContent = formatCurrency(quantity * Number(line.unitPrice || 0));
+  renderTotals();
+  renderPreview();
+  renderProduction();
+  renderMeta();
+}
+
 function updateSupplyFromInputs() {
   activeSupplyOrder.producer = elements.supplyProducer.value.trim();
   activeSupplyOrder.expectedDate = elements.supplyExpectedDate.value;
@@ -3096,6 +3126,9 @@ function renderLines() {
     return;
   }
 
+  const savedOrder = orders.some(order => order.id === activeOrder.id);
+  const lineEditingLocked = Boolean(productionBatchForOrder(activeOrder.id))
+    || (savedOrder && statusesHiddenFromActive.has(activeOrder.status));
   elements.lines.innerHTML = activeOrder.lines.map(line => {
     const unitPrice = isInternalCraftOrder(activeOrder) ? 0 : Number(line.unitPrice || 0);
     const total = line.quantity * unitPrice;
@@ -3105,16 +3138,22 @@ function renderLines() {
           <strong>${escapeHtml(line.label || line.name)}</strong>
           <span>${escapeHtml(line.category || "Manual")}${line.tag ? ` / ${escapeHtml(line.tag)}` : ""}</span>
         </td>
-        <td>${formatNumber(line.quantity)}</td>
+        <td>
+          <input class="sales-line-quantity" data-line-quantity="${escapeHtml(line.id)}" type="number" min="1" step="1" value="${Number(line.quantity || 1)}" aria-label="Quantity for ${escapeHtml(line.label || line.name)}" title="${lineEditingLocked ? "Production or order status has locked this quantity" : "Change quantity"}" ${lineEditingLocked ? "disabled" : ""}>
+        </td>
         <td>${formatCurrency(unitPrice)}</td>
-        <td>${formatCurrency(total)}</td>
-        <td><button class="icon-button" type="button" data-remove-line="${line.id}" title="Remove line">x</button></td>
+        <td data-line-total="${escapeHtml(line.id)}">${formatCurrency(total)}</td>
+        <td><button class="icon-button" type="button" data-remove-line="${escapeHtml(line.id)}" title="${lineEditingLocked ? "Production or order status has locked this line" : "Remove line"}" ${lineEditingLocked ? "disabled" : ""}>x</button></td>
       </tr>
     `;
   }).join("");
 
   elements.lines.querySelectorAll("[data-remove-line]").forEach(button => {
     button.addEventListener("click", () => removeLine(button.dataset.removeLine));
+  });
+  elements.lines.querySelectorAll("[data-line-quantity]").forEach(input => {
+    input.addEventListener("input", () => updateLineQuantity(input.dataset.lineQuantity, input));
+    input.addEventListener("change", () => updateLineQuantity(input.dataset.lineQuantity, input, true));
   });
 }
 

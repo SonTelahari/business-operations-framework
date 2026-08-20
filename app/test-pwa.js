@@ -128,6 +128,9 @@ assert(appScript.includes('function renderSalesOrderActions()'), "Sales action b
 assert(appScript.includes('function handleDashboardShortcut(event)'), "dashboard summaries must route to their workflow tabs");
 assert(appScript.includes('shortcut.disabled = !allowed'), "dashboard shortcuts must respect role and tab access");
 assert(appScript.includes('await saveActiveOrder({ syncInputs: false })'), "direct Sales transitions must survive form synchronization");
+assert(appScript.includes('data-line-quantity='), "sales order lines must expose editable quantity controls");
+assert(appScript.includes('function updateLineQuantity('), "sales order quantity corrections must update the active line in place");
+assert(appScript.includes('Boolean(productionBatchForOrder(activeOrder.id))'), "sales order quantities must lock after production is linked");
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
 assert(appScript.includes('function planRecipeStages('), "production and restock plans must expand nested recipes");
 assert(appScript.includes('function productionBatchInventoryState('), "production readiness must net intermediate work in progress");
