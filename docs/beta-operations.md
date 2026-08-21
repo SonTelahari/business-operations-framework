@@ -8,7 +8,7 @@ Beta workspaces use the production data model from their first day. They are nev
 2. Set `HOSTED_MODE=1` and `HOSTED_SIGNUP_MODE=invite`.
 3. Enable Railway PostgreSQL backups and take a manual backup before the first invitation.
 4. Deploy, open `/health`, and confirm `databaseReady`, `tenantScoped`, and `operatorConsoleConfigured` are all `true`.
-   Confirm `multiReplicaDocumentWrites` is also `true` before running more than one GUI/API replica.
+   Confirm `multiReplicaDocumentWrites` and `materializedBalances` are also `true` before running more than one GUI/API replica.
 5. Open `/operator.html`, issue one single-use invitation per business, and send only that code and the public setup URL to the owner.
 
 The setup page explicitly asks for in-game or character names. Testers should not enter real-life names, email addresses, or other private personal information.
@@ -26,6 +26,8 @@ Every release upgrades the existing database in place:
 7. Create a portable archive from `/operator.html` for any workspace participating in a high-risk migration test.
 
 Never remove or edit an applied migration. Schema changes are additive and receive the next migration number. Never replace the production PostgreSQL service with an empty database during an application deployment.
+
+Migration 013 creates compact inventory and ledger balances. The first access to each existing workspace rebuilds them from immutable event history. A mismatch is recovered by rebuilding the balances; inventory or ledger events must never be deleted to repair a balance.
 
 ## Access Incidents
 

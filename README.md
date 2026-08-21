@@ -19,12 +19,13 @@ The same deployment can also host multiple isolated businesses. Set `HOSTED_MODE
 
 - `app/` serves the GUI and authenticated API.
 - PostgreSQL stores append-only inventory, ledger, finance, webhook, and time-clock events.
+- Materialized inventory and ledger balance rows serve normal snapshots without replaying the complete event history.
 - Account and business-operation documents also live in PostgreSQL, so no hosted filesystem volume is required.
 - `discord-bridge/` parses storefront messages and posts them directly to the app with a bearer token.
 - The app validates Discord item tags, labels, names, and saved aliases against the live business catalog.
 - Discord stock and alert messages read a restricted storefront-only snapshot endpoint.
 
-Authoritative counts create new baselines. Later movements are applied after the latest baseline, preserving the audit trail without rewriting history. Discord message IDs and GUI operation IDs provide idempotency.
+Authoritative counts create new baselines. Later movements are applied after the latest baseline, preserving the audit trail without rewriting history. Balance rows update in the same transaction as their immutable events; late events rebuild only the affected chronological stream. A complete balance rebuild remains available from event history for recovery. Discord message IDs and GUI operation IDs provide idempotency.
 
 ## Desktop Installation
 

@@ -9,6 +9,21 @@ class StandaloneStore {
     this.businessId = businessId;
   }
 
+  async initialize() {
+    await this.ensureMaterializedBalances();
+  }
+
+  async ensureMaterializedBalances() {
+    return this.database.transaction(client => ensureMaterializedBalances(client, this.businessId));
+  }
+
+  async rebuildMaterializedBalances() {
+    return this.database.transaction(async client => {
+      await lockMaterializationState(client, this.businessId, { exclusive: true });
+      return rebuildMaterializedBalances(client, this.businessId);
+    });
+  }
+
   async syncCatalog(configuration) {
     if (!configuration?.catalog) return;
     await this.database.transaction(async client => {
@@ -345,6 +360,7 @@ class StandaloneStore {
   }
 
   async snapshot() {
+    await this.ensureMaterializedBalances();
     const [catalogResult, recipeResult, ingredientResult, inventoryResult, ledgerResult, exceptionResult, webhookResult, purchaseResult, cashAllocationResult, timeEntryResult] = await Promise.all([
       this.database.query(`
         SELECT * FROM catalog_items WHERE business_id = $1 ORDER BY item_type, category, label
@@ -360,14 +376,13 @@ class StandaloneStore {
         ORDER BY recipe_id, position
       `, [this.businessId]),
       this.database.query(`
-        SELECT * FROM inventory_events
+        SELECT * FROM inventory_balances
         WHERE business_id = $1
-        ORDER BY occurred_at, recorded_at, event_id
+        ORDER BY location_type, normalized_item_name
       `, [this.businessId]),
       this.database.query(`
-        SELECT * FROM ledger_events
+        SELECT * FROM ledger_balances
         WHERE business_id = $1
-        ORDER BY occurred_at, recorded_at, event_id
       `, [this.businessId]),
       this.database.query(`
         SELECT e.*, w.actor_name
@@ -405,7 +420,7 @@ class StandaloneStore {
       `, [this.businessId])
     ]);
 
-    const inventory = reduceInventory(inventoryResult.rows);
+    const inventory = inventoryBalanceMap(inventoryResult.rows);
     const catalog = catalogResult.rows.map(catalogRow);
     const ingredientsByRecipe = new Map();
     ingredientResult.rows.forEach(row => {
@@ -535,7 +550,7 @@ class StandaloneStore {
         materials,
         storefront,
         storage,
-        ledger: reduceLedger(ledgerResult.rows),
+        ledger: ledgerBalance(ledgerResult.rows[0]),
         buyOrderPurchases: purchaseResult.rows.map(row => ({
           eventId: row.webhook_id,
           occurredAt: iso(row.occurred_at),
@@ -548,6 +563,7 @@ class StandaloneStore {
   }
 
   async finance({ from = "", to = "" } = {}) {
+    await this.ensureMaterializedBalances();
     const [financeResult, ledgerResult] = await Promise.all([
       this.database.query(`
         SELECT * FROM finance_events
@@ -555,9 +571,8 @@ class StandaloneStore {
         ORDER BY occurred_at, recorded_at, event_id
       `, [this.businessId]),
       this.database.query(`
-        SELECT * FROM ledger_events
+        SELECT * FROM ledger_balances
         WHERE business_id = $1
-        ORDER BY occurred_at, recorded_at, event_id
       `, [this.businessId])
     ]);
     const rows = financeResult.rows.map(row => ({
@@ -595,7 +610,7 @@ class StandaloneStore {
         safekeeping: money(safekeepingDeposits - safekeepingWithdrawals)
       },
       coverage: financeCoverage(rows),
-      ledger: reduceLedger(ledgerResult.rows),
+      ledger: ledgerBalance(ledgerResult.rows[0]),
       breakdown: aggregateBreakdown(inPeriod),
       monthly: aggregateMonthly(inPeriod)
     };
@@ -1449,6 +1464,298 @@ async function upsertCatalogItem(client, businessId, item) {
   ]);
 }
 
+async function lockMaterializationState(client, businessId, { exclusive = false } = {}) {
+  const inserted = await client.query(`
+    INSERT INTO balance_materialization_state (business_id, status)
+    VALUES ($1, 'building')
+    ON CONFLICT (business_id) DO NOTHING
+    RETURNING status
+  `, [businessId]);
+  if (inserted.rowCount) return inserted.rows[0].status;
+  if (exclusive) {
+    const locked = await client.query(`
+      SELECT status
+      FROM balance_materialization_state
+      WHERE business_id = $1
+      FOR UPDATE
+    `, [businessId]);
+    return locked.rows[0]?.status || "building";
+  }
+  const observed = await client.query(`
+    SELECT status
+    FROM balance_materialization_state
+    WHERE business_id = $1
+  `, [businessId]);
+  const lockClause = observed.rows[0]?.status === "ready" ? "FOR SHARE" : "FOR UPDATE";
+  const result = await client.query(`
+    SELECT status
+    FROM balance_materialization_state
+    WHERE business_id = $1
+    ${lockClause}
+  `, [businessId]);
+  return result.rows[0]?.status || "building";
+}
+
+async function ensureMaterializedBalances(client, businessId) {
+  const status = await lockMaterializationState(client, businessId);
+  if (status === "ready") return { rebuilt: false };
+  return rebuildMaterializedBalances(client, businessId);
+}
+
+async function rebuildMaterializedBalances(client, businessId) {
+  await client.query(`
+    UPDATE balance_materialization_state
+    SET status = 'building', updated_at = now()
+    WHERE business_id = $1
+  `, [businessId]);
+  await client.query("DELETE FROM inventory_balances WHERE business_id = $1", [businessId]);
+  await client.query("DELETE FROM ledger_balances WHERE business_id = $1", [businessId]);
+
+  const inventoryResult = await client.query(`
+    SELECT * FROM inventory_events
+    WHERE business_id = $1
+    ORDER BY occurred_at, recorded_at, event_id
+  `, [businessId]);
+  const inventory = reduceInventory(inventoryResult.rows);
+  const lastInventoryEvents = new Map();
+  inventoryResult.rows.forEach(row => {
+    lastInventoryEvents.set(`${row.location_type}:${row.normalized_item_name}`, row);
+  });
+  for (const [key, count] of inventory) {
+    await writeInventoryBalance(client, businessId, count, lastInventoryEvents.get(key));
+  }
+
+  const ledgerResult = await client.query(`
+    SELECT * FROM ledger_events
+    WHERE business_id = $1
+    ORDER BY occurred_at, recorded_at, event_id
+  `, [businessId]);
+  if (ledgerResult.rowCount) {
+    await writeLedgerBalance(
+      client,
+      businessId,
+      reduceLedger(ledgerResult.rows),
+      ledgerResult.rows[ledgerResult.rows.length - 1]
+    );
+  }
+  await client.query(`
+    UPDATE balance_materialization_state
+    SET status = 'ready', rebuilt_at = now(), updated_at = now()
+    WHERE business_id = $1
+  `, [businessId]);
+  return {
+    rebuilt: true,
+    inventoryBalances: inventory.size,
+    inventoryEvents: inventoryResult.rowCount,
+    ledgerEvents: ledgerResult.rowCount
+  };
+}
+
+async function materializeInventoryEvent(client, businessId, event) {
+  const created = await client.query(`
+    INSERT INTO inventory_balances (
+      business_id, location_type, normalized_item_name, item_name
+    ) VALUES ($1, $2, $3, $4)
+    ON CONFLICT (business_id, location_type, normalized_item_name) DO NOTHING
+    RETURNING normalized_item_name
+  `, [businessId, event.location_type, event.normalized_item_name, event.item_name]);
+  if (created.rowCount) {
+    await rebuildInventoryBalance(client, businessId, event.location_type, event.normalized_item_name);
+    return;
+  }
+  const updated = await client.query(`
+    UPDATE inventory_balances SET
+      item_name = $4,
+      quantity = CASE WHEN $5 IS NULL THEN quantity + $6 ELSE $5 END,
+      counted_at = CASE WHEN $5 IS NULL THEN counted_at ELSE $7 END,
+      net_movement_since_count = CASE
+        WHEN $5 IS NOT NULL THEN 0
+        WHEN counted_at IS NOT NULL THEN net_movement_since_count + $6
+        ELSE net_movement_since_count
+      END,
+      last_activity_at = $7,
+      last_event_occurred_at = $7,
+      last_event_recorded_at = $8,
+      last_event_id = $9,
+      updated_at = now()
+    WHERE business_id = $1 AND location_type = $2 AND normalized_item_name = $3
+      AND (
+        last_event_occurred_at < $7
+        OR (last_event_occurred_at = $7 AND last_event_recorded_at < $8)
+        OR (last_event_occurred_at = $7 AND last_event_recorded_at = $8 AND last_event_id < $9)
+      )
+    RETURNING normalized_item_name
+  `, [
+    businessId,
+    event.location_type,
+    event.normalized_item_name,
+    event.item_name,
+    nullableNumber(event.absolute_quantity),
+    number(event.quantity_delta),
+    event.occurred_at,
+    event.recorded_at,
+    event.event_id
+  ]);
+  if (!updated.rowCount) {
+    await client.query(`
+      SELECT normalized_item_name FROM inventory_balances
+      WHERE business_id = $1 AND location_type = $2 AND normalized_item_name = $3
+      FOR UPDATE
+    `, [businessId, event.location_type, event.normalized_item_name]);
+    await rebuildInventoryBalance(client, businessId, event.location_type, event.normalized_item_name);
+  }
+}
+
+async function rebuildInventoryBalance(client, businessId, location, normalizedItemName) {
+  const result = await client.query(`
+    SELECT * FROM inventory_events
+    WHERE business_id = $1 AND location_type = $2 AND normalized_item_name = $3
+    ORDER BY occurred_at, recorded_at, event_id
+  `, [businessId, location, normalizedItemName]);
+  if (!result.rowCount) {
+    await client.query(`
+      DELETE FROM inventory_balances
+      WHERE business_id = $1 AND location_type = $2 AND normalized_item_name = $3
+    `, [businessId, location, normalizedItemName]);
+    return;
+  }
+  const key = `${location}:${normalizedItemName}`;
+  const count = reduceInventory(result.rows).get(key);
+  await writeInventoryBalance(client, businessId, count, result.rows[result.rows.length - 1]);
+}
+
+async function writeInventoryBalance(client, businessId, count, lastEvent) {
+  if (!count || !lastEvent) return;
+  await client.query(`
+    INSERT INTO inventory_balances (
+      business_id, location_type, normalized_item_name, item_name, quantity,
+      counted_at, net_movement_since_count, last_activity_at,
+      last_event_occurred_at, last_event_recorded_at, last_event_id, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+    ON CONFLICT (business_id, location_type, normalized_item_name) DO UPDATE SET
+      item_name = EXCLUDED.item_name,
+      quantity = EXCLUDED.quantity,
+      counted_at = EXCLUDED.counted_at,
+      net_movement_since_count = EXCLUDED.net_movement_since_count,
+      last_activity_at = EXCLUDED.last_activity_at,
+      last_event_occurred_at = EXCLUDED.last_event_occurred_at,
+      last_event_recorded_at = EXCLUDED.last_event_recorded_at,
+      last_event_id = EXCLUDED.last_event_id,
+      updated_at = now()
+  `, [
+    businessId,
+    lastEvent.location_type,
+    lastEvent.normalized_item_name,
+    count.itemName || lastEvent.item_name,
+    number(count.quantity),
+    count.countedAt || null,
+    number(count.netMovementSinceCount),
+    count.lastActivityAt || null,
+    lastEvent.occurred_at,
+    lastEvent.recorded_at,
+    lastEvent.event_id
+  ]);
+}
+
+async function materializeLedgerEvent(client, businessId, event) {
+  const created = await client.query(`
+    INSERT INTO ledger_balances (business_id)
+    VALUES ($1)
+    ON CONFLICT (business_id) DO NOTHING
+    RETURNING business_id
+  `, [businessId]);
+  if (created.rowCount) {
+    await rebuildLedgerBalance(client, businessId);
+    return;
+  }
+  const updated = await client.query(`
+    UPDATE ledger_balances SET
+      balance = CASE WHEN $2 IS NULL THEN balance + $3 ELSE $2 END,
+      counted_balance = CASE WHEN $2 IS NULL THEN counted_balance ELSE $2 END,
+      counted_at = CASE WHEN $2 IS NULL THEN counted_at ELSE $4 END,
+      net_movement_since_count = CASE
+        WHEN $2 IS NOT NULL THEN 0
+        WHEN counted_at IS NOT NULL THEN net_movement_since_count + $3
+        ELSE net_movement_since_count
+      END,
+      last_activity_at = $4,
+      last_event_occurred_at = $4,
+      last_event_recorded_at = $5,
+      last_event_id = $6,
+      updated_at = now()
+    WHERE business_id = $1
+      AND (
+        last_event_occurred_at < $4
+        OR (last_event_occurred_at = $4 AND last_event_recorded_at < $5)
+        OR (last_event_occurred_at = $4 AND last_event_recorded_at = $5 AND last_event_id < $6)
+      )
+    RETURNING business_id
+  `, [
+    businessId,
+    nullableNumber(event.absolute_balance),
+    number(event.amount_delta),
+    event.occurred_at,
+    event.recorded_at,
+    event.event_id
+  ]);
+  if (!updated.rowCount) {
+    await client.query(`
+      SELECT business_id FROM ledger_balances
+      WHERE business_id = $1
+      FOR UPDATE
+    `, [businessId]);
+    await rebuildLedgerBalance(client, businessId);
+  }
+}
+
+async function rebuildLedgerBalance(client, businessId) {
+  const result = await client.query(`
+    SELECT * FROM ledger_events
+    WHERE business_id = $1
+    ORDER BY occurred_at, recorded_at, event_id
+  `, [businessId]);
+  if (!result.rowCount) {
+    await client.query("DELETE FROM ledger_balances WHERE business_id = $1", [businessId]);
+    return;
+  }
+  await writeLedgerBalance(
+    client,
+    businessId,
+    reduceLedger(result.rows),
+    result.rows[result.rows.length - 1]
+  );
+}
+
+async function writeLedgerBalance(client, businessId, balance, lastEvent) {
+  if (!lastEvent) return;
+  await client.query(`
+    INSERT INTO ledger_balances (
+      business_id, balance, counted_balance, counted_at, net_movement_since_count,
+      last_activity_at, last_event_occurred_at, last_event_recorded_at, last_event_id, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+    ON CONFLICT (business_id) DO UPDATE SET
+      balance = EXCLUDED.balance,
+      counted_balance = EXCLUDED.counted_balance,
+      counted_at = EXCLUDED.counted_at,
+      net_movement_since_count = EXCLUDED.net_movement_since_count,
+      last_activity_at = EXCLUDED.last_activity_at,
+      last_event_occurred_at = EXCLUDED.last_event_occurred_at,
+      last_event_recorded_at = EXCLUDED.last_event_recorded_at,
+      last_event_id = EXCLUDED.last_event_id,
+      updated_at = now()
+  `, [
+    businessId,
+    money(balance.balance),
+    balance.countedBalance === null ? null : money(balance.countedBalance),
+    balance.countedAt || null,
+    money(balance.netMovementSinceCount),
+    balance.lastActivityAt || null,
+    lastEvent.occurred_at,
+    lastEvent.recorded_at,
+    lastEvent.event_id
+  ]);
+}
+
 async function reserveOperation(client, businessId, eventId, operationType, payload) {
   const existing = await client.query(`
     SELECT 1 FROM operation_receipts WHERE business_id = $1 AND event_id = $2
@@ -1464,29 +1771,37 @@ async function reserveOperation(client, businessId, eventId, operationType, payl
 }
 
 async function insertInventory(client, businessId, event) {
-  await client.query(`
+  await ensureMaterializedBalances(client, businessId);
+  const result = await client.query(`
     INSERT INTO inventory_events (
       business_id, event_id, occurred_at, source, event_kind, location_type,
       item_name, normalized_item_name, quantity_delta, absolute_quantity, unit_price, actor_name, metadata
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
     ON CONFLICT (business_id, event_id) DO NOTHING
+    RETURNING *
   `, [
     businessId, event.eventId, event.occurredAt, event.source, event.kind, event.location,
     event.item, inventoryKey(event.item), number(event.quantityDelta), nullableNumber(event.absoluteQuantity),
     number(event.unitPrice), event.actor || "", JSON.stringify(event.metadata || {})
   ]);
+  if (result.rowCount) await materializeInventoryEvent(client, businessId, result.rows[0]);
+  return result.rowCount > 0;
 }
 
 async function insertLedger(client, businessId, event) {
-  await client.query(`
+  await ensureMaterializedBalances(client, businessId);
+  const result = await client.query(`
     INSERT INTO ledger_events (
       business_id, event_id, occurred_at, source, event_kind, amount_delta, absolute_balance, actor_name, metadata
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
     ON CONFLICT (business_id, event_id) DO NOTHING
+    RETURNING *
   `, [
     businessId, event.eventId, event.occurredAt, event.source, event.kind, number(event.amountDelta),
     nullableNumber(event.absoluteBalance), event.actor || "", JSON.stringify(event.metadata || {})
   ]);
+  if (result.rowCount) await materializeLedgerEvent(client, businessId, result.rows[0]);
+  return result.rowCount > 0;
 }
 
 async function insertFinance(client, businessId, event) {
@@ -1780,13 +2095,11 @@ async function applyWebhookEvent(client, businessId, event, { applyLedger }) {
 async function currentInventoryQuantity(client, businessId, location, item) {
   const normalizedItem = inventoryKey(item);
   const result = await client.query(`
-    SELECT location_type, normalized_item_name, item_name, absolute_quantity, quantity_delta, occurred_at
-    FROM inventory_events
+    SELECT quantity
+    FROM inventory_balances
     WHERE business_id = $1 AND location_type = $2 AND normalized_item_name = $3
-    ORDER BY occurred_at, recorded_at, event_id
   `, [businessId, location, normalizedItem]);
-  const count = reduceInventory(result.rows).get(`${location}:${normalizedItem}`);
-  return Math.max(0, number(count?.quantity));
+  return Math.max(0, number(result.rows[0]?.quantity));
 }
 
 async function applyStoredMapping(client, businessId, event) {
@@ -2149,47 +2462,85 @@ function reduceInventory(rows) {
   for (const row of rows) {
     const key = `${row.location_type}:${row.normalized_item_name}`;
     const current = state.get(key) || emptyCount(row.item_name, row.normalized_item_name);
-    if (row.absolute_quantity !== null && row.absolute_quantity !== undefined) {
-      current.quantity = number(row.absolute_quantity);
-      current.countedAt = iso(row.occurred_at);
-      current.netMovementSinceCount = 0;
-    } else {
-      const delta = number(row.quantity_delta);
-      current.quantity += delta;
-      if (current.countedAt) current.netMovementSinceCount += delta;
-    }
-    current.itemName = row.item_name || current.itemName;
-    current.lastActivityAt = iso(row.occurred_at);
+    applyInventoryEvent(current, row);
     state.set(key, current);
   }
   return state;
 }
 
 function reduceLedger(rows) {
-  let balance = 0;
-  let countedBalance = null;
-  let countedAt = "";
-  let netMovementSinceCount = 0;
-  let lastActivityAt = "";
-  for (const row of rows) {
-    if (row.absolute_balance !== null && row.absolute_balance !== undefined) {
-      balance = number(row.absolute_balance);
-      countedBalance = balance;
-      countedAt = iso(row.occurred_at);
-      netMovementSinceCount = 0;
-    } else {
-      const delta = number(row.amount_delta);
-      balance += delta;
-      if (countedAt) netMovementSinceCount += delta;
-    }
-    lastActivityAt = iso(row.occurred_at);
-  }
+  const balance = ledgerBalance();
+  rows.forEach(row => applyLedgerEvent(balance, row));
   return {
-    balance: money(balance),
-    countedBalance: countedBalance === null ? null : money(countedBalance),
-    countedAt,
-    netMovementSinceCount: money(netMovementSinceCount),
-    lastActivityAt
+    balance: money(balance.balance),
+    countedBalance: balance.countedBalance === null ? null : money(balance.countedBalance),
+    countedAt: balance.countedAt,
+    netMovementSinceCount: money(balance.netMovementSinceCount),
+    lastActivityAt: balance.lastActivityAt
+  };
+}
+
+function applyInventoryEvent(count, row) {
+  if (row.absolute_quantity !== null && row.absolute_quantity !== undefined) {
+    count.quantity = number(row.absolute_quantity);
+    count.countedAt = iso(row.occurred_at);
+    count.netMovementSinceCount = 0;
+  } else {
+    const delta = number(row.quantity_delta);
+    count.quantity += delta;
+    if (count.countedAt) count.netMovementSinceCount += delta;
+  }
+  count.itemName = row.item_name || count.itemName;
+  count.lastActivityAt = iso(row.occurred_at);
+  return count;
+}
+
+function inventoryCountFromBalance(row) {
+  return {
+    itemName: row?.item_name || "",
+    normalizedName: row?.normalized_item_name || "",
+    quantity: number(row?.quantity),
+    countedAt: iso(row?.counted_at),
+    netMovementSinceCount: number(row?.net_movement_since_count),
+    lastActivityAt: iso(row?.last_activity_at)
+  };
+}
+
+function inventoryBalanceMap(rows) {
+  const state = new Map();
+  for (const row of rows) {
+    state.set(
+      `${row.location_type}:${row.normalized_item_name}`,
+      inventoryCountFromBalance(row)
+    );
+  }
+  return state;
+}
+
+function applyLedgerEvent(balance, row) {
+  if (row.absolute_balance !== null && row.absolute_balance !== undefined) {
+    balance.balance = number(row.absolute_balance);
+    balance.countedBalance = balance.balance;
+    balance.countedAt = iso(row.occurred_at);
+    balance.netMovementSinceCount = 0;
+  } else {
+    const delta = number(row.amount_delta);
+    balance.balance += delta;
+    if (balance.countedAt) balance.netMovementSinceCount += delta;
+  }
+  balance.lastActivityAt = iso(row.occurred_at);
+  return balance;
+}
+
+function ledgerBalance(row = null) {
+  return {
+    balance: money(row?.balance),
+    countedBalance: row?.counted_balance === null || row?.counted_balance === undefined
+      ? null
+      : money(row.counted_balance),
+    countedAt: iso(row?.counted_at),
+    netMovementSinceCount: money(row?.net_movement_since_count),
+    lastActivityAt: iso(row?.last_activity_at)
   };
 }
 

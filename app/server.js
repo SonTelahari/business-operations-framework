@@ -187,6 +187,7 @@ async function handleApplicationRequest(request, response, url) {
         persistentSessionSecret: sessionSecretState.persistent,
         persistentBusinessStore: database.enabled || Boolean(process.env.AUTH_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH),
         multiReplicaDocumentWrites: database.enabled,
+        materializedBalances: database.enabled,
         supplyReceipts: true,
         storefrontBuyOrders: true,
         webhookReview: true,
@@ -368,6 +369,7 @@ async function dispatchHostedRequest(request, response, url) {
       databaseConfigured: true,
       databaseReady,
       multiReplicaDocumentWrites: true,
+      materializedBalances: true,
       bridgeApiConfigured: Boolean(process.env.BRIDGE_API_TOKEN),
       discordLoginConfigured: Boolean(discordIdentityStore?.enabled),
       personalJobProfiles: Boolean(localIdentityStore?.enabled),
@@ -3737,6 +3739,7 @@ async function startServer() {
   }
   await database.initialize();
   if (!hostedMode) {
+    if (defaultContext.standaloneStore) await defaultContext.standaloneStore.initialize();
     await defaultContext.businessStore.initialize();
     if (accountAuthEnabled) {
       await defaultContext.accountStore.initialize({

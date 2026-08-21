@@ -371,6 +371,7 @@ class TenantManager {
     });
     await Promise.all([accountStore.initialize(), businessStore.initialize()]);
     const standaloneStore = new StandaloneStore(this.database, { businessId: business.id });
+    await standaloneStore.initialize();
     await Promise.all([
       standaloneStore.reconcileImportedFundAudit(accountStore.listAudit(1000)),
       standaloneStore.reconcileCatalogPricesFromWebhooks(),
@@ -389,6 +390,7 @@ class TenantManager {
   async removeProvisioningWorkspace(businessId) {
     const tables = [
       "recipe_ingredients", "recipe_definitions", "catalog_items", "operation_receipts",
+      "inventory_balances", "ledger_balances", "balance_materialization_state",
       "inventory_events", "ledger_events", "finance_events", "cash_review_allocations", "webhook_exceptions",
       "webhook_events", "item_mappings", "time_entries", "import_batches"
     ];

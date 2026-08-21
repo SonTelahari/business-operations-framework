@@ -33,7 +33,8 @@ async function run() {
       "009_storage_ledger_discord_channel.sql",
       "010_item_mapping_quantity_multiplier.sql",
       "011_cash_review_allocations.sql",
-      "012_document_revisions.sql"
+      "012_document_revisions.sql",
+      "013_materialized_balances.sql"
     ]);
 
     const tables = await database.query(`
@@ -58,7 +59,10 @@ async function run() {
       "platform_audit_events",
       "catalog_items",
       "inventory_events",
+      "inventory_balances",
       "ledger_events",
+      "ledger_balances",
+      "balance_materialization_state",
       "finance_events",
       "webhook_events",
       "cash_review_allocations",
