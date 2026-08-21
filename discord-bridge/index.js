@@ -183,8 +183,8 @@ async function processDiscordMessage(message, options = {}) {
           inventoryPublisher.requestRefresh('storefront event');
         }
       }
-      if (!result?.duplicate && payload.review_required) {
-        logWarn(`Sent Discord message ${message.id} to review: ${payload.review_reason || 'parser review required'}`);
+      if (!result?.duplicate && result?.reviewRequired) {
+        logWarn(`Sent Discord message ${message.id} to review: ${result.reviewReason || payload.review_reason || 'review required'}`);
       }
     } catch (error) {
       summary.errors += 1;

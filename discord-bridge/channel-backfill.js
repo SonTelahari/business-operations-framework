@@ -41,14 +41,14 @@ function createRegisteredChannelBackfill(options = {}) {
   async function performBackfill(reason) {
     const summary = emptySummary();
     try {
-      const channelIds = await fetchRegisteredInputChannelIds(
+      const channels = await fetchRegisteredInputChannels(
         `${apiBaseUrl}/api/integrations/discord/channels`,
         fetchImpl,
         { authorization: `Bearer ${apiToken}` }
       );
-      summary.channelCount = channelIds.length;
-      for (const channelId of channelIds) {
-        await backfillChannel(channelId, summary);
+      summary.channelCount = channels.length;
+      for (const channel of channels) {
+        await backfillChannel(channel, summary);
       }
       state.lastSuccessAt = new Date().toISOString();
       state.lastError = '';
@@ -66,7 +66,14 @@ function createRegisteredChannelBackfill(options = {}) {
     }
   }
 
-  async function backfillChannel(channelId, summary) {
+  async function backfillChannel(inputChannel, summary) {
+    const channelId = inputChannel.channelId;
+    const afterTimestamp = Date.parse(inputChannel.afterAt || '');
+    if (!Number.isFinite(afterTimestamp)) {
+      summary.errorCount += 1;
+      logger.warn(`Discord channel catch-up skipped ${channelId}: no safe replay boundary`);
+      return;
+    }
     try {
       const channel = await client.channels.fetch(channelId);
       if (!channel?.messages?.fetch) {
@@ -74,6 +81,7 @@ function createRegisteredChannelBackfill(options = {}) {
       }
       const fetched = await channel.messages.fetch({ limit });
       const messages = collectionValues(fetched)
+        .filter(message => messageTime(message) > afterTimestamp)
         .sort((left, right) => messageTime(left) - messageTime(right));
       summary.messageCount += messages.length;
       for (const message of messages) {
@@ -120,7 +128,7 @@ function createRegisteredChannelBackfill(options = {}) {
   return { enabled, run, health };
 }
 
-async function fetchRegisteredInputChannelIds(directoryUrl, fetchImpl = fetch, requestHeaders = {}) {
+async function fetchRegisteredInputChannels(directoryUrl, fetchImpl = fetch, requestHeaders = {}) {
   const response = await fetchImpl(new URL(directoryUrl), {
     headers: { accept: 'application/json', ...requestHeaders },
     signal: AbortSignal.timeout(30000)
@@ -130,19 +138,46 @@ async function fetchRegisteredInputChannelIds(directoryUrl, fetchImpl = fetch, r
   if (!payload?.ok || !Array.isArray(payload.integrations)) {
     throw new Error(payload?.error || 'Business API did not return Discord integrations');
   }
-  return registeredInputChannelIds(payload.integrations);
+  return registeredInputChannels(payload.integrations);
+}
+
+function registeredInputChannels(integrations) {
+  const channels = new Map();
+  for (const integration of Array.isArray(integrations) ? integrations : []) {
+    if (String(integration?.status || 'active').trim().toLowerCase() !== 'active') continue;
+    const fallback = safeTimestamp(integration.createdAt);
+    addInputChannel(channels, integration.eventChannelId, integration.eventChannelBackfillAfter || fallback);
+    addInputChannel(
+      channels,
+      integration.storageLedgerChannelId,
+      integration.storageLedgerChannelBackfillAfter || fallback
+    );
+  }
+  return [...channels.values()];
+}
+
+function addInputChannel(channels, value, afterAt) {
+  const channelId = String(value || '').trim();
+  if (!channelId) return;
+  const boundary = safeTimestamp(afterAt);
+  const current = channels.get(channelId);
+  if (!current || (boundary && (!current.afterAt || Date.parse(boundary) < Date.parse(current.afterAt)))) {
+    channels.set(channelId, { channelId, afterAt: boundary });
+  }
+}
+
+function safeTimestamp(value) {
+  const timestamp = Date.parse(value || '');
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+}
+
+async function fetchRegisteredInputChannelIds(directoryUrl, fetchImpl = fetch, requestHeaders = {}) {
+  return (await fetchRegisteredInputChannels(directoryUrl, fetchImpl, requestHeaders))
+    .map(channel => channel.channelId);
 }
 
 function registeredInputChannelIds(integrations) {
-  const channelIds = new Set();
-  for (const integration of Array.isArray(integrations) ? integrations : []) {
-    if (String(integration?.status || 'active').trim().toLowerCase() !== 'active') continue;
-    [integration.eventChannelId, integration.storageLedgerChannelId]
-      .map(value => String(value || '').trim())
-      .filter(Boolean)
-      .forEach(channelId => channelIds.add(channelId));
-  }
-  return [...channelIds];
+  return registeredInputChannels(integrations).map(channel => channel.channelId);
 }
 
 function normalizeBackfillLimit(value) {
@@ -186,7 +221,9 @@ function numberOrZero(value) {
 
 module.exports = {
   createRegisteredChannelBackfill,
+  fetchRegisteredInputChannels,
   fetchRegisteredInputChannelIds,
   normalizeBackfillLimit,
+  registeredInputChannels,
   registeredInputChannelIds
 };

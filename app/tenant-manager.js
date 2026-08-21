@@ -332,7 +332,25 @@ class TenantManager {
     const result = await this.database.query(`
       SELECT i.business_id, b.workspace_code, b.name, i.guild_id, i.event_channel_id,
              i.storage_ledger_channel_id,
-             i.inventory_channel_id, i.alert_channel_id, i.status, i.updated_at
+             i.inventory_channel_id, i.alert_channel_id, i.status, i.created_at, i.updated_at,
+             GREATEST(
+               i.created_at,
+               COALESCE((
+                 SELECT MAX(w.occurred_at) - INTERVAL '24 hours'
+                 FROM webhook_events w
+                 WHERE w.business_id = i.business_id
+                   AND w.payload->>'discord_channel_id' = i.event_channel_id
+               ), i.created_at)
+             ) AS event_channel_backfill_after,
+             GREATEST(
+               i.created_at,
+               COALESCE((
+                 SELECT MAX(w.occurred_at) - INTERVAL '24 hours'
+                 FROM webhook_events w
+                 WHERE w.business_id = i.business_id
+                   AND w.payload->>'discord_channel_id' = i.storage_ledger_channel_id
+               ), i.created_at)
+             ) AS storage_ledger_channel_backfill_after
       FROM business_integrations i
       JOIN businesses b ON b.id = i.business_id
       WHERE i.provider = 'discord' AND i.status = 'active' AND b.status = 'active'
@@ -342,7 +360,9 @@ class TenantManager {
       businessId: row.business_id,
       workspaceCode: row.workspace_code,
       businessName: row.name,
-      ...publicIntegration(row)
+      ...publicIntegration(row),
+      eventChannelBackfillAfter: isoOrEmpty(row.event_channel_backfill_after),
+      storageLedgerChannelBackfillAfter: isoOrEmpty(row.storage_ledger_channel_backfill_after)
     }));
   }
 
@@ -422,8 +442,14 @@ function publicIntegration(row) {
     inventoryChannelId: String(row.inventory_channel_id || row.inventoryChannelId || ""),
     alertChannelId: String(row.alert_channel_id || row.alertChannelId || ""),
     status: String(row.status || "active"),
+    createdAt: isoOrEmpty(row.created_at || row.createdAt),
     updatedAt: row.updated_at || row.updatedAt ? new Date(row.updated_at || row.updatedAt).toISOString() : ""
   };
+}
+
+function isoOrEmpty(value) {
+  const timestamp = Date.parse(value || "");
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
 }
 
 function randomWorkspaceCode() {

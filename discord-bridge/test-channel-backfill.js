@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const {
   createRegisteredChannelBackfill,
   normalizeBackfillLimit,
+  registeredInputChannels,
   registeredInputChannelIds
 } = require('./channel-backfill');
 
@@ -10,22 +11,34 @@ assert.equal(normalizeBackfillLimit('25'), 25);
 assert.equal(normalizeBackfillLimit('0'), 0);
 assert.equal(normalizeBackfillLimit('500'), 100);
 assert.deepEqual(registeredInputChannelIds([
-  { status: 'active', eventChannelId: 'event-a', storageLedgerChannelId: 'storage-a' },
-  { status: 'active', eventChannelId: 'event-a', storageLedgerChannelId: 'storage-b' },
+  { status: 'active', createdAt: '2026-08-20T00:00:00.000Z', eventChannelId: 'event-a', storageLedgerChannelId: 'storage-a' },
+  { status: 'active', createdAt: '2026-08-20T00:00:00.000Z', eventChannelId: 'event-a', storageLedgerChannelId: 'storage-b' },
   { status: 'inactive', eventChannelId: 'event-inactive', storageLedgerChannelId: 'storage-inactive' },
   { status: 'active', inventoryChannelId: 'output-only' }
 ]), ['event-a', 'storage-a', 'storage-b']);
+assert.deepEqual(registeredInputChannels([{
+  status: 'active',
+  createdAt: '2026-08-20T00:00:00.000Z',
+  eventChannelId: 'event-a',
+  eventChannelBackfillAfter: '2026-08-21T10:00:00.000Z',
+  storageLedgerChannelId: 'storage-a',
+  storageLedgerChannelBackfillAfter: '2026-08-21T11:00:00.000Z'
+}]), [
+  { channelId: 'event-a', afterAt: '2026-08-21T10:00:00.000Z' },
+  { channelId: 'storage-a', afterAt: '2026-08-21T11:00:00.000Z' }
+]);
 
 async function runBackfillChecks() {
   const processed = [];
   const logs = [];
   const messages = {
     'event-a': new Map([
-      ['newer', { id: 'newer', createdTimestamp: 200 }],
-      ['older', { id: 'older', createdTimestamp: 100 }]
+      ['newer', { id: 'newer', createdTimestamp: Date.parse('2026-08-21T10:00:02.000Z') }],
+      ['older', { id: 'older', createdTimestamp: Date.parse('2026-08-21T10:00:01.000Z') }],
+      ['historic', { id: 'historic', createdTimestamp: Date.parse('2026-08-20T23:59:59.000Z') }]
     ]),
     'storage-a': new Map([
-      ['storage', { id: 'storage', createdTimestamp: 150 }]
+      ['storage', { id: 'storage', createdTimestamp: Date.parse('2026-08-21T11:00:01.000Z') }]
     ])
   };
   const client = {
@@ -52,8 +65,11 @@ async function runBackfillChecks() {
           ok: true,
           integrations: [{
             status: 'active',
+            createdAt: '2026-08-20T00:00:00.000Z',
             eventChannelId: 'event-a',
-            storageLedgerChannelId: 'storage-a'
+            eventChannelBackfillAfter: '2026-08-21T10:00:00.000Z',
+            storageLedgerChannelId: 'storage-a',
+            storageLedgerChannelBackfillAfter: '2026-08-21T11:00:00.000Z'
           }]
         })
       };
