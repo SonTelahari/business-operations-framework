@@ -16,7 +16,7 @@ Database migrations run automatically when the app starts. They are versioned in
 - Health check: `/health`
 - Data health check: `/health/data`
 - Public domain: required for employee access
-- Replicas: one; the operational events are database-native, while shared order documents are still cached by a single app process
+- Replicas: one or more; PostgreSQL document revisions prevent concurrent app replicas from silently overwriting shared account and business records
 - Volume: none
 
 Required variables:
@@ -50,6 +50,8 @@ Do not set `ADMIN_FULL_NAME` or `ADMIN_PASSWORD` for a normal new business. Open
 `AUTH_SESSION_SECRET` signs employee sessions. Changing it logs everyone out. `BRIDGE_API_TOKEN` authenticates the bridge and should not be shared with employees or placed in browser code.
 
 Railway supplies a unique deployment ID automatically, which the app uses for installed-PWA update detection. On another host, set `APP_RELEASE` to a new build number or commit ID for each deployment. `/health` exposes the semantic application version and current release identifier for verification.
+
+Before increasing the GUI/API replica count, deploy migration `012_document_revisions.sql` and confirm `/health` reports `multiReplicaDocumentWrites: true`. Concurrent document updates use optimistic revision checks and retry against the newest committed record. Keep the Discord bridge at one replica so Discord messages are consumed and published only once.
 
 ## Discord Login
 

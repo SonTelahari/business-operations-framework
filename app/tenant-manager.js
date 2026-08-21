@@ -134,7 +134,14 @@ class TenantManager {
     const id = String(businessId || "").trim();
     if (!id) return null;
     const cached = this.contexts.get(id);
-    if (cached) return cached.business.status === "active" ? cached : null;
+    if (cached) {
+      if (cached.business.status !== "active") return null;
+      await Promise.all([
+        cached.accountStore.refresh(),
+        cached.businessStore.refresh()
+      ]);
+      return cached;
+    }
     const result = await this.database.query(`
       SELECT id, workspace_code, name, reference_id, status, created_at
       FROM businesses
@@ -190,6 +197,12 @@ class TenantManager {
     if (!result.rowCount) throw tenantError("Business workspace not found", 404, "workspace_not_found");
     const cached = this.contexts.get(id);
     const context = cached || await this.buildContext(result.rows[0]);
+    if (cached) {
+      await Promise.all([
+        context.accountStore.refresh(),
+        context.businessStore.refresh()
+      ]);
+    }
     const [snapshot, finance] = await Promise.all([
       context.standaloneStore.snapshot(),
       context.standaloneStore.finance()
@@ -215,6 +228,7 @@ class TenantManager {
     `, [id]);
     if (!result.rowCount) throw tenantError("Business workspace not found", 404, "workspace_not_found");
     const context = this.contexts.get(id) || await this.buildContext(result.rows[0]);
+    await context.accountStore.refresh();
     const owner = context.accountStore.listUsers()
       .filter(user => user.role === "admin" && user.status === "active")
       .sort((left, right) => new Date(left.createdAt) - new Date(right.createdAt))[0];

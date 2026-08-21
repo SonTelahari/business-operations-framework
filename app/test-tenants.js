@@ -41,6 +41,18 @@ async function run() {
     assert.equal(first.context.accountStore.listUsers().length, 2);
     assert.equal(second.context.accountStore.listUsers().length, 2);
 
+    const otherReplica = new TenantManager({ database, sessionSecret });
+    const firstReplicaContext = await otherReplica.getContextById(first.business.id);
+    await Promise.all([
+      first.context.accountStore.register("Sadie Adler", "employee-password-2"),
+      firstReplicaContext.accountStore.register("Charles Smith", "employee-password-3")
+    ]);
+    await first.context.accountStore.refresh();
+    assert.deepEqual(
+      first.context.accountStore.listUsers().map(user => user.fullName).sort(),
+      ["Arthur Morgan", "Charles Smith", "Sadie Adler", "William Winther"]
+    );
+
     await first.context.standaloneStore.handleGuiPayload({
       action: "manual_operation",
       entry: {

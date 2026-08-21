@@ -8,6 +8,7 @@ Beta workspaces use the production data model from their first day. They are nev
 2. Set `HOSTED_MODE=1` and `HOSTED_SIGNUP_MODE=invite`.
 3. Enable Railway PostgreSQL backups and take a manual backup before the first invitation.
 4. Deploy, open `/health`, and confirm `databaseReady`, `tenantScoped`, and `operatorConsoleConfigured` are all `true`.
+   Confirm `multiReplicaDocumentWrites` is also `true` before running more than one GUI/API replica.
 5. Open `/operator.html`, issue one single-use invitation per business, and send only that code and the public setup URL to the owner.
 
 The setup page explicitly asks for in-game or character names. Testers should not enter real-life names, email addresses, or other private personal information.
@@ -18,7 +19,7 @@ Every release upgrades the existing database in place:
 
 1. Take a database backup.
 2. Run the full regression suite against the release candidate.
-3. Deploy one application replica.
+3. Deploy one application replica. Scale out only after the new release is healthy and reports `multiReplicaDocumentWrites: true`.
 4. Let startup apply new numbered migrations from `app/db/migrations`.
 5. Verify `/health` reports the intended version and release identifier.
 6. Sign into an existing beta workspace and verify its storefront count, storage count, ledger balance, open orders, staff, and finance totals.

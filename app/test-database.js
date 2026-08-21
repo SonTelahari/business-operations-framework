@@ -32,7 +32,8 @@ async function run() {
       "008_local_identity_jobs.sql",
       "009_storage_ledger_discord_channel.sql",
       "010_item_mapping_quantity_multiplier.sql",
-      "011_cash_review_allocations.sql"
+      "011_cash_review_allocations.sql",
+      "012_document_revisions.sql"
     ]);
 
     const tables = await database.query(`
@@ -77,6 +78,14 @@ async function run() {
 
     await repository.save({ version: 2, staff: [] });
     assert.deepEqual(await repository.load(), { version: 2, staff: [] });
+    const versionedDocument = await repository.loadVersioned();
+    assert.equal(versionedDocument.revision, 2);
+    const revisionSave = await repository.save({ version: 3, staff: [{ name: "Grace" }] }, versionedDocument.revision);
+    assert.equal(revisionSave.revision, 3);
+    await assert.rejects(
+      repository.save({ version: 4, staff: [] }, versionedDocument.revision),
+      error => error.code === "document_revision_conflict"
+    );
 
     const accountRepository = new PostgresDocumentRepository(database, "accounts");
     const accounts = new AccountStore({
@@ -93,6 +102,19 @@ async function run() {
     await reloadedAccounts.initialize();
     assert.equal(reloadedAccounts.listUsers()[0].fullName, "Ada Lovelace");
     assert.equal(reloadedAccounts.listUsers()[0].role, "admin");
+    await Promise.all([
+      accounts.register("Grace Hopper", "database-user-password-1"),
+      reloadedAccounts.register("Katherine Johnson", "database-user-password-2")
+    ]);
+    const concurrentAccounts = new AccountStore({
+      repository: accountRepository,
+      sessionSecret: "database-test-session-secret"
+    });
+    await concurrentAccounts.initialize();
+    assert.deepEqual(
+      concurrentAccounts.listUsers().map(user => user.fullName).sort(),
+      ["Ada Lovelace", "Grace Hopper", "Katherine Johnson"]
+    );
 
     const businessRepository = new PostgresDocumentRepository(database, "business");
     const businesses = new BusinessStore({ repository: businessRepository });
@@ -105,6 +127,16 @@ async function run() {
     await reloadedBusiness.initialize();
     assert.equal(reloadedBusiness.isConfigured(), true);
     assert.equal(reloadedBusiness.getConfiguration().completedBy, "Ada Lovelace");
+    await Promise.all([
+      businesses.saveCustomer({ name: "Blackwater Provisioners" }, { fullName: "Ada Lovelace" }),
+      reloadedBusiness.saveCustomer({ name: "Rhodes Trading Post" }, { fullName: "Ada Lovelace" })
+    ]);
+    const concurrentBusiness = new BusinessStore({ repository: businessRepository });
+    await concurrentBusiness.initialize();
+    assert.deepEqual(
+      concurrentBusiness.listCustomers().map(customer => customer.name).sort(),
+      ["Blackwater Provisioners", "Rhodes Trading Post"]
+    );
 
     console.log("Database migration and repository tests passed.");
   } finally {

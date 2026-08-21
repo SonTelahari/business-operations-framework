@@ -44,6 +44,7 @@ async function run() {
     const health = await request("/health");
     assert.equal(health.body.hostedMode, true);
     assert.equal(health.body.tenantScoped, true);
+    assert.equal(health.body.multiReplicaDocumentWrites, true);
     assert.equal(health.body.version, packageVersion);
     assert.equal(health.body.release, "hosted-test-release");
     const serviceWorker = await fetch(`${baseUrl}/service-worker.js`).then(response => response.text());

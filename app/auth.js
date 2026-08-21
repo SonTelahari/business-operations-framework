@@ -14,6 +14,7 @@ class AccountStore {
     this.repository = repository;
     this.businessId = String(businessId || "primary");
     this.data = { version: 2, users: [], audit: [] };
+    this.documentRevision = 0;
     this.writeQueue = Promise.resolve();
   }
 
@@ -108,18 +109,17 @@ class AccountStore {
   }
 
   async authenticate(fullName, plainPassword) {
-    const user = this.data.users.find(candidate => candidate.loginKey === loginKey(fullName));
-    if (!user || !(await verifyPassword(plainPassword, user.password))) {
-      throw accountError("Character name or password is incorrect", 401, "invalid_credentials");
-    }
-    if (user.status === "pending") {
-      throw accountError("Your account is waiting for admin approval", 403, "approval_pending");
-    }
-    if (user.status !== "active") {
-      throw accountError("This account is disabled", 403, "account_disabled");
-    }
-
-    await this.mutate(async () => {
+    return this.mutate(async () => {
+      const user = this.data.users.find(candidate => candidate.loginKey === loginKey(fullName));
+      if (!user || !(await verifyPassword(plainPassword, user.password))) {
+        throw accountError("Character name or password is incorrect", 401, "invalid_credentials");
+      }
+      if (user.status === "pending") {
+        throw accountError("Your account is waiting for admin approval", 403, "approval_pending");
+      }
+      if (user.status !== "active") {
+        throw accountError("This account is disabled", 403, "account_disabled");
+      }
       user.lastLoginAt = new Date().toISOString();
       this.appendAudit({
         category: "authentication",
@@ -129,8 +129,8 @@ class AccountStore {
         subjectId: user.id,
         subjectName: user.fullName
       });
+      return publicUser(user);
     });
-    return publicUser(user);
   }
 
   getUserById(id) {
@@ -392,9 +392,31 @@ class AccountStore {
 
   async mutate(callback) {
     const operation = this.writeQueue.then(async () => {
-      const result = await callback();
-      await this.persist();
-      return result;
+      const attempts = this.repository?.loadVersioned ? 4 : 1;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        if (this.repository?.loadVersioned) this.data = await this.readData();
+        const baseline = structuredClone(this.data);
+        const baselineRevision = this.documentRevision;
+        try {
+          const result = await callback();
+          await this.persist();
+          return result;
+        } catch (error) {
+          this.data = baseline;
+          this.documentRevision = baselineRevision;
+          if (error.code !== "document_revision_conflict" || attempt === attempts) throw error;
+        }
+      }
+      throw accountError("Staff records changed while saving. Try again.", 409, "account_document_conflict");
+    });
+    this.writeQueue = operation.catch(() => {});
+    return operation;
+  }
+
+  async refresh() {
+    if (!this.repository?.loadVersioned) return;
+    const operation = this.writeQueue.then(async () => {
+      this.data = await this.readData();
     });
     this.writeQueue = operation.catch(() => {});
     return operation;
@@ -402,9 +424,16 @@ class AccountStore {
 
   async readData() {
     try {
-      const parsed = this.repository
-        ? await this.repository.load()
-        : JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
+      let parsed;
+      if (this.repository?.loadVersioned) {
+        const loaded = await this.repository.loadVersioned();
+        parsed = loaded.data;
+        this.documentRevision = loaded.revision;
+      } else {
+        parsed = this.repository
+          ? await this.repository.load()
+          : JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
+      }
       if (!parsed) return { version: 2, users: [], audit: [] };
       if (!Array.isArray(parsed.users)) throw new Error("users must be an array");
       if (!Array.isArray(parsed.audit)) parsed.audit = [];
@@ -418,7 +447,11 @@ class AccountStore {
 
   async persist() {
     if (this.repository) {
-      await this.repository.save(this.data);
+      const saved = await this.repository.save(
+        this.data,
+        this.repository.loadVersioned ? this.documentRevision : null
+      );
+      if (saved?.revision !== undefined) this.documentRevision = Number(saved.revision);
       return;
     }
     const temporaryPath = `${this.filePath}.${process.pid}.tmp`;

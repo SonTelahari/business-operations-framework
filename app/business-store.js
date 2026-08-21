@@ -38,6 +38,7 @@ class BusinessStore {
       productionBatches: [],
       dailyCloses: []
     };
+    this.documentRevision = 0;
     this.writeQueue = Promise.resolve();
   }
 
@@ -687,9 +688,31 @@ class BusinessStore {
 
   async mutate(callback) {
     const operation = this.writeQueue.then(async () => {
-      const result = await callback();
-      await this.persist();
-      return result;
+      const attempts = this.repository?.loadVersioned ? 4 : 1;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        if (this.repository?.loadVersioned) this.data = await this.readData();
+        const baseline = structuredClone(this.data);
+        const baselineRevision = this.documentRevision;
+        try {
+          const result = await callback();
+          await this.persist();
+          return result;
+        } catch (error) {
+          this.data = baseline;
+          this.documentRevision = baselineRevision;
+          if (error.code !== "document_revision_conflict" || attempt === attempts) throw error;
+        }
+      }
+      throw businessError("Business records changed while saving. Try again.", 409, "business_document_conflict");
+    });
+    this.writeQueue = operation.catch(() => {});
+    return operation;
+  }
+
+  async refresh() {
+    if (!this.repository?.loadVersioned) return;
+    const operation = this.writeQueue.then(async () => {
+      this.data = await this.readData();
     });
     this.writeQueue = operation.catch(() => {});
     return operation;
@@ -697,9 +720,16 @@ class BusinessStore {
 
   async readData() {
     try {
-      const parsed = this.repository
-        ? await this.repository.load()
-        : JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
+      let parsed;
+      if (this.repository?.loadVersioned) {
+        const loaded = await this.repository.loadVersioned();
+        parsed = loaded.data;
+        this.documentRevision = loaded.revision;
+      } else {
+        parsed = this.repository
+          ? await this.repository.load()
+          : JSON.parse(await fs.promises.readFile(this.filePath, "utf8"));
+      }
       return parsed ? normalizeBusinessData(parsed) : emptyBusinessData();
     } catch (error) {
       if (error.code === "ENOENT") {
@@ -711,7 +741,11 @@ class BusinessStore {
 
   async persist() {
     if (this.repository) {
-      await this.repository.save(this.data);
+      const saved = await this.repository.save(
+        this.data,
+        this.repository.loadVersioned ? this.documentRevision : null
+      );
+      if (saved?.revision !== undefined) this.documentRevision = Number(saved.revision);
       return;
     }
     const temporaryPath = `${this.filePath}.${process.pid}.tmp`;

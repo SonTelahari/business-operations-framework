@@ -68,20 +68,48 @@ class PostgresDocumentRepository {
   }
 
   async load() {
-    const result = await this.database.query(
-      "SELECT data FROM app_documents WHERE document_key = $1",
-      [this.documentKey]
-    );
-    return result.rows[0]?.data || null;
+    return (await this.loadVersioned()).data;
   }
 
-  async save(data) {
-    await this.database.query(`
-      INSERT INTO app_documents (document_key, data, updated_at)
-      VALUES ($1, $2::jsonb, now())
-      ON CONFLICT (document_key) DO UPDATE
-      SET data = EXCLUDED.data, updated_at = now()
-    `, [this.documentKey, JSON.stringify(data)]);
+  async loadVersioned() {
+    const result = await this.database.query(
+      "SELECT data, revision FROM app_documents WHERE document_key = $1",
+      [this.documentKey]
+    );
+    return {
+      data: result.rows[0]?.data || null,
+      revision: revisionNumber(result.rows[0]?.revision)
+    };
+  }
+
+  async save(data, expectedRevision = null) {
+    const payload = JSON.stringify(data);
+    const expected = optionalRevision(expectedRevision);
+    const result = expected === null
+      ? await this.database.query(`
+          INSERT INTO app_documents (document_key, data, revision, updated_at)
+          VALUES ($1, $2::jsonb, 1, now())
+          ON CONFLICT (document_key) DO UPDATE
+          SET data = EXCLUDED.data,
+              revision = app_documents.revision + 1,
+              updated_at = now()
+          RETURNING revision
+        `, [this.documentKey, payload])
+      : expected === 0
+        ? await this.database.query(`
+            INSERT INTO app_documents (document_key, data, revision, updated_at)
+            VALUES ($1, $2::jsonb, 1, now())
+            ON CONFLICT (document_key) DO NOTHING
+            RETURNING revision
+          `, [this.documentKey, payload])
+        : await this.database.query(`
+            UPDATE app_documents
+            SET data = $2::jsonb, revision = revision + 1, updated_at = now()
+            WHERE document_key = $1 AND revision = $3
+            RETURNING revision
+          `, [this.documentKey, payload, expected]);
+    if (!result.rowCount) throw new DocumentConflictError(this.documentKey, expected);
+    return { revision: revisionNumber(result.rows[0].revision) };
   }
 }
 
@@ -96,22 +124,77 @@ class TenantDocumentRepository {
   }
 
   async load() {
+    return (await this.loadVersioned()).data;
+  }
+
+  async loadVersioned() {
     const result = await this.database.query(`
-      SELECT data
+      SELECT data, revision
       FROM tenant_documents
       WHERE business_id = $1 AND document_key = $2
     `, [this.businessId, this.documentKey]);
-    return result.rows[0]?.data || null;
+    return {
+      data: result.rows[0]?.data || null,
+      revision: revisionNumber(result.rows[0]?.revision)
+    };
   }
 
-  async save(data) {
-    await this.database.query(`
-      INSERT INTO tenant_documents (business_id, document_key, data, updated_at)
-      VALUES ($1, $2, $3::jsonb, now())
-      ON CONFLICT (business_id, document_key) DO UPDATE
-      SET data = EXCLUDED.data, updated_at = now()
-    `, [this.businessId, this.documentKey, JSON.stringify(data)]);
+  async save(data, expectedRevision = null) {
+    const payload = JSON.stringify(data);
+    const expected = optionalRevision(expectedRevision);
+    const result = expected === null
+      ? await this.database.query(`
+          INSERT INTO tenant_documents (business_id, document_key, data, revision, updated_at)
+          VALUES ($1, $2, $3::jsonb, 1, now())
+          ON CONFLICT (business_id, document_key) DO UPDATE
+          SET data = EXCLUDED.data,
+              revision = tenant_documents.revision + 1,
+              updated_at = now()
+          RETURNING revision
+        `, [this.businessId, this.documentKey, payload])
+      : expected === 0
+        ? await this.database.query(`
+            INSERT INTO tenant_documents (business_id, document_key, data, revision, updated_at)
+            VALUES ($1, $2, $3::jsonb, 1, now())
+            ON CONFLICT (business_id, document_key) DO NOTHING
+            RETURNING revision
+          `, [this.businessId, this.documentKey, payload])
+        : await this.database.query(`
+            UPDATE tenant_documents
+            SET data = $3::jsonb, revision = revision + 1, updated_at = now()
+            WHERE business_id = $1 AND document_key = $2 AND revision = $4
+            RETURNING revision
+          `, [this.businessId, this.documentKey, payload, expected]);
+    if (!result.rowCount) {
+      throw new DocumentConflictError(`${this.businessId}:${this.documentKey}`, expected);
+    }
+    return { revision: revisionNumber(result.rows[0].revision) };
   }
+}
+
+class DocumentConflictError extends Error {
+  constructor(documentKey, expectedRevision) {
+    super(`Document ${documentKey} changed after revision ${expectedRevision}`);
+    this.name = "DocumentConflictError";
+    this.code = "document_revision_conflict";
+    this.status = 409;
+    this.documentKey = documentKey;
+    this.expectedRevision = expectedRevision;
+  }
+}
+
+function optionalRevision(value) {
+  if (value === null || value === undefined) return null;
+  const revision = Number(value);
+  if (!Number.isInteger(revision) || revision < 0) {
+    throw new TypeError("Document revision must be a non-negative integer");
+  }
+  return revision;
+}
+
+function revisionNumber(value) {
+  const revision = Number(value || 0);
+  return Number.isInteger(revision) && revision >= 0 ? revision : 0;
 }
 
 function poolOptions(connectionString) {
@@ -128,4 +211,10 @@ function poolOptions(connectionString) {
   };
 }
 
-module.exports = { Database, PostgresDocumentRepository, TenantDocumentRepository, poolOptions };
+module.exports = {
+  Database,
+  PostgresDocumentRepository,
+  TenantDocumentRepository,
+  DocumentConflictError,
+  poolOptions
+};
