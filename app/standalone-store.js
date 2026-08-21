@@ -1566,10 +1566,10 @@ async function materializeInventoryEvent(client, businessId, event) {
   const updated = await client.query(`
     UPDATE inventory_balances SET
       item_name = $4,
-      quantity = CASE WHEN $5 IS NULL THEN quantity + $6 ELSE $5 END,
-      counted_at = CASE WHEN $5 IS NULL THEN counted_at ELSE $7 END,
+      quantity = CASE WHEN $5::numeric IS NULL THEN quantity + $6 ELSE $5::numeric END,
+      counted_at = CASE WHEN $5::numeric IS NULL THEN counted_at ELSE $7 END,
       net_movement_since_count = CASE
-        WHEN $5 IS NOT NULL THEN 0
+        WHEN $5::numeric IS NOT NULL THEN 0
         WHEN counted_at IS NOT NULL THEN net_movement_since_count + $6
         ELSE net_movement_since_count
       END,
@@ -1670,11 +1670,11 @@ async function materializeLedgerEvent(client, businessId, event) {
   }
   const updated = await client.query(`
     UPDATE ledger_balances SET
-      balance = CASE WHEN $2 IS NULL THEN balance + $3 ELSE $2 END,
-      counted_balance = CASE WHEN $2 IS NULL THEN counted_balance ELSE $2 END,
-      counted_at = CASE WHEN $2 IS NULL THEN counted_at ELSE $4 END,
+      balance = CASE WHEN $2::numeric IS NULL THEN balance + $3 ELSE $2::numeric END,
+      counted_balance = CASE WHEN $2::numeric IS NULL THEN counted_balance ELSE $2::numeric END,
+      counted_at = CASE WHEN $2::numeric IS NULL THEN counted_at ELSE $4 END,
       net_movement_since_count = CASE
-        WHEN $2 IS NOT NULL THEN 0
+        WHEN $2::numeric IS NOT NULL THEN 0
         WHEN counted_at IS NOT NULL THEN net_movement_since_count + $3
         ELSE net_movement_since_count
       END,

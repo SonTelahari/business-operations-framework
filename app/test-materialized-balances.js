@@ -1,7 +1,13 @@
 const assert = require("node:assert/strict");
 const { newDb } = require("pg-mem");
+const fs = require("node:fs");
+const path = require("node:path");
 const { Database } = require("./database");
 const { StandaloneStore, reduceInventory, reduceLedger } = require("./standalone-store");
+
+const storeSource = fs.readFileSync(path.join(__dirname, "standalone-store.js"), "utf8");
+assert(storeSource.includes("$5::numeric IS NULL"), "PostgreSQL must know the nullable inventory count parameter type");
+assert(storeSource.includes("$2::numeric IS NULL"), "PostgreSQL must know the nullable ledger count parameter type");
 
 async function run() {
   const memory = newDb({ autoCreateForeignKeyIndices: true, noAstCoverageCheck: true });
