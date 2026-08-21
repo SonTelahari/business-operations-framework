@@ -3628,7 +3628,7 @@ function renderSupplyDemand(plan) {
   const missingUnits = outstanding.reduce((sum, line) => sum + Number(line.missing || 0), 0);
   elements.supplyDemandMeta.textContent = plan.length
     ? `${formatNumber(requiredUnits)} base units required / ${formatNumber(missingUnits)} still to order across ${outstanding.length} ${outstanding.length === 1 ? "material" : "materials"}`
-    : "No base-material demand from current stock shortages or open customer orders";
+    : "No base-material demand from storefront targets, storage targets, or open customer orders";
   elements.addAllMissingSupply.disabled = !outstanding.length;
   elements.supplyDemandList.innerHTML = outstanding.length
     ? outstanding.map(line => `
@@ -3639,13 +3639,13 @@ function renderSupplyDemand(plan) {
         </header>
         <div class="supply-demand-metrics">
           <span>Required ${formatNumber(line.demand)}</span>
-          <span>Storage ${formatNumber(line.available)}</span>
+          <span>Usable stock ${formatNumber(line.available)}</span>
           <span>Ordered ${formatNumber(line.ordered)}</span>
         </div>
-        <small>${formatNumber(line.restockDemand)} for storefront targets${line.salesDemand ? ` / ${formatNumber(line.salesDemand)} for customer orders` : ""}</small>
+        <small>Gross demand: ${formatNumber(line.restockDemand)} storefront / ${formatNumber(line.storageDemand)} storage / ${formatNumber(line.salesDemand)} open orders${line.intermediateCoverage ? ` / ${formatNumber(line.intermediateCoverage)} covered by intermediate stock or combined batches` : ""}</small>
       </article>
     `).join("")
-    : `<div class="empty-card">Current storage and incoming supply orders cover all expanded recipe needs</div>`;
+    : `<div class="empty-card">Usable inventory and incoming supply orders cover every expanded base-material need</div>`;
 }
 
 function renderSupplyLines(purchasePlan) {
@@ -7839,37 +7839,79 @@ function getStorageAlertPlan() {
 }
 
 function getMaterialPurchasePlan(excludeSupplyOrderId = "") {
-  const demand = new Map();
-  const addDemand = (ingredient, quantity, source) => {
-    const key = normalize(ingredient);
-    const current = demand.get(key) || { ingredient, demand: 0, restockDemand: 0, salesDemand: 0 };
-    current.demand += Number(quantity || 0);
-    if (source === "restock") current.restockDemand += Number(quantity || 0);
-    if (source === "sales") current.salesDemand += Number(quantity || 0);
-    demand.set(key, current);
+  const availableCounts = getProductionAvailableCounts();
+  const demandBySource = {
+    restock: getTargetProcurementDemand(stockTargets, "Storefront", availableCounts.Storefront),
+    storage: getTargetProcurementDemand(storageTargets, "Storage", availableCounts.Storage),
+    sales: getOpenOrderProcurementDemand()
   };
+  return window.BUSINESS_PROCUREMENT_PLANNER.planProcurement({
+    demandBySource,
+    recipes: recipeCatalog,
+    recipeYields: recipeYieldCatalog,
+    counts: availableCounts,
+    targetFloors: {
+      Storefront: getProcurementTargetFloors(stockTargets),
+      Storage: getProcurementTargetFloors(storageTargets)
+    },
+    materialKeys: getProcurementMaterialKeys(),
+    committed: getCommittedSupplyQuantities(excludeSupplyOrderId)
+  });
+}
 
-  getReplenishmentPlan().materials
-    .filter(line => line.sourceLocation === "Storage")
-    .forEach(line => addDemand(line.ingredient, line.needed, "restock"));
-  orders
+function getOpenOrderProcurementDemand() {
+  return orders
     .filter(order => !statusesHiddenFromActive.has(order.status))
-    .forEach(order => getProductionPlan(order).materials.forEach(material => addDemand(material.ingredient, material.qty, "sales")));
+    .flatMap(order => {
+      const batch = productionBatchForOrder(order.id);
+      if (!batch) {
+        return getProductionPlan(order).fulfillmentLines
+          .filter(line => line.productionQuantity > 0)
+          .map(line => ({ itemName: line.name, quantity: line.productionQuantity }));
+      }
+      if (!PRODUCTION_ACTIVE_STATUSES.has(batch.status)) return [];
+      return getProductionBatchMaterialNeeds(batch).map(material => ({
+        itemName: material.ingredient,
+        quantity: material.needed,
+        directMaterial: true
+      }));
+    });
+}
 
-  const storageCounts = getLatestCounts("Storage");
-  const committed = getCommittedSupplyQuantities(excludeSupplyOrderId);
-  return [...demand.entries()].map(([key, line]) => {
-    const available = storageCounts.get(key) || 0;
-    const ordered = committed.get(key) || 0;
-    const shortage = Math.max(0, line.demand - available);
-    return {
-      ...line,
-      available,
-      ordered,
-      shortage,
-      missing: Math.max(0, shortage - ordered)
-    };
-  }).sort((a, b) => b.missing - a.missing || a.ingredient.localeCompare(b.ingredient));
+function getTargetProcurementDemand(targets, location, availableCounts) {
+  return targets
+    .filter(target => !target.deleting && Number(target.target || 0) > 0)
+    .map(target => ({
+      itemName: target.itemName || target.itemLabel,
+      quantity: Math.max(0, Number(target.target || 0) - Number(availableCounts.get(stockKey(target)) || 0)),
+      location
+    }))
+    .filter(line => line.quantity > 0);
+}
+
+function getProcurementTargetFloors(targets) {
+  const floors = new Map();
+  targets
+    .filter(target => !target.deleting && Number(target.target || 0) > 0)
+    .forEach(target => {
+      const key = stockKey(target);
+      floors.set(key, Math.max(Number(floors.get(key) || 0), Number(target.target || 0)));
+    });
+  return floors;
+}
+
+function getProcurementMaterialKeys() {
+  const keys = new Set(ingredientCatalog.map(item => normalize(item.name || item.label)));
+  catalogGoods()
+    .filter(item => item.itemType === "material" || item.itemType === "both")
+    .forEach(item => keys.add(normalize(item.name || item.label)));
+  const recipeKeys = new Set(Object.keys(recipeCatalog).map(normalize));
+  Object.values(recipeCatalog).flat().forEach(component => {
+    const ingredient = component?.ingredient ?? component?.[0];
+    const key = normalize(ingredient);
+    if (key && !recipeKeys.has(key)) keys.add(key);
+  });
+  return keys;
 }
 
 function getCommittedSupplyQuantities(excludeSupplyOrderId = "") {
@@ -7891,7 +7933,7 @@ function getSupplyLineMetrics(ingredient, excludeSupplyOrderId = "", purchasePla
   if (planned) return planned;
   const available = getLatestCounts("Storage").get(key) || 0;
   const ordered = getCommittedSupplyQuantities(excludeSupplyOrderId).get(key) || 0;
-  return { ingredient, demand: 0, available, ordered, shortage: 0, missing: 0 };
+  return { ingredient, demand: 0, available, ordered, shortage: 0, missing: 0, restockDemand: 0, storageDemand: 0, salesDemand: 0 };
 }
 
 function getLatestCounts(location) {

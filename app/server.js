@@ -122,6 +122,7 @@ const publicFiles = new Set([
   "/items.js",
   "/recipes.js",
   "/production-planner.js",
+  "/procurement-planner.js",
   "/production-inventory.js",
   "/supply-telegram.js",
   "/inventory-counts.js",

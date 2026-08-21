@@ -85,7 +85,7 @@ async function run() {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await openMenuSection(page, "inventory", "supplies", "#supplySection");
-    await assertSupplyDemandLayout(page, { required: 12, restock: 8, sales: 4 });
+    await assertSupplyDemandLayout(page, { required: 22, restock: 8, storage: 10, sales: 4 });
     await assertNoHorizontalViewportOverflow(page);
     await page.screenshot({ path: path.join(RESULTS_DIR, "supplies-mobile.png"), fullPage: true });
     await openSection(page, "dashboard", "#dashboardSection");
@@ -217,7 +217,7 @@ async function exerciseNavigation(page) {
   await openSection(page, "production", "#productionSection");
   await openSection(page, "store", "#storeSection");
   await openMenuSection(page, "inventory", "supplies", "#supplySection");
-  await assertSupplyDemandLayout(page, { required: 8, restock: 8, sales: 0 });
+  await assertSupplyDemandLayout(page, { required: 18, restock: 8, storage: 10, sales: 0 });
   await page.screenshot({ path: path.join(RESULTS_DIR, "supplies-desktop.png"), fullPage: true });
   await openMenuSection(page, "management", "operations", "#operationsSection");
   await openMenuSection(page, "owner", "business-settings", "#businessSettingsSection");
@@ -353,8 +353,9 @@ async function assertSupplyDemandLayout(page, expected) {
     new RegExp(`Required\\s+${expected.required}`),
     `nested demand must show ${expected.required} base units`
   );
-  assert.match(demandText, new RegExp(`${expected.restock}\\s+for storefront targets`));
-  if (expected.sales) assert.match(demandText, new RegExp(`${expected.sales}\\s+for customer orders`));
+  assert.match(demandText, new RegExp(`${expected.restock}\\s+storefront`));
+  assert.match(demandText, new RegExp(`${expected.storage}\\s+storage`));
+  assert.match(demandText, new RegExp(`${expected.sales}\\s+open orders`));
   const layout = await page.evaluate(() => {
     const demand = document.querySelector(".supply-demand-panel").getBoundingClientRect();
     const editor = document.querySelector("#supplySection .active-order").getBoundingClientRect();
