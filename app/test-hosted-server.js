@@ -59,6 +59,7 @@ async function run() {
           last_discord_message_at: "2026-08-21T09:00:00.000Z",
           last_relevant_message_at: "2026-08-21T09:00:00.000Z",
           last_forward_success_at: "2026-08-21T09:00:01.000Z",
+          last_forward_error: "Business API rejected payload (404): discord_channel_unregistered",
           seen_messages: 12,
           relevant_messages: 10,
           forwarded_payloads: 9,
@@ -73,6 +74,7 @@ async function run() {
     assert.equal(healthWithBridge.body.discordBridge.sharedBusinessMode, true);
     assert.equal(healthWithBridge.body.discordBridge.forwardedPayloads, 9);
     assert.equal(healthWithBridge.body.discordBridge.failedPayloads, 1);
+    assert.match(healthWithBridge.body.discordBridge.lastForwardError, /discord_channel_unregistered/);
     const serviceWorker = await fetch(`${baseUrl}/service-worker.js`).then(response => response.text());
     assert.match(serviceWorker, /\/\/ release:hosted-test-release\s*$/);
 
