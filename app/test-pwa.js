@@ -178,7 +178,10 @@ assert(appScript.includes('function switchWorkspace(event)'), "the ledger must s
 assert(appScript.includes('function linkWorkspaceJob(event)'), "the ledger must support credential-verified local job linking");
 assert(appScript.includes("function workspaceStorageKey(baseKey)"), "browser fallback data must be scoped to the active business");
 assert(appScript.includes("function loadWorkspaceLocalState()"), "workspace switching must reload only that business's fallback data");
-assert(appScript.includes("localStorage.setItem(workspaceStorageKey(OPERATIONS_KEY)"), "pending manual operations must not cross business boundaries");
+assert(appScript.includes("writeLocalStorage(workspaceStorageKey(OPERATIONS_KEY)"), "pending manual operations must not cross business boundaries");
+assert(appScript.includes("function loadWorkspaceArray(baseKey)"), "failed cache migrations must continue reading legacy fallback data");
+assert(appScript.includes("if (!writeLocalStorage(scopedKey, legacy)) return false"), "legacy fallback data must only be removed after a successful scoped save");
+assert(appScript.includes('reportWorkspaceStartupIssue("Browser fallback data could not be loaded"'), "browser cache failures must not interrupt authenticated rendering");
 assert(appScript.includes("function hydrateSharedTimeClock(snapshot)"), "time-clock state must recover from the shared database");
 assert(appScript.includes("hydrateSharedTimeClock(nextSnapshot)"), "background refreshes must reconcile the active shift");
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");

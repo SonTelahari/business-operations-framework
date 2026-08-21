@@ -68,6 +68,7 @@ async function run() {
 
     await signIn(page, workspace.code);
     await assertWorkspaceReady(page, workspace.code);
+    await exerciseBrowserCacheFailureRecovery(page, workspace.code);
     await exerciseNavigation(page);
     await updateBusinessAppearance(page);
     await exercisePersistentTimeClock(page, workspace.code);
@@ -179,6 +180,32 @@ async function assertWorkspaceReady(page, workspaceCode) {
     const status = document.querySelector("#appStartupStatus");
     return status && status.classList.contains("hidden") && !status.textContent.trim();
   });
+}
+
+async function exerciseBrowserCacheFailureRecovery(page, workspaceCode) {
+  await page.evaluate(() => {
+    const baseKey = "business_operations_manual_operations_v1";
+    Object.keys(localStorage)
+      .filter(key => key.startsWith(`${baseKey}_`))
+      .forEach(key => localStorage.removeItem(key));
+    localStorage.setItem(baseKey, JSON.stringify([{ id: "legacy-cache-probe" }]));
+  });
+  await page.addInitScript(() => {
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItemWithQuotaProbe(key, value) {
+      if (String(key).startsWith("business_operations_manual_operations_v1_")) {
+        throw new DOMException("Simulated browser storage quota", "QuotaExceededError");
+      }
+      return originalSetItem.call(this, key, value);
+    };
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await assertWorkspaceReady(page, workspaceCode);
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("business_operations_manual_operations_v1") !== null),
+    true,
+    "a failed workspace cache migration must preserve the legacy fallback"
+  );
 }
 
 async function exerciseNavigation(page) {

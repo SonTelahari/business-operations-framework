@@ -968,16 +968,12 @@ function newSupplier() {
 }
 
 function loadOrders() {
-  try {
-    return JSON.parse(localStorage.getItem(workspaceStorageKey(STORAGE_KEY)) || "[]");
-  } catch {
-    return [];
-  }
+  return loadWorkspaceArray(STORAGE_KEY);
 }
 
 function loadTimeClock(storageKey = TIME_CLOCK_KEY) {
   try {
-    const stored = JSON.parse(localStorage.getItem(storageKey) || "{}");
+    const stored = JSON.parse(readLocalStorage(storageKey) || "{}");
     return {
       current: stored.current || null,
       entries: Array.isArray(stored.entries) ? stored.entries : []
@@ -988,31 +984,30 @@ function loadTimeClock(storageKey = TIME_CLOCK_KEY) {
 }
 
 function loadOperations() {
-  try {
-    return JSON.parse(localStorage.getItem(workspaceStorageKey(OPERATIONS_KEY)) || "[]");
-  } catch {
-    return [];
-  }
+  return loadWorkspaceArray(OPERATIONS_KEY);
 }
 
 function loadStockTargets() {
-  try {
-    return JSON.parse(localStorage.getItem(workspaceStorageKey(TARGETS_KEY)) || "[]");
-  } catch {
-    return [];
-  }
+  return loadWorkspaceArray(TARGETS_KEY);
 }
 
 function loadStorageTargets() {
+  return loadWorkspaceArray(STORAGE_TARGETS_KEY);
+}
+
+function loadWorkspaceArray(baseKey) {
   try {
-    return JSON.parse(localStorage.getItem(workspaceStorageKey(STORAGE_TARGETS_KEY)) || "[]");
+    const scoped = readLocalStorage(workspaceStorageKey(baseKey));
+    const stored = scoped !== null ? scoped : readLocalStorage(baseKey);
+    const parsed = JSON.parse(stored || "[]");
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
 function persistTimeClock() {
-  localStorage.setItem(timeClockStorageKey(), JSON.stringify(timeClock));
+  return writeLocalStorage(timeClockStorageKey(), JSON.stringify(timeClock));
 }
 
 function timeClockStorageKey() {
@@ -1021,15 +1016,15 @@ function timeClockStorageKey() {
 }
 
 function persistOperations() {
-  localStorage.setItem(workspaceStorageKey(OPERATIONS_KEY), JSON.stringify(operations));
+  return writeLocalStorage(workspaceStorageKey(OPERATIONS_KEY), JSON.stringify(operations));
 }
 
 function persistStockTargets() {
-  localStorage.setItem(workspaceStorageKey(TARGETS_KEY), JSON.stringify(stockTargets));
+  return writeLocalStorage(workspaceStorageKey(TARGETS_KEY), JSON.stringify(stockTargets));
 }
 
 function persistStorageTargets() {
-  localStorage.setItem(workspaceStorageKey(STORAGE_TARGETS_KEY), JSON.stringify(storageTargets));
+  return writeLocalStorage(workspaceStorageKey(STORAGE_TARGETS_KEY), JSON.stringify(storageTargets));
 }
 
 function workspaceStorageKey(baseKey) {
@@ -1037,13 +1032,43 @@ function workspaceStorageKey(baseKey) {
   return `${baseKey}_${workspaceId}`;
 }
 
+function readLocalStorage(storageKey) {
+  try {
+    return localStorage.getItem(storageKey);
+  } catch (error) {
+    console.warn(`Browser cache could not read ${storageKey}:`, error);
+    return null;
+  }
+}
+
+function writeLocalStorage(storageKey, value) {
+  try {
+    localStorage.setItem(storageKey, value);
+    return true;
+  } catch (error) {
+    console.warn(`Browser cache could not save ${storageKey}:`, error);
+    return false;
+  }
+}
+
+function removeLocalStorage(storageKey) {
+  try {
+    localStorage.removeItem(storageKey);
+    return true;
+  } catch (error) {
+    console.warn(`Browser cache could not remove ${storageKey}:`, error);
+    return false;
+  }
+}
+
 function migrateLegacyWorkspaceStorage(baseKey) {
   const scopedKey = workspaceStorageKey(baseKey);
-  if (localStorage.getItem(scopedKey) !== null) return;
-  const legacy = localStorage.getItem(baseKey);
-  if (legacy === null) return;
-  localStorage.setItem(scopedKey, legacy);
-  localStorage.removeItem(baseKey);
+  if (readLocalStorage(scopedKey) !== null) return true;
+  const legacy = readLocalStorage(baseKey);
+  if (legacy === null) return true;
+  if (!writeLocalStorage(scopedKey, legacy)) return false;
+  removeLocalStorage(baseKey);
+  return true;
 }
 
 function loadWorkspaceLocalState() {
@@ -1056,11 +1081,17 @@ function loadWorkspaceLocalState() {
 
   const previousUserClockKey = `${TIME_CLOCK_KEY}_${currentUser.id}`;
   const currentClockKey = timeClockStorageKey();
-  if (localStorage.getItem(currentClockKey) === null && localStorage.getItem(previousUserClockKey) !== null) {
-    localStorage.setItem(currentClockKey, localStorage.getItem(previousUserClockKey));
-    localStorage.removeItem(previousUserClockKey);
+  const currentClock = readLocalStorage(currentClockKey);
+  const previousClock = readLocalStorage(previousUserClockKey);
+  let clockKeyToLoad = currentClockKey;
+  if (currentClock === null && previousClock !== null) {
+    if (writeLocalStorage(currentClockKey, previousClock)) {
+      removeLocalStorage(previousUserClockKey);
+    } else {
+      clockKeyToLoad = previousUserClockKey;
+    }
   }
-  timeClock = loadTimeClock(currentClockKey);
+  timeClock = loadTimeClock(clockKeyToLoad);
 }
 
 function hydrateSharedTimeClock(snapshot) {
@@ -2242,7 +2273,7 @@ async function migrateLegacySalesOrders() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     orders = Array.isArray(result.orders) ? result.orders : [];
     legacyOrdersPendingMigration = [];
-    localStorage.removeItem(workspaceStorageKey(STORAGE_KEY));
+    removeLocalStorage(workspaceStorageKey(STORAGE_KEY));
     return true;
   } catch (error) {
     orders = [...legacyOrdersPendingMigration];
@@ -7044,8 +7075,12 @@ async function loadSessionAndData() {
     }] : []
   };
   currentRole = currentUser.role;
-  loadWorkspaceLocalState();
-  migrateLegacyTimeClock();
+  try {
+    loadWorkspaceLocalState();
+    migrateLegacyTimeClock();
+  } catch (error) {
+    reportWorkspaceStartupIssue("Browser fallback data could not be loaded", error);
+  }
   try {
     applyIdentityDefaults();
     render();
@@ -7070,8 +7105,7 @@ function migrateLegacyTimeClock() {
   const legacy = loadTimeClock(TIME_CLOCK_KEY);
   if (legacy.current && normalize(legacy.current.employee) === normalize(currentUser.fullName)) {
     timeClock = legacy;
-    persistTimeClock();
-    localStorage.removeItem(TIME_CLOCK_KEY);
+    if (persistTimeClock()) removeLocalStorage(TIME_CLOCK_KEY);
   }
 }
 
@@ -7168,7 +7202,7 @@ async function switchWorkspace(event) {
     setWorkspaceDialogStatus(result.error || "Business could not be opened", "error");
     return;
   }
-  if (result.workspace?.code) localStorage.setItem("business_ledger_workspace_code", result.workspace.code);
+  if (result.workspace?.code) writeLocalStorage("business_ledger_workspace_code", result.workspace.code);
   window.location.replace("/");
 }
 
