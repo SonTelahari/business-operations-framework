@@ -48,3 +48,5 @@ The publisher is optional. Leave both channel IDs blank to disable it. `BUSINESS
 ## Shared Hosted Mode
 
 Set `SHARED_BUSINESS_MODE=1` and leave `DISCORD_CHANNEL_ID` blank to run one bot for multiple businesses. The bridge watches the channels visible to the bot. The API uses the Discord event channel ID to route each movement to its registered workspace; unknown channels are rejected. Each workspace admin configures its event, inventory, and alert channel IDs in the app.
+
+In shared mode, the bridge also replays the latest 100 messages from every registered storefront and storage/ledger input channel when it starts. Webhook IDs make this catch-up idempotent, so messages already stored are skipped while movements received during an outage are restored. Set `BRIDGE_BACKFILL_MESSAGES` from `0` to `100` to change the history window; `0` disables catch-up.

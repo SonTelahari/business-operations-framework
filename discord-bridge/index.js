@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const http = require('http');
 const path = require('path');
 const { appendCaptureRecord, createCaptureRecord, serializeCaptureRecord } = require('./capture');
+const { createRegisteredChannelBackfill, normalizeBackfillLimit } = require('./channel-backfill');
 const { createInventoryPublisher } = require('./inventory-publisher');
 const { createSharedInventoryPublisher } = require('./shared-inventory-publisher');
 const { parseStillWaterEmbed } = require('./parser');
@@ -41,6 +42,7 @@ const INVENTORY_MESSAGE_ID = normalizeSnowflake(process.env.INVENTORY_MESSAGE_ID
 const STOCK_ALERT_MESSAGE_ID = normalizeSnowflake(process.env.STOCK_ALERT_MESSAGE_ID);
 const INVENTORY_REFRESH_SECONDS = numberValue(process.env.INVENTORY_REFRESH_SECONDS) || 300;
 const BRIDGE_HEARTBEAT_SECONDS = Math.max(15, numberValue(process.env.BRIDGE_HEARTBEAT_SECONDS) || 30);
+const BRIDGE_BACKFILL_MESSAGES = normalizeBackfillLimit(process.env.BRIDGE_BACKFILL_MESSAGES);
 const PORT = numberValue(process.env.PORT);
 const CAPTURE_FILE = path.join(__dirname, 'captures', 'events.jsonl');
 const INVENTORY_PUBLISHING_REQUESTED = Boolean(INVENTORY_CHANNEL_ID || STOCK_ALERT_CHANNEL_ID);
@@ -80,6 +82,14 @@ const inventoryPublisher = SHARED_BUSINESS_MODE
       refreshMs: INVENTORY_REFRESH_SECONDS * 1000,
       logger: publisherLogger
     });
+const channelBackfill = createRegisteredChannelBackfill({
+  client,
+  apiBaseUrl: SHARED_BUSINESS_MODE && !CAPTURE_ONLY ? BUSINESS_API_URL : '',
+  apiToken: BRIDGE_API_TOKEN,
+  limit: BRIDGE_BACKFILL_MESSAGES,
+  processMessage: processDiscordMessage,
+  logger: publisherLogger
+});
 
 client.once('clientReady', () => {
   telemetry.discordReady();
@@ -93,10 +103,22 @@ client.once('clientReady', () => {
   inventoryPublisher.start().catch(error => {
     logError(`Unable to start Discord inventory publishing: ${error.message}`);
   });
+  channelBackfill.run('startup').catch(error => {
+    logError(`Unable to catch up registered Discord channels: ${error.message}`);
+  });
 });
 
-client.on('messageCreate', async (message) => {
-  telemetry.messageSeen(message);
+client.on('messageCreate', (message) => {
+  processDiscordMessage(message).catch(error => {
+    telemetry.forwardFailure(error);
+    logError(`Unable to process Discord message ${message.id}: ${error.message}`);
+  });
+});
+
+async function processDiscordMessage(message, options = {}) {
+  const trackTelemetry = options.trackTelemetry !== false;
+  const summary = { payloads: 0, duplicates: 0, applied: 0, review: 0, errors: 0 };
+  if (trackTelemetry) telemetry.messageSeen(message);
   if (DEBUG_DISCORD) {
     logInfo(
       `Saw message channel=${message.channelId} author=${message.author?.tag || 'unknown'} webhook=${message.webhookId || 'none'} embeds=${message.embeds.length}`
@@ -104,13 +126,13 @@ client.on('messageCreate', async (message) => {
   }
 
   if (!SHARED_BUSINESS_MODE && message.channelId !== DISCORD_CHANNEL_ID) {
-    telemetry.messageIgnored();
+    if (trackTelemetry) telemetry.messageIgnored();
     if (DEBUG_DISCORD) {
       logInfo(`Ignored channel ${message.channelId}; expected ${DISCORD_CHANNEL_ID}`);
     }
-    return;
+    return summary;
   }
-  telemetry.messageRelevant();
+  if (trackTelemetry) telemetry.messageRelevant();
 
   const sources = message.embeds.length
     ? message.embeds.map((embed, index) => ({
@@ -128,16 +150,18 @@ client.on('messageCreate', async (message) => {
     for (const source of sources) {
       const record = createCaptureRecord(message, source);
       appendCaptureRecord(CAPTURE_FILE, record);
-      telemetry.payloadCaptured();
+      if (trackTelemetry) telemetry.payloadCaptured();
       logInfo(`CAPTURE ${serializeCaptureRecord(record)}`);
+      summary.payloads += 1;
     }
-    return;
+    return summary;
   }
 
   const payloads = sources.map(parseStillWaterEmbed);
 
   for (const payload of payloads) {
-    telemetry.forwardAttempt();
+    summary.payloads += 1;
+    if (trackTelemetry) telemetry.forwardAttempt();
     try {
       const outboundPayload = prepareSheetPayload({
         ...payload,
@@ -145,22 +169,31 @@ client.on('messageCreate', async (message) => {
         discord_channel_id: message.channelId,
         timestamp: message.createdAt.toISOString()
       });
-      await forwardToBusinessApi(outboundPayload);
-      telemetry.forwardSuccess();
-      if (SHARED_BUSINESS_MODE) {
-        inventoryPublisher.requestRefresh('business event', message.channelId);
-      } else {
-        inventoryPublisher.requestRefresh('storefront event');
+      const result = await forwardToBusinessApi(outboundPayload, {
+        quietDuplicate: options.quietDuplicate === true
+      });
+      if (trackTelemetry) telemetry.forwardSuccess();
+      if (result?.duplicate) summary.duplicates += 1;
+      else if (result?.reviewRequired) summary.review += 1;
+      else summary.applied += 1;
+      if (!result?.duplicate) {
+        if (SHARED_BUSINESS_MODE) {
+          inventoryPublisher.requestRefresh(options.backfill ? 'channel catch-up' : 'business event', message.channelId);
+        } else {
+          inventoryPublisher.requestRefresh('storefront event');
+        }
       }
-      if (payload.review_required) {
+      if (!result?.duplicate && payload.review_required) {
         logWarn(`Sent Discord message ${message.id} to review: ${payload.review_reason || 'parser review required'}`);
       }
     } catch (error) {
-      telemetry.forwardFailure(error);
+      summary.errors += 1;
+      if (trackTelemetry) telemetry.forwardFailure(error);
       logError(`Failed to forward Discord message ${message.id}: ${error.message}`);
     }
   }
-});
+  return summary;
+}
 
 client.on('interactionCreate', async (interaction) => {
   try {
@@ -182,7 +215,7 @@ client.on('shardReconnecting', () => {
   logInfo('Discord reconnecting...');
 });
 
-async function forwardToBusinessApi(payload) {
+async function forwardToBusinessApi(payload, options = {}) {
   const response = await fetch(EVENT_API_URL, {
     method: 'POST',
     headers: {
@@ -215,7 +248,10 @@ async function forwardToBusinessApi(payload) {
   ].filter(Boolean).join(", ");
   const itemName = payload.item_name || payload.proposed_item_name || 'unresolved item';
   const quantity = payload.quantity || payload.proposed_quantity || 0;
-  logInfo(`Forwarded ${payload.event_type} for ${itemName} x${quantity}${controls ? ` / ${controls}` : ""}: ${resultText}`);
+  if (!result?.duplicate || !options.quietDuplicate) {
+    logInfo(`Forwarded ${payload.event_type} for ${itemName} x${quantity}${controls ? ` / ${controls}` : ""}: ${resultText}`);
+  }
+  return result || {};
 }
 
 function startHealthServer() {
@@ -236,6 +272,7 @@ function startHealthServer() {
         discord_ready: client.isReady(),
         events: telemetry.health(),
         inventory_publisher: inventoryPublisher.health(),
+        channel_backfill: channelBackfill.health(),
         uptime_seconds: Math.round(process.uptime())
       }));
       return;
