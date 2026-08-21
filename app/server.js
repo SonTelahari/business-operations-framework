@@ -2911,6 +2911,7 @@ async function prepareProductionProgress(batch, payload, user) {
   after.uses.forEach((requirement, key) => {
     const quantity = Number(requirement.quantity || 0) - Number(before.uses.get(key)?.quantity || 0);
     if (quantity < -0.000001) {
+      if (webhookManagedLocations.has(requirement.sourceLocation)) return;
       throw productionError(
         `Complete intermediate production before dependent products for ${requirement.itemName}`,
         409,

@@ -5403,6 +5403,20 @@ body.auth-page {
   color: var(--muted);
 }
 
+.production-detail-actions p[data-tone="pending"] {
+  color: var(--gold-strong);
+}
+
+.production-detail-actions p[data-tone="success"] {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.production-detail-actions p[data-tone="error"] {
+  color: var(--red);
+  font-weight: 700;
+}
+
 .latest-handoff-panel {
   grid-column: 1 / -1;
 }

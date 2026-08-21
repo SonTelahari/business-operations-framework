@@ -170,6 +170,7 @@ let backendRefreshPromise = null;
 let lastBackendRefreshAt = 0;
 let supplyReceiptPending = false;
 let productionActionPending = false;
+let productionActionNotice = null;
 let salesOrderSavePending = false;
 let customerSavePending = false;
 let dailyCloseActionPending = false;
@@ -6524,6 +6525,7 @@ function renderProductionDetail(batch) {
     elements.productionProgressLines.innerHTML = `<div class="empty-card">No production lines selected</div>`;
     elements.productionMaterialStatus.innerHTML = `<div class="empty-card">No material plan selected</div>`;
     elements.productionActionStatus.textContent = "Select a batch to begin";
+    elements.productionActionStatus.dataset.tone = "";
     elements.startProduction.disabled = true;
     elements.recordProduction.disabled = true;
     elements.cancelProduction.disabled = true;
@@ -6584,11 +6586,13 @@ function renderProductionDetail(batch) {
       </div>
     `).join("")
     : `<div class="empty-card">No remaining materials needed</div>`;
-  elements.productionActionStatus.textContent = batch.pendingProgress
-      ? "Data update paused. Record Progress will retry the saved movements safely."
+  const actionNotice = productionActionNotice?.batchId === batch.id ? productionActionNotice : null;
+  elements.productionActionStatus.textContent = actionNotice?.message || (batch.pendingProgress
+    ? "Data update paused. Record Progress will retry the saved movements safely."
     : materialPlan.shortageCount
       ? `${materialPlan.shortageCount} materials are short`
-      : closed ? batch.status : "Materials available for the remaining plan";
+      : closed ? batch.status : "Materials available for the remaining plan");
+  elements.productionActionStatus.dataset.tone = actionNotice?.tone || (batch.pendingProgress ? "pending" : "");
   elements.startProduction.disabled = productionActionPending || closed || batch.status !== "Planned";
   elements.recordProduction.disabled = productionActionPending || closed;
   elements.cancelProduction.disabled = productionActionPending || closed || !isManagement();
@@ -6667,11 +6671,16 @@ async function recordSelectedProductionProgress() {
       return line && completion.completedCrafts > Number(line.completedCrafts || 0);
     });
   if (!completions.length && !batch.pendingProgress) {
-    elements.productionActionStatus.textContent = "Increase at least one completed craft-cycle total";
+    productionActionNotice = {
+      batchId: batch.id,
+      message: "Increase at least one completed craft-cycle total",
+      tone: "error"
+    };
+    renderProductionDetail(batch);
     return;
   }
-  await runProductionAction(batch, "progress", { completions }, "Production progress recorded");
-  await loadBackendSnapshot({ silent: true });
+  const succeeded = await runProductionAction(batch, "progress", { completions }, "Production progress recorded");
+  if (succeeded) await loadBackendSnapshot({ silent: true });
 }
 
 async function cancelSelectedProductionBatch() {
@@ -6683,9 +6692,13 @@ async function cancelSelectedProductionBatch() {
 
 async function runProductionAction(batch, action, payload, successMessage) {
   productionActionPending = true;
-  let finalMessage = "";
+  let succeeded = false;
+  productionActionNotice = {
+    batchId: batch.id,
+    message: action === "progress" ? "Writing production movements to the shared ledger" : "Updating production batch",
+    tone: "pending"
+  };
   renderProductionDetail(batch);
-  elements.productionActionStatus.textContent = action === "progress" ? "Writing production movements to the shared ledger" : "Updating production batch";
   try {
     const response = await fetch(`/api/production-batches/${encodeURIComponent(batch.id)}/${action}`, {
       method: "POST",
@@ -6693,28 +6706,39 @@ async function runProductionAction(batch, action, payload, successMessage) {
       body: JSON.stringify(payload)
     });
     const result = await response.json().catch(() => ({ ok: false, error: `API ${response.status}` }));
-    if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
+    if (!response.ok || !result.ok) {
+      const requestError = new Error(result.error || `API ${response.status}`);
+      requestError.code = result.code || "production_action_failed";
+      requestError.status = response.status;
+      throw requestError;
+    }
     productionBatches = Array.isArray(result.batches) ? result.batches : [];
     applySalesOrdersFromResult(result);
     activeProductionBatchId = result.batch.id;
-    finalMessage = action === "progress" && result.batch.sourceType === "Storefront Restock"
-      ? "Materials recorded / awaiting storefront deposit"
-      : successMessage;
+    productionActionNotice = {
+      batchId: result.batch.id,
+      message: action === "progress" && result.batch.sourceType === "Storefront Restock"
+        ? "Materials recorded / awaiting storefront deposit"
+        : successMessage,
+      tone: "success"
+    };
+    succeeded = true;
   } catch (error) {
-    finalMessage = `Update failed: ${error.message}`;
-    await loadProductionBatches({ silent: true });
+    productionActionNotice = {
+      batchId: batch.id,
+      message: `Update failed: ${error.message}`,
+      tone: "error"
+    };
+    if (error.code === "production_sync_pending") await loadProductionBatches({ silent: true });
   } finally {
     productionActionPending = false;
     renderProductionQueue();
     renderReplenishment();
-    if (finalMessage) {
-      if (activeProductionBatchId === batch.id) {
-        elements.productionActionStatus.textContent = finalMessage;
-      } else {
-        setWorkspaceDataStatus(elements.productionDataStatus, finalMessage, finalMessage.startsWith("Update failed") ? "error" : "success");
-      }
+    if (activeProductionBatchId !== batch.id && productionActionNotice?.batchId === batch.id) {
+      setWorkspaceDataStatus(elements.productionDataStatus, productionActionNotice.message, productionActionNotice.tone);
     }
   }
+  return succeeded;
 }
 
 function toggleTimeClock() {

@@ -308,8 +308,8 @@ async function run() {
 
     const firstSnapshot = await bridgeRequest(`/api/integrations/discord/snapshot?discord_channel_id=223456789012345671`);
     const secondSnapshot = await bridgeRequest(`/api/integrations/discord/snapshot?discord_channel_id=223456789012345672`);
-    assert.equal(firstSnapshot.body.inventory.products[0].currentStock, 4);
-    assert.equal(secondSnapshot.body.inventory.products[0].currentStock, 9);
+    assert.equal(firstSnapshot.body.inventory.products.find(item => item.itemName === "Hosted Product").currentStock, 4);
+    assert.equal(secondSnapshot.body.inventory.products.find(item => item.itemName === "Hosted Product").currentStock, 9);
 
     await forwardDeposit("first-storage-deposit", "423456789012345671", 6);
     const parsedStorageManagerDeposit = parseStillWaterEmbed({
@@ -510,6 +510,63 @@ Deposited · 08/17/26 09:04:36 AM`
     assert.equal(storageCount(afterProductionCompletion.body, "Hosted Component"), 6);
     assert.equal(storageCount(afterProductionCompletion.body, "Hosted Product"), 8);
 
+    const stagedOrder = await request("/api/sales-orders", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: {
+        id: "hosted-staged-order",
+        customer: "Hosted Staged Customer",
+        handler: "Arthur Morgan",
+        status: "Draft",
+        priority: "Normal",
+        lines: [{
+          id: "hosted-bundle-line",
+          name: "Hosted Bundle",
+          label: "Hosted Bundle",
+          category: "Products",
+          quantity: 2,
+          unitPrice: 30
+        }]
+      }
+    });
+    assert.equal(stagedOrder.status, 200, JSON.stringify(stagedOrder.body));
+    const stagedBatch = await request("/api/production-batches", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: {
+        id: "hosted-staged-batch",
+        sourceType: "Customer Order",
+        sourceId: stagedOrder.body.order.id,
+        reference: "Hosted staged production",
+        lines: [{ itemName: "Hosted Bundle", quantity: 2 }]
+      }
+    });
+    assert.equal(stagedBatch.status, 200, JSON.stringify(stagedBatch.body));
+    const stagedIntermediate = stagedBatch.body.batch.lines.find(line => line.itemName === "Hosted Intermediate");
+    const stagedFinished = stagedBatch.body.batch.lines.find(line => line.itemName === "Hosted Bundle");
+    assert.ok(stagedIntermediate, JSON.stringify(stagedBatch.body.batch));
+    assert.ok(stagedFinished, JSON.stringify(stagedBatch.body.batch));
+    await request("/api/production-batches/hosted-staged-batch/start", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: {}
+    });
+    const finishedBeforeIntermediate = await request("/api/production-batches/hosted-staged-batch/progress", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: { completions: [{ lineId: stagedFinished.id, completedCrafts: 2 }] }
+    });
+    assert.equal(finishedBeforeIntermediate.status, 200, JSON.stringify(finishedBeforeIntermediate.body));
+    const increasedIntermediate = await request("/api/production-batches/hosted-staged-batch/progress", {
+      method: "POST",
+      cookie: membershipSelect.cookie,
+      body: { completions: [{ lineId: stagedIntermediate.id, completedCrafts: 1 }] }
+    });
+    assert.equal(increasedIntermediate.status, 200, JSON.stringify(increasedIntermediate.body));
+    assert.equal(increasedIntermediate.body.batch.lines.find(line => line.id === stagedIntermediate.id).completedCrafts, 1);
+    const afterUntrackedTableInputs = await request("/api/bootstrap", { cookie: first.cookie });
+    assert.equal(storageCount(afterUntrackedTableInputs.body, "Hosted Component"), 6);
+
     await forwardStorageMovement({
       id: "production-output-deposited",
       channelId: "423456789012345671",
@@ -617,6 +674,22 @@ async function createBusiness(name, referenceId, ownerName, discordIntegration =
     salePrice: 20,
     target: 5,
     active: true
+  }, {
+    name: "Hosted Intermediate",
+    label: "Hosted Intermediate",
+    tag: "hosted_intermediate",
+    category: "Products",
+    salePrice: 10,
+    target: 0,
+    active: true
+  }, {
+    name: "Hosted Bundle",
+    label: "Hosted Bundle",
+    tag: "hosted_bundle",
+    category: "Products",
+    salePrice: 30,
+    target: 0,
+    active: true
   }];
   configuration.catalog.materials = [{
     name: "Hosted Component",
@@ -629,6 +702,14 @@ async function createBusiness(name, referenceId, ownerName, discordIntegration =
     productName: "Hosted Product",
     yield: 1,
     ingredients: [{ name: "Hosted Component", quantity: 2, sourceLocation: "Storage" }]
+  }, {
+    productName: "Hosted Intermediate",
+    yield: 1,
+    ingredients: [{ name: "Hosted Component", quantity: 10, sourceLocation: "Storage" }]
+  }, {
+    productName: "Hosted Bundle",
+    yield: 1,
+    ingredients: [{ name: "Hosted Intermediate", quantity: 1, sourceLocation: "Storage" }]
   }];
   const response = await request("/api/setup/complete", {
     method: "POST",
