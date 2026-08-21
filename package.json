@@ -1,6 +1,6 @@
 {
   "name": "business-operations-framework",
-  "version": "0.3.0-beta.59",
+  "version": "0.3.0-beta.60",
   "private": true,
   "type": "commonjs",
   "engines": {
@@ -39,7 +39,7 @@
     "test:business-store": "node app/test-business-store.js",
     "test:first-launch": "node app/test-first-launch-server.js",
     "test:app-server": "node app/test-server.js",
-    "test:bridge": "node discord-bridge/test-runtime-utils.js && node discord-bridge/test-parser.js && node discord-bridge/test-inventory-publisher.js",
+    "test:bridge": "node discord-bridge/test-runtime-utils.js && node discord-bridge/test-parser.js && node discord-bridge/test-inventory-publisher.js && node discord-bridge/test-shared-inventory-publisher.js",
     "check:channel": "npm --prefix discord-bridge run check:channel",
     "test:parser": "npm --prefix discord-bridge run test:parser",
     "test:forward": "npm --prefix discord-bridge run test:forward",

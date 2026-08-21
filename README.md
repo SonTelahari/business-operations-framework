@@ -92,10 +92,10 @@ BUSINESS_API_URL=https://your-app.example.com
 BRIDGE_API_TOKEN=<same secret as the app service>
 DISCORD_TOKEN=<bot token>
 DISCORD_CHANNEL_ID=<storefront event channel>
-CAPTURE_ONLY=1
+CAPTURE_ONLY=0
 ```
 
-Keep `CAPTURE_ONLY=1` until the target server's real Discord messages pass parser tests. Set it to `0` only after a test forward appears in the app. Storefront stock and shortage channels are optional.
+Use `CAPTURE_ONLY=1` only while learning a new server's message format. Production bridges must use `CAPTURE_ONLY=0`. When the flag is omitted and the business API URL and token are present, the bridge now defaults to forwarding instead of silently capturing events.
 
 For one shared hosted bridge, set `SHARED_BUSINESS_MODE=1` and leave `DISCORD_CHANNEL_ID` blank. An admin connects each business's storefront event channel and optional storage/ledger event channel in **Business Settings**. The app routes incoming events by the registered channel and rejects channels assigned to another business. Storefront events affect storefront stock and storefront P&L; storage/ledger events affect storage counts and authoritative ledger balances without creating duplicate sales or purchase finance entries. Storage Manager messages are parsed from `PlayerName` and the `Has Taken ... From ... Inventory` or `Deposited ... To ... Inventory` movement line; the visible item name is resolved against that business's live catalog and the character name is retained for audit.
 

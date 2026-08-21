@@ -5,7 +5,14 @@ const { appendCaptureRecord, createCaptureRecord, serializeCaptureRecord } = req
 const { createInventoryPublisher } = require('./inventory-publisher');
 const { createSharedInventoryPublisher } = require('./shared-inventory-publisher');
 const { parseStillWaterEmbed } = require('./parser');
-const { embedToText, loadEnvFile, normalizeSnowflake, prepareSheetPayload } = require('./runtime-utils');
+const {
+  createBridgeTelemetry,
+  embedToText,
+  loadEnvFile,
+  normalizeSnowflake,
+  prepareSheetPayload,
+  resolveCaptureMode
+} = require('./runtime-utils');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -18,7 +25,14 @@ const EVENT_API_URL = BUSINESS_API_URL ? `${BUSINESS_API_URL}/api/integrations/d
 const SNAPSHOT_API_URL = BUSINESS_API_URL
   ? `${BUSINESS_API_URL}/api/integrations/discord/snapshot${!SHARED_BUSINESS_MODE && DISCORD_CHANNEL_ID ? `?discord_channel_id=${encodeURIComponent(DISCORD_CHANNEL_ID)}` : ''}`
   : '';
-const CAPTURE_ONLY = process.env.CAPTURE_ONLY !== '0';
+let captureMode;
+try {
+  captureMode = resolveCaptureMode(process.env);
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+const CAPTURE_ONLY = captureMode.captureOnly;
 const DEBUG_DISCORD = process.env.DEBUG_DISCORD !== '0';
 const INVENTORY_CHANNEL_ID = normalizeSnowflake(process.env.INVENTORY_CHANNEL_ID);
 const STOCK_ALERT_CHANNEL_ID = normalizeSnowflake(process.env.STOCK_ALERT_CHANNEL_ID);
@@ -28,6 +42,7 @@ const INVENTORY_REFRESH_SECONDS = numberValue(process.env.INVENTORY_REFRESH_SECO
 const PORT = numberValue(process.env.PORT);
 const CAPTURE_FILE = path.join(__dirname, 'captures', 'events.jsonl');
 const INVENTORY_PUBLISHING_REQUESTED = Boolean(INVENTORY_CHANNEL_ID || STOCK_ALERT_CHANNEL_ID);
+const telemetry = createBridgeTelemetry();
 
 if (!DISCORD_TOKEN || (!SHARED_BUSINESS_MODE && !DISCORD_CHANNEL_ID)
   || ((!CAPTURE_ONLY || INVENTORY_PUBLISHING_REQUESTED || SHARED_BUSINESS_MODE) && (!BUSINESS_API_URL || !BRIDGE_API_TOKEN))) {
@@ -64,9 +79,10 @@ const inventoryPublisher = SHARED_BUSINESS_MODE
     });
 
 client.once('clientReady', () => {
-  logInfo(`Frontier Firearms - Still Water bridge logged in as ${client.user.tag}`);
+  telemetry.discordReady();
+  logInfo(`Business Operations bridge logged in as ${client.user.tag}`);
   logInfo(SHARED_BUSINESS_MODE ? 'Watching registered business channels' : `Watching Discord channel ID: ${DISCORD_CHANNEL_ID}`);
-  logInfo(`Parser mode: ${CAPTURE_ONLY ? 'capture only' : 'forward to business API'}`);
+  logInfo(`Parser mode: ${CAPTURE_ONLY ? 'capture only' : 'forward to business API'} (${captureMode.source})`);
   logInfo(`Discord debug logging: ${DEBUG_DISCORD ? 'on' : 'off'}`);
   logInfo(`Discord inventory publishing: ${inventoryPublisher.enabled ? 'on' : 'off'}`);
   startHealthServer();
@@ -76,6 +92,7 @@ client.once('clientReady', () => {
 });
 
 client.on('messageCreate', async (message) => {
+  telemetry.messageSeen(message);
   if (DEBUG_DISCORD) {
     logInfo(
       `Saw message channel=${message.channelId} author=${message.author?.tag || 'unknown'} webhook=${message.webhookId || 'none'} embeds=${message.embeds.length}`
@@ -83,11 +100,13 @@ client.on('messageCreate', async (message) => {
   }
 
   if (!SHARED_BUSINESS_MODE && message.channelId !== DISCORD_CHANNEL_ID) {
+    telemetry.messageIgnored();
     if (DEBUG_DISCORD) {
       logInfo(`Ignored channel ${message.channelId}; expected ${DISCORD_CHANNEL_ID}`);
     }
     return;
   }
+  telemetry.messageRelevant();
 
   const sources = message.embeds.length
     ? message.embeds.map((embed, index) => ({
@@ -105,6 +124,7 @@ client.on('messageCreate', async (message) => {
     for (const source of sources) {
       const record = createCaptureRecord(message, source);
       appendCaptureRecord(CAPTURE_FILE, record);
+      telemetry.payloadCaptured();
       logInfo(`CAPTURE ${serializeCaptureRecord(record)}`);
     }
     return;
@@ -113,6 +133,7 @@ client.on('messageCreate', async (message) => {
   const payloads = sources.map(parseStillWaterEmbed);
 
   for (const payload of payloads) {
+    telemetry.forwardAttempt();
     try {
       const outboundPayload = prepareSheetPayload({
         ...payload,
@@ -121,6 +142,7 @@ client.on('messageCreate', async (message) => {
         timestamp: message.createdAt.toISOString()
       });
       await forwardToBusinessApi(outboundPayload);
+      telemetry.forwardSuccess();
       if (SHARED_BUSINESS_MODE) {
         inventoryPublisher.requestRefresh('business event', message.channelId);
       } else {
@@ -130,6 +152,7 @@ client.on('messageCreate', async (message) => {
         logWarn(`Sent Discord message ${message.id} to review: ${payload.review_reason || 'parser review required'}`);
       }
     } catch (error) {
+      telemetry.forwardFailure(error);
       logError(`Failed to forward Discord message ${message.id}: ${error.message}`);
     }
   }
@@ -199,11 +222,15 @@ function startHealthServer() {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({
         ok: true,
-        service: 'frontier-firearms-still-water-discord-bridge',
+        service: 'business-operations-discord-bridge',
         mode: CAPTURE_ONLY ? 'capture' : 'forward',
+        mode_source: captureMode.source,
+        shared_business_mode: SHARED_BUSINESS_MODE,
+        configured_channel_id: SHARED_BUSINESS_MODE ? '' : DISCORD_CHANNEL_ID,
         parser_profile: 'still-water',
         capture_journal: CAPTURE_ONLY,
         discord_ready: client.isReady(),
+        events: telemetry.health(),
         inventory_publisher: inventoryPublisher.health(),
         uptime_seconds: Math.round(process.uptime())
       }));

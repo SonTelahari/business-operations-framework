@@ -81,7 +81,7 @@ DISCORD_TOKEN=<bot token>
 SHARED_BUSINESS_MODE=1
 BUSINESS_API_URL=https://<gui-public-domain>
 BRIDGE_API_TOKEN=<same value as the GUI service>
-CAPTURE_ONLY=1
+CAPTURE_ONLY=0
 DEBUG_DISCORD=0
 NODE_ENV=production
 ```
@@ -98,7 +98,9 @@ INVENTORY_MESSAGE_ID=
 STOCK_ALERT_MESSAGE_ID=
 ```
 
-Keep `CAPTURE_ONLY=1` until parser tests cover the server's actual messages. Run `npm run test:forward`, confirm the event reaches Webhook Review or inventory correctly, and then set `CAPTURE_ONLY=0`.
+Use `CAPTURE_ONLY=1` only while parser tests are being built for a new server. Hosted production bridges must use `CAPTURE_ONLY=0`. If this variable is omitted while the API URL and bridge token are configured, the bridge defaults to forwarding; invalid values fail startup instead of leaving an apparently healthy capture-only worker.
+
+The bridge health response includes its routing mode, configured single-business channel (when applicable), and event telemetry. Check `events.last_discord_message_at`, `events.last_relevant_message_at`, `events.last_forward_success_at`, and `events.last_forward_error` to distinguish Discord permissions, an incorrect legacy channel, and API routing failures.
 
 The inventory publisher needs `View Channel`, `Send Messages`, `Embed Links`, and `Read Message History`. Managed messages are edited in place.
 
