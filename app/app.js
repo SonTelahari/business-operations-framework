@@ -666,6 +666,8 @@ const elements = {
   replenishmentMeta: document.querySelector("#replenishmentMeta"),
   replenishmentList: document.querySelector("#replenishmentList"),
   replenishmentMaterialsList: document.querySelector("#replenishmentMaterialsList"),
+  totalMaterialDemandMeta: document.querySelector("#totalMaterialDemandMeta"),
+  totalMaterialDemandList: document.querySelector("#totalMaterialDemandList"),
   clockEmployee: document.querySelector("#clockEmployeeInput"),
   clockToggle: document.querySelector("#clockToggleButton"),
   clockStatus: document.querySelector("#clockStatus"),
@@ -3623,14 +3625,22 @@ function renderSupplyWorkspace() {
 }
 
 function renderSupplyDemand(plan) {
+  const outstanding = renderMaterialDemandSummary(
+    elements.supplyDemandMeta,
+    elements.supplyDemandList,
+    plan
+  );
+  elements.addAllMissingSupply.disabled = !outstanding.length;
+}
+
+function renderMaterialDemandSummary(metaElement, listElement, plan) {
   const outstanding = plan.filter(line => line.missing > 0);
   const requiredUnits = plan.reduce((sum, line) => sum + Number(line.demand || 0), 0);
   const missingUnits = outstanding.reduce((sum, line) => sum + Number(line.missing || 0), 0);
-  elements.supplyDemandMeta.textContent = plan.length
-    ? `${formatNumber(requiredUnits)} base units required / ${formatNumber(missingUnits)} still to order across ${outstanding.length} ${outstanding.length === 1 ? "material" : "materials"}`
-    : "No base-material demand from storefront targets, storage targets, or open customer orders";
-  elements.addAllMissingSupply.disabled = !outstanding.length;
-  elements.supplyDemandList.innerHTML = outstanding.length
+  metaElement.textContent = plan.length
+    ? `${formatNumber(requiredUnits)} external units required / ${formatNumber(missingUnits)} still to source across ${outstanding.length} ${outstanding.length === 1 ? "line" : "lines"}`
+    : "No external material demand from storefront targets, storage targets, or open customer orders";
+  listElement.innerHTML = outstanding.length
     ? outstanding.map(line => `
       <article class="supply-demand-row short">
         <header>
@@ -3645,7 +3655,8 @@ function renderSupplyDemand(plan) {
         <small>Gross demand: ${formatNumber(line.restockDemand)} storefront / ${formatNumber(line.storageDemand)} storage / ${formatNumber(line.salesDemand)} open orders${line.intermediateCoverage ? ` / ${formatNumber(line.intermediateCoverage)} covered by intermediate stock or combined batches` : ""}</small>
       </article>
     `).join("")
-    : `<div class="empty-card">Usable inventory and incoming supply orders cover every expanded base-material need</div>`;
+    : `<div class="empty-card">Usable inventory and incoming supply orders cover every external material need</div>`;
+  return outstanding;
 }
 
 function renderSupplyLines(purchasePlan) {
@@ -5815,6 +5826,7 @@ async function ignoreReviewException() {
 function renderReplenishment() {
   const plan = getReplenishmentPlan();
   const storagePlan = getStorageAlertPlan();
+  const totalMaterialPlan = getMaterialPurchasePlan();
   const materialShortages = plan.materials.filter(line => line.shortage > 0);
   const unqueuedCraftable = plan.missing.reduce((sum, line) => {
     if (!recipeCatalog[line.itemName]) return sum;
@@ -5854,6 +5866,12 @@ function renderReplenishment() {
   elements.replenishmentMaterialsList.innerHTML = materialRows || missingRecipeRows
     ? materialRows + missingRecipeRows
     : `<div class="empty-card">Selected stock locations cover all known recipe needs</div>`;
+
+  renderMaterialDemandSummary(
+    elements.totalMaterialDemandMeta,
+    elements.totalMaterialDemandList,
+    totalMaterialPlan
+  );
 
   elements.stockAlertList.innerHTML = plan.missing.length
     ? plan.missing.map(line => `
@@ -7854,7 +7872,6 @@ function getMaterialPurchasePlan(excludeSupplyOrderId = "") {
       Storefront: getProcurementTargetFloors(stockTargets),
       Storage: getProcurementTargetFloors(storageTargets)
     },
-    materialKeys: getProcurementMaterialKeys(),
     committed: getCommittedSupplyQuantities(excludeSupplyOrderId)
   });
 }
@@ -7872,8 +7889,7 @@ function getOpenOrderProcurementDemand() {
       if (!PRODUCTION_ACTIVE_STATUSES.has(batch.status)) return [];
       return getProductionBatchMaterialNeeds(batch).map(material => ({
         itemName: material.ingredient,
-        quantity: material.needed,
-        directMaterial: true
+        quantity: material.needed
       }));
     });
 }
@@ -7898,20 +7914,6 @@ function getProcurementTargetFloors(targets) {
       floors.set(key, Math.max(Number(floors.get(key) || 0), Number(target.target || 0)));
     });
   return floors;
-}
-
-function getProcurementMaterialKeys() {
-  const keys = new Set(ingredientCatalog.map(item => normalize(item.name || item.label)));
-  catalogGoods()
-    .filter(item => item.itemType === "material" || item.itemType === "both")
-    .forEach(item => keys.add(normalize(item.name || item.label)));
-  const recipeKeys = new Set(Object.keys(recipeCatalog).map(normalize));
-  Object.values(recipeCatalog).flat().forEach(component => {
-    const ingredient = component?.ingredient ?? component?.[0];
-    const key = normalize(ingredient);
-    if (key && !recipeKeys.has(key)) keys.add(key);
-  });
-  return keys;
 }
 
 function getCommittedSupplyQuantities(excludeSupplyOrderId = "") {

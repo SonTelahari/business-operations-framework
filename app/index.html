@@ -700,6 +700,18 @@
           </div>
         </section>
 
+        <section class="panel dashboard-list-panel total-material-demand-panel priority-panel" aria-label="Total raw material shortage">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">All Operations</p>
+              <h2>Total Raw Material Shortage</h2>
+              <p id="totalMaterialDemandMeta">Combining storefront targets, storage targets, and open customer orders</p>
+            </div>
+          </div>
+          <p class="section-help">Only materials that must be farmed or bought are listed. In-house products are expanded through every recipe stage.</p>
+          <div class="supply-demand-list" id="totalMaterialDemandList"></div>
+        </section>
+
         <section class="panel dashboard-list-panel inventory-alerts-panel">
           <div class="panel-header">
             <div>
@@ -1179,7 +1191,7 @@
           <div class="panel-header">
             <div>
               <p class="eyebrow">Procurement Forecast</p>
-              <h2>Consolidated Base Materials</h2>
+              <h2>Raw Materials to Buy or Farm</h2>
               <p id="supplyDemandMeta">Storefront, storage, and open orders expanded to their base resources</p>
             </div>
             <button class="ghost-button" id="addAllMissingSupplyButton" type="button">Add All Missing</button>
@@ -2334,9 +2346,9 @@
     </datalist>
     <script src="supply-telegram.js?v=20260714-telegram"></script>
     <script src="production-planner.js?v=20260820-multistage-production"></script>
-    <script src="procurement-planner.js?v=20260821-consolidated-demand"></script>
+    <script src="procurement-planner.js?v=20260821-external-leaves"></script>
     <script src="production-inventory.js?v=20260821-static-route"></script>
-    <script src="app.js?v=20260821-consolidated-demand"></script>
+    <script src="app.js?v=20260821-restock-total-demand"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

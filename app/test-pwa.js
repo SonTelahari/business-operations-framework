@@ -54,6 +54,8 @@ assert(
   "the Supplies narrow layout must stack every panel in a named track"
 );
 assert(appHtml.includes('id="supplyDemandList"'), "Supplies must expose the recursively expanded base-material plan");
+assert(appHtml.includes('id="totalMaterialDemandList"'), "Restock must expose the total raw-material shortage separately from storefront replenishment");
+assert(appHtml.includes('id="totalMaterialDemandMeta"'), "Restock must summarize consolidated storefront, storage, and order demand");
 assert(appHtml.includes('id="addAllMissingSupplyButton"'), "the combined base-material plan must feed a supply draft directly");
 assert(appHtml.includes('id="openCatalogItemDialogButton"'), "the Store tab must expose manager catalog creation");
 assert(appHtml.includes('id="catalogItemTypeInput"'), "manual catalog creation must distinguish products and materials");
@@ -62,7 +64,7 @@ assert(appHtml.includes('data-section="catalog"'), "managers must have a catalog
 assert(appHtml.includes('id="recipeEditorForm"'), "catalog management must expose a recipe editor");
 assert(appHtml.includes('id="productionSourceDialog"'), "production queues must confirm ingredient source locations");
 assert(appHtml.includes('src="production-planner.js?v=20260820-multistage-production"'), "the production UI must load the shared multi-stage planner");
-assert(appHtml.includes('src="procurement-planner.js?v=20260821-consolidated-demand"'), "the Supplies UI must load the consolidated procurement planner");
+assert(appHtml.includes('src="procurement-planner.js?v=20260821-external-leaves"'), "the Supplies UI must load the external-leaf procurement planner");
 assert(appHtml.includes('src="production-inventory.js?v=20260821-static-route"'), "the production UI must load shared inventory calculations");
 assert(appHtml.indexOf('src="production-planner.js') < appHtml.indexOf('src="procurement-planner.js'), "the production planner must load before consolidated procurement calculations");
 assert(appHtml.indexOf('src="procurement-planner.js') < appHtml.indexOf('src="app.js'), "consolidated procurement calculations must load before the application");
@@ -165,9 +167,11 @@ assert(appScript.includes('Boolean(productionBatchForOrder(activeOrder.id))'), "
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
 assert(appScript.includes('function planRecipeStages('), "production and restock plans must expand nested recipes");
 assert(appScript.includes('function renderSupplyDemand('), "Supplies must render aggregated base-material demand");
+assert(appScript.includes('elements.totalMaterialDemandList'), "Restock must render the consolidated procurement plan in its own panel");
 assert(appScript.includes('restockDemand: 0, storageDemand: 0, salesDemand: 0'), "procurement demand must retain storefront, storage, and customer-order sources");
 assert(appScript.includes('storage: getTargetProcurementDemand(storageTargets'), "procurement demand must include storage target gaps");
 assert(appScript.includes('getProductionBatchMaterialNeeds(batch).map(material'), "queued customer production must contribute only its remaining material uses");
+assert(!appScript.includes('directMaterial: true'), "queued in-house intermediates must remain recursively craftable");
 assert(procurementPlannerScript.includes('protectTargetStock(counts, targetFloors)'), "procurement must protect target inventory from downstream consumption");
 assert(appScript.includes('function productionBatchInventoryState('), "production readiness must net intermediate work in progress");
 assert(appScript.includes('function getProductionAvailableCounts('), "production planning must subtract goods reserved for open customer orders");

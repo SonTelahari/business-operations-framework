@@ -11,8 +11,7 @@ const tobacconist = planProcurement({
     restock: [{ itemName: "Cigarettes", quantity: 200 }],
     storage: [{ itemName: "Rolling Paper", quantity: 100 }]
   },
-  recipes,
-  materialKeys: ["Flax", "Indian Tobacco"]
+  recipes
 });
 const flax = tobacconist.find(line => line.ingredient === "Flax");
 const tobacco = tobacconist.find(line => line.ingredient === "Indian Tobacco");
@@ -29,8 +28,7 @@ const protectedStock = planProcurement({
   },
   recipes,
   counts: { Storage: new Map([["Rolling Paper", 150]]), Storefront: new Map() },
-  targetFloors: { Storage: new Map([["Rolling Paper", 100]]), Storefront: new Map() },
-  materialKeys: ["Flax", "Indian Tobacco"]
+  targetFloors: { Storage: new Map([["Rolling Paper", 100]]), Storefront: new Map() }
 });
 const protectedFlax = protectedStock.find(line => line.ingredient === "Flax");
 assert.equal(protectedFlax.demand, 200, "only stock above its target floor may offset downstream production");
@@ -44,8 +42,7 @@ const directMaterialTarget = planProcurement({
   },
   recipes,
   counts: { Storage: new Map([["Flax", 20]]), Storefront: new Map() },
-  targetFloors: { Storage: new Map([["Flax", 50]]), Storefront: new Map() },
-  materialKeys: ["Flax"]
+  targetFloors: { Storage: new Map([["Flax", 50]]), Storefront: new Map() }
 });
 const directFlax = directMaterialTarget.find(line => line.ingredient === "Flax");
 assert.equal(directFlax.demand, 130, "raw-material storage gaps must be added directly to production demand");
@@ -53,19 +50,28 @@ assert.equal(directFlax.missing, 130);
 
 const ordered = planProcurement({
   demandBySource: { storage: [{ itemName: "Flax", quantity: 30 }] },
-  materialKeys: ["Flax"],
   committed: new Map([["Flax", 12]])
 });
 assert.equal(ordered[0].missing, 18, "incoming supply orders must cover the consolidated shortage once");
 
-const queuedBaseMaterial = planProcurement({
-  demandBySource: { sales: [{ itemName: "Rolling Paper", quantity: 40, directMaterial: true }] },
-  recipes,
-  materialKeys: ["Flax", "Rolling Paper"]
+const queuedIntermediate = planProcurement({
+  demandBySource: { sales: [{ itemName: "Rolling Paper", quantity: 40 }] },
+  recipes
 });
-assert.equal(queuedBaseMaterial[0].ingredient, "Rolling Paper");
-assert.equal(queuedBaseMaterial[0].missing, 40, "saved production batches must contribute only their remaining direct material uses");
-assert.equal(queuedBaseMaterial.some(line => line.ingredient === "Flax"), false);
+assert.equal(queuedIntermediate[0].ingredient, "Flax");
+assert.equal(queuedIntermediate[0].missing, 40, "remaining queued intermediates must expand to their buyable or farmable recipe leaves");
+assert.equal(queuedIntermediate.some(line => line.ingredient === "Rolling Paper"), false);
+
+const boughtTerminalGood = planProcurement({
+  demandBySource: { storage: [{ itemName: "Imported Matches", quantity: 25 }] },
+  recipes
+});
+assert.equal(boughtTerminalGood[0].ingredient, "Imported Matches");
+assert.equal(
+  boughtTerminalGood[0].missing,
+  25,
+  "goods without an in-house recipe must remain external buy or farm requirements"
+);
 
 const protectedCounts = protectTargetStock(
   { Storage: new Map([["Flax", 80]]), Storefront: new Map([["Cigarettes", 12]]) },
@@ -74,4 +80,4 @@ const protectedCounts = protectTargetStock(
 assert.equal(protectedCounts.Storage.get("flax"), 30);
 assert.equal(protectedCounts.Storefront.get("cigarettes"), 2);
 
-console.log("Procurement planner tests passed: recursive source demand, target protection, direct material gaps, and commitments.");
+console.log("Procurement planner tests passed: recursive demand, external leaves, target protection, and commitments.");

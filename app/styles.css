@@ -715,6 +715,14 @@ h2 {
   grid-column: 1 / -1;
 }
 
+.total-material-demand-panel {
+  grid-column: 1 / -1;
+}
+
+.total-material-demand-panel .section-help {
+  margin-top: 0;
+}
+
 .alert-location-grid .dashboard-list {
   align-content: start;
   max-height: 360px;

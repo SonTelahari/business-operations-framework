@@ -84,6 +84,10 @@ async function run() {
     await page.screenshot({ path: path.join(RESULTS_DIR, "desktop.png"), fullPage: true });
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await openMenuSection(page, "inventory", "restock", "#restockSection");
+    await assertRestockMaterialDemand(page, { required: 22, restock: 8, storage: 10, sales: 4 });
+    await assertNoHorizontalViewportOverflow(page);
+    await page.screenshot({ path: path.join(RESULTS_DIR, "restock-mobile.png"), fullPage: true });
     await openMenuSection(page, "inventory", "supplies", "#supplySection");
     await assertSupplyDemandLayout(page, { required: 22, restock: 8, storage: 10, sales: 4 });
     await assertNoHorizontalViewportOverflow(page);
@@ -216,6 +220,9 @@ async function exerciseNavigation(page) {
   await openSection(page, "workbench", "#workbenchSection");
   await openSection(page, "production", "#productionSection");
   await openSection(page, "store", "#storeSection");
+  await openMenuSection(page, "inventory", "restock", "#restockSection");
+  await assertRestockMaterialDemand(page, { required: 18, restock: 8, storage: 10, sales: 0 });
+  await page.screenshot({ path: path.join(RESULTS_DIR, "restock-desktop.png"), fullPage: true });
   await openMenuSection(page, "inventory", "supplies", "#supplySection");
   await assertSupplyDemandLayout(page, { required: 18, restock: 8, storage: 10, sales: 0 });
   await page.screenshot({ path: path.join(RESULTS_DIR, "supplies-desktop.png"), fullPage: true });
@@ -362,6 +369,16 @@ async function assertSupplyDemandLayout(page, expected) {
     return { demandBottom: demand.bottom, editorTop: editor.top };
   });
   assert.ok(layout.editorTop >= layout.demandBottom - 2, `Supply panels overlap: ${JSON.stringify(layout)}`);
+}
+
+async function assertRestockMaterialDemand(page, expected) {
+  const demandRow = page.locator("#totalMaterialDemandList .supply-demand-row", { hasText: "Packing Timber" });
+  await demandRow.waitFor({ state: "visible" });
+  const demandText = await demandRow.textContent();
+  assert.match(demandText, new RegExp(`Required\\s+${expected.required}`));
+  assert.match(demandText, new RegExp(`${expected.restock}\\s+storefront`));
+  assert.match(demandText, new RegExp(`${expected.storage}\\s+storage`));
+  assert.match(demandText, new RegExp(`${expected.sales}\\s+open orders`));
 }
 
 async function closeServer() {

@@ -17,13 +17,11 @@
     recipeYields = {},
     counts = {},
     targetFloors = {},
-    materialKeys = [],
     committed = new Map()
   } = {}) {
     if (!productionPlanner?.planProduction) throw new Error("Production planner is unavailable");
 
     const recipeNames = new Set(Object.keys(recipes).map(itemKey));
-    const materials = new Set([...materialKeys].map(itemKey));
     const normalizedDemand = Object.fromEntries(SOURCE_NAMES.map(source => [
       source,
       normalizeLines(demandBySource[source])
@@ -33,8 +31,7 @@
       recipes,
       recipeYields,
       counts: protectedCounts,
-      recipeNames,
-      materials
+      recipeNames
     });
     const sourceDemand = Object.fromEntries(SOURCE_NAMES.map(source => [
       source,
@@ -42,8 +39,7 @@
         recipes,
         recipeYields,
         counts: emptyCounts(),
-        recipeNames,
-        materials
+        recipeNames
       })
     ]));
     const committedCounts = countMap(committed);
@@ -78,16 +74,13 @@
     );
   }
 
-  function aggregateDemand(lines, { recipes, recipeYields, counts, recipeNames, materials }) {
+  function aggregateDemand(lines, { recipes, recipeYields, counts, recipeNames }) {
     const craftable = [];
     const direct = [];
-    const issues = [];
     lines.forEach(line => {
       const key = itemKey(line.itemName);
-      if (line.directMaterial) direct.push(line);
-      else if (recipeNames.has(key)) craftable.push(line);
-      else if (materials.has(key)) direct.push(line);
-      else issues.push({ type: "missing_recipe", itemName: line.itemName });
+      if (recipeNames.has(key)) craftable.push(line);
+      else direct.push(line);
     });
 
     const production = productionPlanner.planProduction({
@@ -110,7 +103,7 @@
       available: 0,
       shortage: line.quantity
     }));
-    return { materials: result, issues: [...issues, ...production.issues] };
+    return { materials: result, issues: production.issues };
   }
 
   function addMaterial(target, line) {
@@ -139,13 +132,11 @@
     (Array.isArray(lines) ? lines : []).forEach(line => {
       const itemName = String(line?.itemName || line?.name || line?.itemLabel || "").trim();
       const quantity = Math.max(0, Number(line?.quantity ?? line?.requestedQuantity ?? line?.missing ?? 0));
-      const directMaterial = Boolean(line?.directMaterial);
       const normalizedItemName = itemKey(itemName);
       if (!normalizedItemName || !quantity) return;
-      const key = `${directMaterial ? "material" : "root"}:${normalizedItemName}`;
-      const current = combined.get(key) || { itemName, quantity: 0, directMaterial };
+      const current = combined.get(normalizedItemName) || { itemName, quantity: 0 };
       current.quantity += quantity;
-      combined.set(key, current);
+      combined.set(normalizedItemName, current);
     });
     return [...combined.values()];
   }
