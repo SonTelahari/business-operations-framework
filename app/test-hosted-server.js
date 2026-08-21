@@ -48,6 +48,31 @@ async function run() {
     assert.equal(health.body.materializedBalances, true);
     assert.equal(health.body.version, packageVersion);
     assert.equal(health.body.release, "hosted-test-release");
+    assert.equal(health.body.discordBridge.connected, false);
+    const heartbeat = await bridgeRequest("/api/integrations/discord/heartbeat", {
+      method: "POST",
+      body: {
+        mode: "forward",
+        shared_business_mode: true,
+        discord_ready: true,
+        events: {
+          last_discord_message_at: "2026-08-21T09:00:00.000Z",
+          last_relevant_message_at: "2026-08-21T09:00:00.000Z",
+          last_forward_success_at: "2026-08-21T09:00:01.000Z",
+          seen_messages: 12,
+          relevant_messages: 10,
+          forwarded_payloads: 9,
+          failed_payloads: 1
+        }
+      }
+    });
+    assert.equal(heartbeat.status, 200, JSON.stringify(heartbeat.body));
+    const healthWithBridge = await request("/health");
+    assert.equal(healthWithBridge.body.discordBridge.connected, true);
+    assert.equal(healthWithBridge.body.discordBridge.mode, "forward");
+    assert.equal(healthWithBridge.body.discordBridge.sharedBusinessMode, true);
+    assert.equal(healthWithBridge.body.discordBridge.forwardedPayloads, 9);
+    assert.equal(healthWithBridge.body.discordBridge.failedPayloads, 1);
     const serviceWorker = await fetch(`${baseUrl}/service-worker.js`).then(response => response.text());
     assert.match(serviceWorker, /\/\/ release:hosted-test-release\s*$/);
 

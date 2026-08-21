@@ -94,13 +94,14 @@ Optional publishing variables:
 INVENTORY_CHANNEL_ID=
 STOCK_ALERT_CHANNEL_ID=
 INVENTORY_REFRESH_SECONDS=300
+BRIDGE_HEARTBEAT_SECONDS=30
 INVENTORY_MESSAGE_ID=
 STOCK_ALERT_MESSAGE_ID=
 ```
 
 Use `CAPTURE_ONLY=1` only while parser tests are being built for a new server. Hosted production bridges must use `CAPTURE_ONLY=0`. If this variable is omitted while the API URL and bridge token are configured, the bridge defaults to forwarding; invalid values fail startup instead of leaving an apparently healthy capture-only worker.
 
-The bridge health response includes its routing mode, configured single-business channel (when applicable), and event telemetry. Check `events.last_discord_message_at`, `events.last_relevant_message_at`, `events.last_forward_success_at`, and `events.last_forward_error` to distinguish Discord permissions, an incorrect legacy channel, and API routing failures.
+The bridge health response includes its routing mode, configured single-business channel (when applicable), and event telemetry. Check `events.last_discord_message_at`, `events.last_relevant_message_at`, `events.last_forward_success_at`, and `events.last_forward_error` to distinguish Discord permissions, an incorrect legacy channel, and API routing failures. The bridge also reports an authenticated heartbeat to the app every 30 seconds; the app's public `/health` response exposes a sanitized `discordBridge` summary so a private Railway worker can be monitored without assigning it a public domain.
 
 The inventory publisher needs `View Channel`, `Send Messages`, `Embed Links`, and `Read Message History`. Managed messages are edited in place.
 

@@ -91,6 +91,7 @@ let supplyReceiptQueue = Promise.resolve();
 let productionCreateQueue = Promise.resolve();
 let productionProgressQueue = Promise.resolve();
 let setupQueue = Promise.resolve();
+let latestBridgeHeartbeat = null;
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -196,6 +197,7 @@ async function handleApplicationRequest(request, response, url) {
         dailyCloses: true,
         financeReporting: true,
         productInsights: true,
+        discordBridge: publicBridgeHeartbeat(),
         uptimeSeconds: Math.round(process.uptime())
       });
       return;
@@ -375,6 +377,7 @@ async function dispatchHostedRequest(request, response, url) {
       personalJobProfiles: Boolean(localIdentityStore?.enabled),
       operatorConsoleConfigured: Boolean(platformOperations?.enabled),
       authMode: discordIdentityStore?.enabled ? "workspace-accounts-and-discord" : "workspace-accounts",
+      discordBridge: publicBridgeHeartbeat(),
       uptimeSeconds: Math.round(process.uptime())
     });
     return;
@@ -884,8 +887,14 @@ async function dispatchHostedDiscordRequest(request, response, url) {
   const eventRoute = url.pathname === "/api/integrations/discord/events";
   const snapshotRoute = url.pathname === "/api/integrations/discord/snapshot";
   const directoryRoute = url.pathname === "/api/integrations/discord/channels";
-  if (!eventRoute && !snapshotRoute && !directoryRoute) return false;
+  const heartbeatRoute = url.pathname === "/api/integrations/discord/heartbeat";
+  if (!eventRoute && !snapshotRoute && !directoryRoute && !heartbeatRoute) return false;
   if (!requireBridgeToken(request, response)) return true;
+  if (heartbeatRoute && request.method === "POST") {
+    latestBridgeHeartbeat = normalizeBridgeHeartbeat(await readJsonBody(request));
+    sendJson(response, { ok: true, receivedAt: latestBridgeHeartbeat.receivedAt });
+    return true;
+  }
   if (directoryRoute && request.method === "GET") {
     sendJson(response, { ok: true, integrations: await tenantManager.listDiscordIntegrations() });
     return true;
@@ -1460,7 +1469,8 @@ async function handleSupplierRoute(request, response, url, user) {
 async function handleDiscordIntegrationRoute(request, response, url, tokenVerified = false) {
   const eventRoute = url.pathname === "/api/integrations/discord/events";
   const snapshotRoute = url.pathname === "/api/integrations/discord/snapshot";
-  if (!eventRoute && !snapshotRoute) return false;
+  const heartbeatRoute = url.pathname === "/api/integrations/discord/heartbeat";
+  if (!eventRoute && !snapshotRoute && !heartbeatRoute) return false;
   if (!standaloneStore) {
     sendJson(response, {
       ok: false,
@@ -1487,6 +1497,11 @@ async function handleDiscordIntegrationRoute(request, response, url, tokenVerifi
     }
   }
   try {
+    if (heartbeatRoute && request.method === "POST") {
+      latestBridgeHeartbeat = normalizeBridgeHeartbeat(await readJsonBody(request));
+      sendJson(response, { ok: true, receivedAt: latestBridgeHeartbeat.receivedAt });
+      return true;
+    }
     if (eventRoute && request.method === "POST") {
       sendJson(response, await standaloneStore.ingestWebhook(await readJsonBody(request)));
       return true;
@@ -2244,6 +2259,60 @@ function salesOrderError(message, status, code) {
   error.status = status;
   error.code = code;
   return error;
+}
+
+function normalizeBridgeHeartbeat(payload = {}) {
+  const events = payload.events && typeof payload.events === "object" ? payload.events : {};
+  return {
+    receivedAt: new Date().toISOString(),
+    mode: String(payload.mode || "").slice(0, 30),
+    sharedBusinessMode: Boolean(payload.shared_business_mode),
+    discordReady: Boolean(payload.discord_ready),
+    lastDiscordMessageAt: cleanHeartbeatTimestamp(events.last_discord_message_at),
+    lastRelevantMessageAt: cleanHeartbeatTimestamp(events.last_relevant_message_at),
+    lastForwardSuccessAt: cleanHeartbeatTimestamp(events.last_forward_success_at),
+    lastForwardFailureAt: cleanHeartbeatTimestamp(events.last_forward_failure_at),
+    seenMessages: nonNegativeInteger(events.seen_messages),
+    relevantMessages: nonNegativeInteger(events.relevant_messages),
+    forwardedPayloads: nonNegativeInteger(events.forwarded_payloads),
+    failedPayloads: nonNegativeInteger(events.failed_payloads)
+  };
+}
+
+function publicBridgeHeartbeat() {
+  if (!latestBridgeHeartbeat) {
+    return { connected: false, lastHeartbeatAt: "", ageSeconds: null };
+  }
+  const ageSeconds = Math.max(
+    0,
+    Math.round((Date.now() - Date.parse(latestBridgeHeartbeat.receivedAt)) / 1000)
+  );
+  return {
+    connected: ageSeconds <= 90 && latestBridgeHeartbeat.discordReady,
+    lastHeartbeatAt: latestBridgeHeartbeat.receivedAt,
+    ageSeconds,
+    mode: latestBridgeHeartbeat.mode,
+    sharedBusinessMode: latestBridgeHeartbeat.sharedBusinessMode,
+    discordReady: latestBridgeHeartbeat.discordReady,
+    lastDiscordMessageAt: latestBridgeHeartbeat.lastDiscordMessageAt,
+    lastRelevantMessageAt: latestBridgeHeartbeat.lastRelevantMessageAt,
+    lastForwardSuccessAt: latestBridgeHeartbeat.lastForwardSuccessAt,
+    lastForwardFailureAt: latestBridgeHeartbeat.lastForwardFailureAt,
+    seenMessages: latestBridgeHeartbeat.seenMessages,
+    relevantMessages: latestBridgeHeartbeat.relevantMessages,
+    forwardedPayloads: latestBridgeHeartbeat.forwardedPayloads,
+    failedPayloads: latestBridgeHeartbeat.failedPayloads
+  };
+}
+
+function cleanHeartbeatTimestamp(value) {
+  const timestamp = Date.parse(String(value || ""));
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function nonNegativeInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
 }
 
 function isInternalCraftOrder(order) {

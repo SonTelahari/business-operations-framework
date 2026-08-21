@@ -22,6 +22,7 @@ const SHARED_BUSINESS_MODE = process.env.SHARED_BUSINESS_MODE === '1';
 const BUSINESS_API_URL = String(process.env.BUSINESS_API_URL || '').trim().replace(/\/+$/, '');
 const BRIDGE_API_TOKEN = String(process.env.BRIDGE_API_TOKEN || '').trim();
 const EVENT_API_URL = BUSINESS_API_URL ? `${BUSINESS_API_URL}/api/integrations/discord/events` : '';
+const HEARTBEAT_API_URL = BUSINESS_API_URL ? `${BUSINESS_API_URL}/api/integrations/discord/heartbeat` : '';
 const SNAPSHOT_API_URL = BUSINESS_API_URL
   ? `${BUSINESS_API_URL}/api/integrations/discord/snapshot${!SHARED_BUSINESS_MODE && DISCORD_CHANNEL_ID ? `?discord_channel_id=${encodeURIComponent(DISCORD_CHANNEL_ID)}` : ''}`
   : '';
@@ -39,10 +40,12 @@ const STOCK_ALERT_CHANNEL_ID = normalizeSnowflake(process.env.STOCK_ALERT_CHANNE
 const INVENTORY_MESSAGE_ID = normalizeSnowflake(process.env.INVENTORY_MESSAGE_ID);
 const STOCK_ALERT_MESSAGE_ID = normalizeSnowflake(process.env.STOCK_ALERT_MESSAGE_ID);
 const INVENTORY_REFRESH_SECONDS = numberValue(process.env.INVENTORY_REFRESH_SECONDS) || 300;
+const BRIDGE_HEARTBEAT_SECONDS = Math.max(15, numberValue(process.env.BRIDGE_HEARTBEAT_SECONDS) || 30);
 const PORT = numberValue(process.env.PORT);
 const CAPTURE_FILE = path.join(__dirname, 'captures', 'events.jsonl');
 const INVENTORY_PUBLISHING_REQUESTED = Boolean(INVENTORY_CHANNEL_ID || STOCK_ALERT_CHANNEL_ID);
 const telemetry = createBridgeTelemetry();
+let heartbeatInterval = null;
 
 if (!DISCORD_TOKEN || (!SHARED_BUSINESS_MODE && !DISCORD_CHANNEL_ID)
   || ((!CAPTURE_ONLY || INVENTORY_PUBLISHING_REQUESTED || SHARED_BUSINESS_MODE) && (!BUSINESS_API_URL || !BRIDGE_API_TOKEN))) {
@@ -86,6 +89,7 @@ client.once('clientReady', () => {
   logInfo(`Discord debug logging: ${DEBUG_DISCORD ? 'on' : 'off'}`);
   logInfo(`Discord inventory publishing: ${inventoryPublisher.enabled ? 'on' : 'off'}`);
   startHealthServer();
+  startHeartbeat();
   inventoryPublisher.start().catch(error => {
     logError(`Unable to start Discord inventory publishing: ${error.message}`);
   });
@@ -244,6 +248,37 @@ function startHealthServer() {
   server.listen(PORT, () => {
     logInfo(`Health server listening on port ${PORT}`);
   });
+}
+
+function startHeartbeat() {
+  if (!HEARTBEAT_API_URL || !BRIDGE_API_TOKEN || heartbeatInterval) return;
+  reportHeartbeat().catch(error => logWarn(`Bridge heartbeat failed: ${error.message}`));
+  heartbeatInterval = setInterval(() => {
+    reportHeartbeat().catch(error => logWarn(`Bridge heartbeat failed: ${error.message}`));
+  }, BRIDGE_HEARTBEAT_SECONDS * 1000);
+  if (typeof heartbeatInterval.unref === 'function') heartbeatInterval.unref();
+}
+
+async function reportHeartbeat() {
+  const response = await fetch(HEARTBEAT_API_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      authorization: `Bearer ${BRIDGE_API_TOKEN}`
+    },
+    body: JSON.stringify({
+      mode: CAPTURE_ONLY ? 'capture' : 'forward',
+      shared_business_mode: SHARED_BUSINESS_MODE,
+      discord_ready: client.isReady(),
+      events: telemetry.health()
+    }),
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Business API rejected heartbeat (${response.status}): ${body}`);
+  }
 }
 
 function numberValue(value) {
