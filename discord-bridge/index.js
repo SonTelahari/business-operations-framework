@@ -43,11 +43,13 @@ const STOCK_ALERT_MESSAGE_ID = normalizeSnowflake(process.env.STOCK_ALERT_MESSAG
 const INVENTORY_REFRESH_SECONDS = numberValue(process.env.INVENTORY_REFRESH_SECONDS) || 300;
 const BRIDGE_HEARTBEAT_SECONDS = Math.max(15, numberValue(process.env.BRIDGE_HEARTBEAT_SECONDS) || 30);
 const BRIDGE_BACKFILL_MESSAGES = normalizeBackfillLimit(process.env.BRIDGE_BACKFILL_MESSAGES);
+const BRIDGE_BACKFILL_INTERVAL_SECONDS = Math.max(60, numberValue(process.env.BRIDGE_BACKFILL_INTERVAL_SECONDS) || 900);
 const PORT = numberValue(process.env.PORT);
 const CAPTURE_FILE = path.join(__dirname, 'captures', 'events.jsonl');
 const INVENTORY_PUBLISHING_REQUESTED = Boolean(INVENTORY_CHANNEL_ID || STOCK_ALERT_CHANNEL_ID);
 const telemetry = createBridgeTelemetry();
 let heartbeatInterval = null;
+let channelBackfillInterval = null;
 
 if (!DISCORD_TOKEN || (!SHARED_BUSINESS_MODE && !DISCORD_CHANNEL_ID)
   || ((!CAPTURE_ONLY || INVENTORY_PUBLISHING_REQUESTED || SHARED_BUSINESS_MODE) && (!BUSINESS_API_URL || !BRIDGE_API_TOKEN))) {
@@ -103,9 +105,7 @@ client.once('clientReady', () => {
   inventoryPublisher.start().catch(error => {
     logError(`Unable to start Discord inventory publishing: ${error.message}`);
   });
-  channelBackfill.run('startup').catch(error => {
-    logError(`Unable to catch up registered Discord channels: ${error.message}`);
-  });
+  startChannelBackfill();
 });
 
 client.on('messageCreate', (message) => {
@@ -294,6 +294,34 @@ function startHeartbeat() {
     reportHeartbeat().catch(error => logWarn(`Bridge heartbeat failed: ${error.message}`));
   }, BRIDGE_HEARTBEAT_SECONDS * 1000);
   if (typeof heartbeatInterval.unref === 'function') heartbeatInterval.unref();
+}
+
+function startChannelBackfill() {
+  if (!channelBackfill.enabled || channelBackfillInterval) return;
+  runChannelBackfillWithRetry(1);
+  channelBackfillInterval = setInterval(() => {
+    channelBackfill.run('periodic').catch(error => {
+      logError(`Unable to catch up registered Discord channels: ${error.message}`);
+    });
+  }, BRIDGE_BACKFILL_INTERVAL_SECONDS * 1000);
+  if (typeof channelBackfillInterval.unref === 'function') channelBackfillInterval.unref();
+}
+
+function runChannelBackfillWithRetry(attempt) {
+  const reason = attempt === 1 ? 'startup' : `startup retry ${attempt - 1}`;
+  channelBackfill.run(reason)
+    .then(summary => {
+      if (summary.errorCount > 0 && attempt < 5) scheduleChannelBackfillRetry(attempt + 1);
+    })
+    .catch(error => {
+      logError(`Unable to catch up registered Discord channels: ${error.message}`);
+      if (attempt < 5) scheduleChannelBackfillRetry(attempt + 1);
+    });
+}
+
+function scheduleChannelBackfillRetry(attempt) {
+  const timer = setTimeout(() => runChannelBackfillWithRetry(attempt), 30000);
+  if (typeof timer.unref === 'function') timer.unref();
 }
 
 async function reportHeartbeat() {
