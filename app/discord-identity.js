@@ -66,12 +66,14 @@ class DiscordIdentityStore {
         client_secret: this.clientSecret,
         redirect_uri: this.redirectUri,
         code_verifier: authorization.codeVerifier
-      })
+      }),
+      signal: AbortSignal.timeout(15000)
     });
     const token = await readDiscordResponse(tokenResponse, "Discord did not accept the authorization code");
     if (!token.access_token) throw identityError("Discord did not return an access token", 502, "oauth_token_missing");
     const userResponse = await this.fetchImpl(`${this.apiBaseUrl}/users/@me`, {
-      headers: { authorization: `Bearer ${token.access_token}`, accept: "application/json" }
+      headers: { authorization: `Bearer ${token.access_token}`, accept: "application/json" },
+      signal: AbortSignal.timeout(15000)
     });
     const profile = await readDiscordResponse(userResponse, "Discord profile lookup failed");
     const identity = await this.upsertDiscordIdentity(profile);

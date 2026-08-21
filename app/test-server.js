@@ -260,6 +260,14 @@ async function run() {
     ["accounts", true, true, true, true, true, true, true]
   );
 
+  const malformedBody = await fetch(`${baseUrl}/api/setup/complete`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: "{"
+  });
+  assert.equal(malformedBody.status, 400);
+  assert.equal((await malformedBody.json()).code, "invalid_json_body");
+
   const firstLaunch = await post(`${baseUrl}/api/setup/complete`, {
     owner: { fullName: "Frontier Owner", password: "OwnerPassword123!" },
     configuration: {

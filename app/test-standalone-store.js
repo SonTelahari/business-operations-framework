@@ -1,11 +1,13 @@
 const assert = require("node:assert/strict");
-const { newDb } = require("pg-mem");
+const { newDb, DataType } = require("pg-mem");
 const { Database } = require("./database");
 const { StandaloneStore } = require("./standalone-store");
 const { normalizeSetupPayload } = require("./setup-config");
 
 async function run() {
   const memory = newDb({ autoCreateForeignKeyIndices: true, noAstCoverageCheck: true });
+  memory.public.registerFunction({ name: "hashtext", args: [DataType.text], returns: DataType.integer, implementation: () => 1 });
+  memory.public.registerFunction({ name: "pg_advisory_xact_lock", args: [DataType.integer], returns: DataType.integer, implementation: () => 1 });
   const adapter = memory.adapters.createPg();
   const database = new Database({ pool: new adapter.Pool() });
   await database.initialize();
@@ -466,13 +468,37 @@ async function run() {
     await store.handleGuiPayload({
       action: "time_clock",
       entry: {
-        id: "shift-1", employee: "Ada Lovelace",
+        id: "shift-1", employee: "Ada Lovelace", userId: "ada-user",
         clockIn: "2026-08-01T08:00:00.000Z", clockOut: "2026-08-01T12:00:00.000Z", durationMinutes: 240
+      }
+    });
+    await store.handleGuiPayload({
+      action: "time_clock",
+      entry: {
+        id: "shift-2", employee: "Ada Lovelace", userId: "ada-user",
+        clockIn: "2026-08-01T13:00:00.000Z", clockOut: "", durationMinutes: ""
+      }
+    });
+    await assert.rejects(() => store.handleGuiPayload({
+      action: "time_clock",
+      entry: {
+        id: "shift-overlap", employee: "Ada Lovelace", userId: "ada-user",
+        clockIn: "2026-08-01T13:30:00.000Z", clockOut: "", durationMinutes: ""
+      }
+    }), error => error.code === "active_shift_exists");
+    await store.handleGuiPayload({
+      action: "time_clock",
+      entry: {
+        id: "shift-2", employee: "Ada Lovelace", userId: "ada-user",
+        clockIn: "2026-08-01T13:00:00.000Z", clockOut: "2026-08-01T14:00:00.000Z", durationMinutes: 60
       }
     });
 
     const snapshot = await store.snapshot();
     assert.equal(snapshot.dataBackend, "postgresql");
+    assert.equal(snapshot.timeEntries.length, 2);
+    assert.equal(snapshot.timeEntries[0].userId, "ada-user");
+    assert.equal(snapshot.timeEntries[0].syncStatus, "Synced");
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Iron Widget").currentStock, 8);
     assert.equal(snapshot.inventory.products.find(item => item.itemName === "Native Clock").currentStock, 2);
     assert.equal(snapshot.inventory.products.some(item => item.itemName === "Native Ore"), false);
@@ -567,7 +593,7 @@ async function run() {
     assert.equal((await store.snapshot()).inventory.products.find(item => item.itemName === "Unpriced Widget").salePrice, 12);
 
     const timeEntries = await database.query("SELECT * FROM time_entries");
-    assert.equal(timeEntries.rowCount, 1);
+    assert.equal(timeEntries.rowCount, 2);
     assert.equal(timeEntries.rows[0].employee_name, "Ada Lovelace");
 
     const legacyPayload = {

@@ -138,12 +138,12 @@ const publicFiles = new Set([
 const server = http.createServer((request, response) => {
   dispatchRequest(request, response).catch(error => {
     console.error("App request failed:", error);
-    if (!response.headersSent) sendJson(response, { ok: false, error: "The request could not be completed" }, 500);
-    else response.end();
+    sendRequestError(response, error);
   });
 });
 
 async function dispatchRequest(request, response) {
+  applySecurityHeaders(request, response);
   const url = new URL(request.url, `http://${request.headers.host}`);
   if (hostedMode) return dispatchHostedRequest(request, response, url);
   return tenantRequestContext.run(defaultContext, () => handleApplicationRequest(request, response, url));
@@ -345,7 +345,7 @@ async function handleApplicationRequest(request, response, url) {
     serveStatic(response, url.pathname === "/" ? "/index.html" : url.pathname);
   } catch (error) {
     console.error("App request failed:", error);
-    sendJson(response, { ok: false, error: "The request could not be completed" }, 500);
+    sendRequestError(response, error);
   }
 }
 
@@ -355,8 +355,9 @@ async function dispatchHostedRequest(request, response, url) {
     return;
   }
   if (url.pathname === "/health") {
+    const databaseReady = await probeDatabase();
     sendJson(response, {
-      ok: true,
+      ok: databaseReady,
       service: "business-operations-framework",
       version: packageVersion,
       release: releaseVersion,
@@ -364,7 +365,7 @@ async function dispatchHostedRequest(request, response, url) {
       tenantScoped: true,
       dataBackend: "postgresql",
       databaseConfigured: true,
-      databaseReady: true,
+      databaseReady,
       bridgeApiConfigured: Boolean(process.env.BRIDGE_API_TOKEN),
       discordLoginConfigured: Boolean(discordIdentityStore?.enabled),
       personalJobProfiles: Boolean(localIdentityStore?.enabled),
@@ -375,11 +376,12 @@ async function dispatchHostedRequest(request, response, url) {
     return;
   }
   if (url.pathname === "/health/data" || url.pathname === "/health/sheet") {
+    const databaseReady = await probeDatabase();
     sendJson(response, {
-      ok: true,
+      ok: databaseReady,
       dataBackend: "postgresql",
       tenantScoped: true,
-      databaseReady: true
+      databaseReady
     });
     return;
   }
@@ -933,6 +935,26 @@ function publicWorkspace(context = currentTenantContext()) {
     name: context.business.name,
     referenceId: context.business.referenceId || ""
   };
+}
+
+async function probeDatabase() {
+  if (!database.enabled) return false;
+  try {
+    await database.query("SELECT 1");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function applySecurityHeaders(request, response) {
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "DENY");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (isHttps(request)) {
+    response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
 }
 
 async function getWorkspaceProfile(request, response, user, resolvedIdentity = null) {
@@ -3338,6 +3360,7 @@ function stampEmployee(payload, user) {
   }
   if ((payload.action === "manual_operation" || payload.action === "time_clock") && payload.entry) {
     payload.entry.employee = user.fullName;
+    if (payload.action === "time_clock") payload.entry.userId = user.id;
   }
   if ((payload.action === "resolve_exception" || payload.action === "ignore_exception") && payload.exception) {
     payload.exception.resolvedBy = user.fullName;
@@ -3765,22 +3788,53 @@ function sendJson(response, payload, status = payload.ok === false ? 503 : 200) 
 
 function readJsonBody(request) {
   if (request.__businessJsonBody) return request.__businessJsonBody;
-  request.__businessJsonBody = new Promise(resolve => {
+  request.__businessJsonBody = new Promise((resolve, reject) => {
     let body = "";
+    let bodyBytes = 0;
+    let tooLarge = false;
     request.on("data", chunk => {
+      bodyBytes += Buffer.byteLength(chunk);
+      if (bodyBytes > 1_000_000) {
+        tooLarge = true;
+        body = "";
+        return;
+      }
+      if (tooLarge) return;
       body += chunk;
-      if (body.length > 1_000_000) request.destroy();
     });
     request.on("end", () => {
+      if (tooLarge) {
+        reject(routeError("Request body is too large", 413, "request_body_too_large"));
+        return;
+      }
       try {
-        resolve(JSON.parse(body || "{}"));
+        const parsed = JSON.parse(body || "{}");
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          reject(routeError("Request body must be a JSON object", 400, "invalid_json_body"));
+          return;
+        }
+        resolve(parsed);
       } catch {
-        resolve({});
+        reject(routeError("Request body contains invalid JSON", 400, "invalid_json_body"));
       }
     });
-    request.on("error", () => resolve({}));
+    request.on("error", () => reject(routeError("Request body could not be read", 400, "request_body_unreadable")));
   });
   return request.__businessJsonBody;
+}
+
+function sendRequestError(response, error) {
+  if (response.headersSent) {
+    response.end();
+    return;
+  }
+  const status = Number(error?.status);
+  const expected = Number.isInteger(status) && status >= 400 && status < 500;
+  sendJson(response, {
+    ok: false,
+    error: expected ? error.message : "The request could not be completed",
+    code: expected ? error.code || "request_failed" : "request_failed"
+  }, expected ? status : 500);
 }
 
 async function getBootstrapData(user) {
@@ -3790,6 +3844,13 @@ async function getBootstrapData(user) {
   const canManage = !user || isManagementRole(user);
   if (canManage) await reconcileStorefrontBuyOrdersFromSheet(sheetSnapshot);
   if (sheetSnapshot?.inventory) delete sheetSnapshot.inventory.buyOrderPurchases;
+  if (Array.isArray(sheetSnapshot?.timeEntries) && user) {
+    const employeeName = String(user.fullName || "").trim().toLocaleLowerCase();
+    sheetSnapshot.timeEntries = sheetSnapshot.timeEntries.filter(entry =>
+      String(entry.userId || "") === String(user.id || "")
+      || (!entry.userId && String(entry.employee || "").trim().toLocaleLowerCase() === employeeName)
+    );
+  }
   if (!canManage && sheetSnapshot) {
     delete sheetSnapshot.reviewExceptions;
     delete sheetSnapshot.webhookLog;

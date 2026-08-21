@@ -163,7 +163,8 @@ async function forwardToBusinessApi(payload) {
       accept: 'application/json',
       authorization: `Bearer ${BRIDGE_API_TOKEN}`
     },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30000)
   });
 
   if (!response.ok) {

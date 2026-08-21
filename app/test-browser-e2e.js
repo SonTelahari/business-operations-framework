@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { once } = require("node:events");
-const { newDb } = require("pg-mem");
+const { newDb, DataType } = require("pg-mem");
 const { chromium } = require("playwright");
 const { defaultSetupConfiguration } = require("./setup-config");
 
@@ -14,6 +14,8 @@ const CUSTOMER_NAME = "Blackwater Provisioners";
 const RESULTS_DIR = path.join(__dirname, "..", "test-results", "browser-e2e");
 
 const memory = newDb({ autoCreateForeignKeyIndices: true, noAstCoverageCheck: true });
+memory.public.registerFunction({ name: "hashtext", args: [DataType.text], returns: DataType.integer, implementation: () => 1 });
+memory.public.registerFunction({ name: "pg_advisory_xact_lock", args: [DataType.integer], returns: DataType.integer, implementation: () => 1 });
 const adapter = memory.adapters.createPg();
 const pgPath = require.resolve("pg");
 const originalPg = require(pgPath);
@@ -68,6 +70,7 @@ async function run() {
     await assertWorkspaceReady(page, workspace.code);
     await exerciseNavigation(page);
     await updateBusinessAppearance(page);
+    await exercisePersistentTimeClock(page, workspace.code);
     const customerId = await createCustomer(page);
     await createSalesOrder(page, customerId);
 
@@ -86,7 +89,7 @@ async function run() {
 
     assert.deepEqual(browserErrors, [], `Browser errors:\n${browserErrors.join("\n")}`);
     assert.deepEqual(failedRequests, [], `Failed requests:\n${failedRequests.join("\n")}`);
-    console.log("Browser end-to-end test passed: hosted sign-in, navigation, customer, sale, reload, and responsive layout.");
+    console.log("Browser end-to-end test passed: hosted sign-in, persistent time clock, navigation, customer, sale, reload, and responsive layout.");
   } catch (error) {
     if (page) {
       await page.screenshot({ path: path.join(RESULTS_DIR, "failure.png"), fullPage: true }).catch(() => {});
@@ -203,6 +206,26 @@ async function updateBusinessAppearance(page) {
   await page.locator("#businessSettingsStatus").filter({ hasText: "Saved" }).waitFor();
   await page.screenshot({ path: path.join(RESULTS_DIR, "appearance-viewport.png") });
   await page.screenshot({ path: path.join(RESULTS_DIR, "appearance-settings.png"), fullPage: true });
+}
+
+async function exercisePersistentTimeClock(page, workspaceCode) {
+  await openSection(page, "dashboard", "#dashboardSection");
+  let responsePromise = page.waitForResponse(response => response.url().endsWith("/api/sync") && response.request().method() === "POST");
+  await page.locator("#clockToggleButton").click();
+  assert.equal((await responsePromise).status(), 200);
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: "networkidle" });
+  await assertWorkspaceReady(page, workspaceCode);
+  await page.locator("#clockToggleButton").filter({ hasText: "Clock Out" }).waitFor();
+
+  responsePromise = page.waitForResponse(response => response.url().endsWith("/api/sync") && response.request().method() === "POST");
+  await page.locator("#clockToggleButton").click();
+  assert.equal((await responsePromise).status(), 200);
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: "networkidle" });
+  await assertWorkspaceReady(page, workspaceCode);
+  await page.locator("#clockToggleButton").filter({ hasText: "Clock In" }).waitFor();
+  await page.locator("#timeClockList", { hasText: OWNER_NAME }).waitFor();
 }
 
 async function openSection(page, section, expectedSelector) {

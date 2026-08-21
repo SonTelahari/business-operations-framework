@@ -345,7 +345,7 @@ class StandaloneStore {
   }
 
   async snapshot() {
-    const [catalogResult, recipeResult, ingredientResult, inventoryResult, ledgerResult, exceptionResult, webhookResult, purchaseResult, cashAllocationResult] = await Promise.all([
+    const [catalogResult, recipeResult, ingredientResult, inventoryResult, ledgerResult, exceptionResult, webhookResult, purchaseResult, cashAllocationResult, timeEntryResult] = await Promise.all([
       this.database.query(`
         SELECT * FROM catalog_items WHERE business_id = $1 ORDER BY item_type, category, label
       `, [this.businessId]),
@@ -395,6 +395,13 @@ class StandaloneStore {
         SELECT * FROM cash_review_allocations
         WHERE business_id = $1
         ORDER BY created_at, allocation_id
+      `, [this.businessId]),
+      this.database.query(`
+        SELECT entry_id, employee_name, clock_in, clock_out, metadata, updated_at
+        FROM time_entries
+        WHERE business_id = $1
+        ORDER BY (clock_out IS NULL) DESC, clock_in DESC, updated_at DESC, entry_id DESC
+        LIMIT 500
       `, [this.businessId])
     ]);
 
@@ -520,6 +527,7 @@ class StandaloneStore {
         cashAllocationsByWebhook.get(row.webhook_id) || []
       )),
       webhookLog: webhookResult.rows.map(webhookEventRow),
+      timeEntries: timeEntryResult.rows.map(timeEntryRow),
       catalog,
       recipes,
       inventory: {
@@ -1131,26 +1139,48 @@ class StandaloneStore {
   async recordTimeEntry(entry) {
     const id = cleanText(entry.id, 120);
     const employee = cleanText(entry.employee, 100);
+    const userId = cleanText(entry.userId, 120);
     if (!id || !employee || !entry.clockIn) {
       throw storeError("Time entry requires an ID, employee, and clock-in time", 400, "invalid_time_entry");
     }
-    const existing = await this.database.query(`
-      SELECT entry_id FROM time_entries WHERE business_id = $1 AND entry_id = $2
-    `, [this.businessId, id]);
-    await this.database.query(`
-      INSERT INTO time_entries (business_id, entry_id, employee_name, clock_in, clock_out, metadata, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6::jsonb, now())
-      ON CONFLICT (business_id, entry_id) DO UPDATE SET
-        employee_name = EXCLUDED.employee_name,
-        clock_in = EXCLUDED.clock_in,
-        clock_out = EXCLUDED.clock_out,
-        metadata = EXCLUDED.metadata,
-        updated_at = now()
-    `, [
-      this.businessId, id, employee, validDate(entry.clockIn), entry.clockOut ? validDate(entry.clockOut) : null,
-      JSON.stringify({ durationMinutes: nullableNumber(entry.durationMinutes) })
-    ]);
-    return { ok: true, action: "time_clock", entryId: id, updated: Boolean(existing.rowCount) };
+    return this.database.transaction(async client => {
+      const identityKey = userId || inventoryKey(employee);
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`${this.businessId}:time-clock:${identityKey}`]);
+      const existing = await client.query(`
+        SELECT entry_id FROM time_entries WHERE business_id = $1 AND entry_id = $2
+      `, [this.businessId, id]);
+      if (!entry.clockOut) {
+        const active = await client.query(`
+          SELECT entry_id
+          FROM time_entries
+          WHERE business_id = $1
+            AND clock_out IS NULL
+            AND entry_id <> $2
+            AND (
+              ($3 <> '' AND metadata->>'userId' = $3)
+              OR ($3 = '' AND lower(employee_name) = lower($4))
+            )
+          LIMIT 1
+        `, [this.businessId, id, userId, employee]);
+        if (active.rowCount) {
+          throw storeError("This employee already has an active shift", 409, "active_shift_exists");
+        }
+      }
+      await client.query(`
+        INSERT INTO time_entries (business_id, entry_id, employee_name, clock_in, clock_out, metadata, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, now())
+        ON CONFLICT (business_id, entry_id) DO UPDATE SET
+          employee_name = EXCLUDED.employee_name,
+          clock_in = EXCLUDED.clock_in,
+          clock_out = EXCLUDED.clock_out,
+          metadata = EXCLUDED.metadata,
+          updated_at = now()
+      `, [
+        this.businessId, id, employee, validDate(entry.clockIn), entry.clockOut ? validDate(entry.clockOut) : null,
+        JSON.stringify({ durationMinutes: nullableNumber(entry.durationMinutes), userId })
+      ]);
+      return { ok: true, action: "time_clock", entryId: id, updated: Boolean(existing.rowCount) };
+    });
   }
 
   async ingestWebhook(payload) {
@@ -2260,6 +2290,20 @@ function cashAllocationRow(row) {
     actorName: row.actor_name,
     resolvedBy: row.resolved_by,
     createdAt: iso(row.created_at)
+  };
+}
+
+function timeEntryRow(row) {
+  const metadata = json(row.metadata, {});
+  return {
+    id: row.entry_id,
+    employee: row.employee_name,
+    userId: cleanText(metadata.userId, 120),
+    clockIn: iso(row.clock_in),
+    clockOut: iso(row.clock_out),
+    durationMinutes: nullableNumber(metadata.durationMinutes),
+    updatedAt: iso(row.updated_at),
+    syncStatus: "Synced"
   };
 }
 

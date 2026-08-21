@@ -144,12 +144,12 @@ let businessTerminology = { salesLocation: "Storefront", storageLocation: "Stora
 let navigationSections = { ...DEFAULT_NAVIGATION_SECTIONS };
 rebuildCatalogIndexes();
 
-let legacyOrdersPendingMigration = loadOrders();
+let legacyOrdersPendingMigration = [];
 let orders = [];
 let timeClock = { current: null, entries: [] };
-let operations = loadOperations();
-let stockTargets = loadStockTargets();
-let storageTargets = loadStorageTargets();
+let operations = [];
+let stockTargets = [];
+let storageTargets = [];
 let supplyOrders = [];
 let storefrontBuyOrders = [];
 let suppliers = [];
@@ -969,7 +969,7 @@ function newSupplier() {
 
 function loadOrders() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    return JSON.parse(localStorage.getItem(workspaceStorageKey(STORAGE_KEY)) || "[]");
   } catch {
     return [];
   }
@@ -989,7 +989,7 @@ function loadTimeClock(storageKey = TIME_CLOCK_KEY) {
 
 function loadOperations() {
   try {
-    return JSON.parse(localStorage.getItem(OPERATIONS_KEY) || "[]");
+    return JSON.parse(localStorage.getItem(workspaceStorageKey(OPERATIONS_KEY)) || "[]");
   } catch {
     return [];
   }
@@ -997,7 +997,7 @@ function loadOperations() {
 
 function loadStockTargets() {
   try {
-    return JSON.parse(localStorage.getItem(TARGETS_KEY) || "[]");
+    return JSON.parse(localStorage.getItem(workspaceStorageKey(TARGETS_KEY)) || "[]");
   } catch {
     return [];
   }
@@ -1005,7 +1005,7 @@ function loadStockTargets() {
 
 function loadStorageTargets() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_TARGETS_KEY) || "[]");
+    return JSON.parse(localStorage.getItem(workspaceStorageKey(STORAGE_TARGETS_KEY)) || "[]");
   } catch {
     return [];
   }
@@ -1016,19 +1016,72 @@ function persistTimeClock() {
 }
 
 function timeClockStorageKey() {
-  return currentUser ? `${TIME_CLOCK_KEY}_${currentUser.id}` : TIME_CLOCK_KEY;
+  const userKey = currentUser?.id || "anonymous";
+  return workspaceStorageKey(`${TIME_CLOCK_KEY}_${userKey}`);
 }
 
 function persistOperations() {
-  localStorage.setItem(OPERATIONS_KEY, JSON.stringify(operations));
+  localStorage.setItem(workspaceStorageKey(OPERATIONS_KEY), JSON.stringify(operations));
 }
 
 function persistStockTargets() {
-  localStorage.setItem(TARGETS_KEY, JSON.stringify(stockTargets));
+  localStorage.setItem(workspaceStorageKey(TARGETS_KEY), JSON.stringify(stockTargets));
 }
 
 function persistStorageTargets() {
-  localStorage.setItem(STORAGE_TARGETS_KEY, JSON.stringify(storageTargets));
+  localStorage.setItem(workspaceStorageKey(STORAGE_TARGETS_KEY), JSON.stringify(storageTargets));
+}
+
+function workspaceStorageKey(baseKey) {
+  const workspaceId = currentWorkspace?.id || workspaceProfile?.currentBusinessId || "single-workspace";
+  return `${baseKey}_${workspaceId}`;
+}
+
+function migrateLegacyWorkspaceStorage(baseKey) {
+  const scopedKey = workspaceStorageKey(baseKey);
+  if (localStorage.getItem(scopedKey) !== null) return;
+  const legacy = localStorage.getItem(baseKey);
+  if (legacy === null) return;
+  localStorage.setItem(scopedKey, legacy);
+  localStorage.removeItem(baseKey);
+}
+
+function loadWorkspaceLocalState() {
+  [STORAGE_KEY, OPERATIONS_KEY, TARGETS_KEY, STORAGE_TARGETS_KEY]
+    .forEach(migrateLegacyWorkspaceStorage);
+  legacyOrdersPendingMigration = loadOrders();
+  operations = loadOperations();
+  stockTargets = loadStockTargets();
+  storageTargets = loadStorageTargets();
+
+  const previousUserClockKey = `${TIME_CLOCK_KEY}_${currentUser.id}`;
+  const currentClockKey = timeClockStorageKey();
+  if (localStorage.getItem(currentClockKey) === null && localStorage.getItem(previousUserClockKey) !== null) {
+    localStorage.setItem(currentClockKey, localStorage.getItem(previousUserClockKey));
+    localStorage.removeItem(previousUserClockKey);
+  }
+  timeClock = loadTimeClock(currentClockKey);
+}
+
+function hydrateSharedTimeClock(snapshot) {
+  if (!Array.isArray(snapshot?.sheet?.timeEntries)) return;
+  const sharedEntries = snapshot.sheet.timeEntries;
+  const sharedById = new Map(sharedEntries.map(entry => [entry.id, entry]));
+  const localPending = [timeClock.current, ...timeClock.entries]
+    .filter(entry => entry && entry.syncStatus !== "Synced" && !sharedById.has(entry.id));
+  const active = sharedEntries.find(entry => !entry.clockOut)
+    || localPending.find(entry => !entry.clockOut)
+    || null;
+  timeClock = {
+    current: active ? { ...active, syncStatus: active.syncStatus || "Synced" } : null,
+    entries: [
+      ...sharedEntries.filter(entry => entry.clockOut),
+      ...localPending.filter(entry => entry.clockOut)
+    ]
+      .sort((left, right) => new Date(right.clockIn) - new Date(left.clockIn))
+      .slice(0, 500)
+  };
+  persistTimeClock();
 }
 
 function seedDatalist() {
@@ -2189,7 +2242,7 @@ async function migrateLegacySalesOrders() {
     if (!response.ok || !result.ok) throw new Error(result.error || `API ${response.status}`);
     orders = Array.isArray(result.orders) ? result.orders : [];
     legacyOrdersPendingMigration = [];
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(workspaceStorageKey(STORAGE_KEY));
     return true;
   } catch (error) {
     orders = [...legacyOrdersPendingMigration];
@@ -6991,7 +7044,7 @@ async function loadSessionAndData() {
     }] : []
   };
   currentRole = currentUser.role;
-  timeClock = loadTimeClock(timeClockStorageKey());
+  loadWorkspaceLocalState();
   migrateLegacyTimeClock();
   try {
     applyIdentityDefaults();
@@ -7018,6 +7071,7 @@ function migrateLegacyTimeClock() {
   if (legacy.current && normalize(legacy.current.employee) === normalize(currentUser.fullName)) {
     timeClock = legacy;
     persistTimeClock();
+    localStorage.removeItem(TIME_CLOCK_KEY);
   }
 }
 
@@ -7502,6 +7556,7 @@ async function performBackendRefresh({ silent = false, preserveReviewEditor = fa
     hydrateSharedSalesOrders(nextSnapshot);
     hydrateCustomers(nextSnapshot);
     hydrateDailyCloses(nextSnapshot);
+    hydrateSharedTimeClock(nextSnapshot);
     productionBatches = Array.isArray(nextSnapshot.productionBatches) ? nextSnapshot.productionBatches : productionBatches;
     if (!activeProductionBatchId || !productionBatches.some(batch => batch.id === activeProductionBatchId)) {
       activeProductionBatchId = productionBatches.find(batch => PRODUCTION_ACTIVE_STATUSES.has(batch.status))?.id

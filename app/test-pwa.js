@@ -26,6 +26,9 @@ assert(serviceWorker.includes('request.mode === "navigate"'));
 assert(!serviceWorker.includes("/index.html"), "authenticated HTML must not be pre-cached");
 assert(server.includes('"Service-Worker-Allowed"'));
 assert(server.includes('pathname === "/service-worker.js"'));
+assert(server.includes('"X-Content-Type-Options", "nosniff"'), "hosted responses must prevent MIME sniffing");
+assert(server.includes('"X-Frame-Options", "DENY"'), "the authenticated ledger must not be frameable");
+assert(server.includes('const databaseReady = await probeDatabase()'), "hosted readiness must verify PostgreSQL instead of reporting a constant");
 
 for (const htmlFile of ["index.html", "login.html", "profile.html", "setup.html"]) {
   const html = fs.readFileSync(path.join(root, htmlFile), "utf8");
@@ -173,6 +176,11 @@ assert(appScript.includes('elements.productionSourceStatus.textContent = `Unable
 assert(appScript.includes('if (queued) closeProductionSourceDialog()'), "the source dialog must only close after a successful queue request");
 assert(appScript.includes('function switchWorkspace(event)'), "the ledger must support workspace switching without another login");
 assert(appScript.includes('function linkWorkspaceJob(event)'), "the ledger must support credential-verified local job linking");
+assert(appScript.includes("function workspaceStorageKey(baseKey)"), "browser fallback data must be scoped to the active business");
+assert(appScript.includes("function loadWorkspaceLocalState()"), "workspace switching must reload only that business's fallback data");
+assert(appScript.includes("localStorage.setItem(workspaceStorageKey(OPERATIONS_KEY)"), "pending manual operations must not cross business boundaries");
+assert(appScript.includes("function hydrateSharedTimeClock(snapshot)"), "time-clock state must recover from the shared database");
+assert(appScript.includes("hydrateSharedTimeClock(nextSnapshot)"), "background refreshes must reconcile the active shift");
 assert(appHtml.includes('data-section="business-settings"'), "administrators must have a business settings tab");
 assert(appHtml.includes('id="businessSettingsForm"'), "business settings must expose a profile editor");
 assert(appHtml.includes('id="settingsLogoPreview"'), "business settings must preview branding changes");
