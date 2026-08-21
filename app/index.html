@@ -11,7 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/operations-ledger-32.png">
     <link rel="apple-touch-icon" href="/assets/operations-ledger-192.png">
-    <link rel="stylesheet" href="styles.css?v=20260821-ledger-appearance">
+    <link rel="stylesheet" href="styles.css?v=20260821-base-material-demand">
   </head>
   <body class="employee-view ledger-book">
     <div class="app-shell">
@@ -693,7 +693,8 @@
               <div class="dashboard-list" id="replenishmentList"></div>
             </div>
             <div>
-              <h3>Materials Needed</h3>
+              <h3>Base Materials Needed</h3>
+              <p class="section-help">Finished goods and intermediate recipes are expanded into the materials that must ultimately be supplied.</p>
               <div class="dashboard-list" id="replenishmentMaterialsList"></div>
             </div>
           </div>
@@ -1174,6 +1175,18 @@
       </main>
 
       <main class="workspace supply-workspace workspace-section hidden management-only" id="supplySection">
+        <section class="panel supply-demand-panel" aria-label="Base materials purchasing plan">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Combined Demand</p>
+              <h2>Base Materials to Order</h2>
+              <p id="supplyDemandMeta">Recipes are expanded through every production stage</p>
+            </div>
+            <button class="ghost-button" id="addAllMissingSupplyButton" type="button">Add All Missing</button>
+          </div>
+          <div class="supply-demand-list" id="supplyDemandList"></div>
+        </section>
+
         <section class="panel active-order" aria-label="Active supply order">
           <div class="panel-header">
             <div>
@@ -2322,7 +2335,7 @@
     <script src="supply-telegram.js?v=20260714-telegram"></script>
     <script src="production-planner.js?v=20260820-multistage-production"></script>
     <script src="production-inventory.js?v=20260821-static-route"></script>
-    <script src="app.js?v=20260821-ledger-appearance"></script>
+    <script src="app.js?v=20260821-base-material-demand"></script>
     <script src="/pwa.js"></script>
   </body>
 </html>

@@ -341,6 +341,9 @@ const elements = {
   supplyLineCount: document.querySelector("#supplyLineCountValue"),
   supplyUncovered: document.querySelector("#supplyUncoveredValue"),
   supplySummary: document.querySelector("#supplySummaryPreview"),
+  supplyDemandMeta: document.querySelector("#supplyDemandMeta"),
+  supplyDemandList: document.querySelector("#supplyDemandList"),
+  addAllMissingSupply: document.querySelector("#addAllMissingSupplyButton"),
   supplyFilter: document.querySelector("#supplyFilterSelect"),
   supplySavedCount: document.querySelector("#supplySavedCount"),
   supplyDataStatus: document.querySelector("#supplyDataStatus"),
@@ -1684,6 +1687,7 @@ function wireEvents() {
   document.querySelector("#deleteOrderButton").addEventListener("click", removeActiveOrder);
   document.querySelector("#addSupplyLineButton").addEventListener("click", addSupplyLine);
   document.querySelector("#addMissingSupplyButton").addEventListener("click", addMissingSupplyLines);
+  elements.addAllMissingSupply.addEventListener("click", addMissingSupplyLines);
   document.querySelector("#copySupplyOrderButton").addEventListener("click", copySupplyOrder);
   elements.copySupplyTelegram.addEventListener("click", copySupplyTelegram);
   document.querySelector("#orderSupplyButton").addEventListener("click", () => setSupplyStatus("Ordered"));
@@ -3607,21 +3611,50 @@ function renderSupplyWorkspace() {
   elements.supplyOrderMeta.textContent = `${activeSupplyOrder.status} / ${activeSupplyOrder.producer || "Producer not selected"} / ${formatDateTime(activeSupplyOrder.updatedAt)}`;
   const hasRemaining = activeSupplyOrder.lines.some(line => Number(line.quantity || 0) > Number(line.receivedQuantity || 0));
   const isSaved = supplyOrders.some(order => order.id === activeSupplyOrder.id);
+  const activeSupplyPlan = getMaterialPurchasePlan(activeSupplyOrder.id);
+  const globalSupplyPlan = isSaved ? getMaterialPurchasePlan() : activeSupplyPlan;
   elements.copySupplyTelegram.disabled = !isSaved || !activeSupplyOrder.lines.length;
   elements.receiveSupply.disabled = supplyReceiptPending || !hasRemaining || !SUPPLY_DELIVERY_STATUSES.has(activeSupplyOrder.status);
-  renderSupplyLines();
-  renderSupplySummary();
+  renderSupplyLines(activeSupplyPlan);
+  renderSupplySummary(activeSupplyPlan);
+  renderSupplyDemand(globalSupplyPlan);
   renderSupplyOrdersList();
   seedProducerOptions();
 }
 
-function renderSupplyLines() {
+function renderSupplyDemand(plan) {
+  const outstanding = plan.filter(line => line.missing > 0);
+  const requiredUnits = plan.reduce((sum, line) => sum + Number(line.demand || 0), 0);
+  const missingUnits = outstanding.reduce((sum, line) => sum + Number(line.missing || 0), 0);
+  elements.supplyDemandMeta.textContent = plan.length
+    ? `${formatNumber(requiredUnits)} base units required / ${formatNumber(missingUnits)} still to order across ${outstanding.length} ${outstanding.length === 1 ? "material" : "materials"}`
+    : "No base-material demand from current stock shortages or open customer orders";
+  elements.addAllMissingSupply.disabled = !outstanding.length;
+  elements.supplyDemandList.innerHTML = outstanding.length
+    ? outstanding.map(line => `
+      <article class="supply-demand-row short">
+        <header>
+          <strong>${escapeHtml(line.ingredient)}</strong>
+          <span>${formatNumber(line.missing)} to order</span>
+        </header>
+        <div class="supply-demand-metrics">
+          <span>Required ${formatNumber(line.demand)}</span>
+          <span>Storage ${formatNumber(line.available)}</span>
+          <span>Ordered ${formatNumber(line.ordered)}</span>
+        </div>
+        <small>${formatNumber(line.restockDemand)} for storefront targets${line.salesDemand ? ` / ${formatNumber(line.salesDemand)} for customer orders` : ""}</small>
+      </article>
+    `).join("")
+    : `<div class="empty-card">Current storage and incoming supply orders cover all expanded recipe needs</div>`;
+}
+
+function renderSupplyLines(purchasePlan) {
   if (!activeSupplyOrder.lines.length) {
     elements.supplyLines.innerHTML = `<tr><td colspan="12" class="empty-line">No parts or materials added</td></tr>`;
     return;
   }
   elements.supplyLines.innerHTML = activeSupplyOrder.lines.map(line => {
-    const metrics = getSupplyLineMetrics(line.name, activeSupplyOrder.id);
+    const metrics = getSupplyLineMetrics(line.name, activeSupplyOrder.id, purchasePlan);
     const total = Number(line.quantity || 0) * Number(line.unitPrice || 0);
     const received = Math.max(0, Number(line.receivedQuantity || 0));
     const remaining = Math.max(0, Number(line.quantity || 0) - received);
@@ -3648,7 +3681,7 @@ function renderSupplyLines() {
   });
 }
 
-function renderSupplySummary() {
+function renderSupplySummary(purchasePlan = getMaterialPurchasePlan(activeSupplyOrder.id)) {
   const subtotal = getSupplyOrderTotal(activeSupplyOrder);
   const activeQuantities = new Map();
   activeSupplyOrder.lines.forEach(line => {
@@ -3656,7 +3689,7 @@ function renderSupplySummary() {
     const remaining = Math.max(0, Number(line.quantity || 0) - Number(line.receivedQuantity || 0));
     activeQuantities.set(key, (activeQuantities.get(key) || 0) + remaining);
   });
-  const uncovered = getMaterialPurchasePlan(activeSupplyOrder.id)
+  const uncovered = purchasePlan
     .reduce((sum, line) => sum + Math.max(0, line.missing - (activeQuantities.get(normalize(line.ingredient)) || 0)), 0);
   elements.supplySubtotal.textContent = formatCurrency(subtotal);
   elements.supplyLineCount.textContent = activeSupplyOrder.lines.length;
@@ -7807,19 +7840,21 @@ function getStorageAlertPlan() {
 
 function getMaterialPurchasePlan(excludeSupplyOrderId = "") {
   const demand = new Map();
-  const addDemand = (ingredient, quantity) => {
+  const addDemand = (ingredient, quantity, source) => {
     const key = normalize(ingredient);
-    const current = demand.get(key) || { ingredient, demand: 0 };
+    const current = demand.get(key) || { ingredient, demand: 0, restockDemand: 0, salesDemand: 0 };
     current.demand += Number(quantity || 0);
+    if (source === "restock") current.restockDemand += Number(quantity || 0);
+    if (source === "sales") current.salesDemand += Number(quantity || 0);
     demand.set(key, current);
   };
 
   getReplenishmentPlan().materials
     .filter(line => line.sourceLocation === "Storage")
-    .forEach(line => addDemand(line.ingredient, line.needed));
+    .forEach(line => addDemand(line.ingredient, line.needed, "restock"));
   orders
     .filter(order => !statusesHiddenFromActive.has(order.status))
-    .forEach(order => getProductionPlan(order).materials.forEach(material => addDemand(material.ingredient, material.qty)));
+    .forEach(order => getProductionPlan(order).materials.forEach(material => addDemand(material.ingredient, material.qty, "sales")));
 
   const storageCounts = getLatestCounts("Storage");
   const committed = getCommittedSupplyQuantities(excludeSupplyOrderId);
@@ -7828,8 +7863,7 @@ function getMaterialPurchasePlan(excludeSupplyOrderId = "") {
     const ordered = committed.get(key) || 0;
     const shortage = Math.max(0, line.demand - available);
     return {
-      ingredient: line.ingredient,
-      demand: line.demand,
+      ...line,
       available,
       ordered,
       shortage,
@@ -7850,9 +7884,10 @@ function getCommittedSupplyQuantities(excludeSupplyOrderId = "") {
   return committed;
 }
 
-function getSupplyLineMetrics(ingredient, excludeSupplyOrderId = "") {
+function getSupplyLineMetrics(ingredient, excludeSupplyOrderId = "", purchasePlan = null) {
   const key = normalize(ingredient);
-  const planned = getMaterialPurchasePlan(excludeSupplyOrderId).find(line => normalize(line.ingredient) === key);
+  const planned = (purchasePlan || getMaterialPurchasePlan(excludeSupplyOrderId))
+    .find(line => normalize(line.ingredient) === key);
   if (planned) return planned;
   const available = getLatestCounts("Storage").get(key) || 0;
   const ordered = getCommittedSupplyQuantities(excludeSupplyOrderId).get(key) || 0;

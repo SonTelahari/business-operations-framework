@@ -45,13 +45,15 @@ assert(!setupScript.includes("parseIngredients("), "first-launch recipes must no
 assert(styles.includes(".inventory-overview-table thead th"), "store inventory headers must stick by cell inside their scroll panes");
 assert(styles.includes("background: var(--paper)"), "sticky store inventory headers must hide scrolling row text");
 assert(
-  /\.supply-workspace\s*\{[^}]*"active summary"[^}]*"saved summary"[^}]*"suppliers suppliers"/s.test(styles),
-  "the Supplies desktop grid must keep the editor, summary, orders, and supplier directory in explicit tracks"
+  /\.supply-workspace\s*\{[^}]*"demand demand"[^}]*"active summary"[^}]*"saved summary"[^}]*"suppliers suppliers"/s.test(styles),
+  "the Supplies desktop grid must keep demand, editor, summary, orders, and supplier directory in explicit tracks"
 );
 assert(
-  /@media \(max-width: 980px\)[\s\S]*?\.supply-workspace\s*\{[^}]*"active"[^}]*"summary"[^}]*"saved"[^}]*"suppliers"/s.test(styles),
+  /@media \(max-width: 980px\)[\s\S]*?\.supply-workspace\s*\{[^}]*"demand"[^}]*"active"[^}]*"summary"[^}]*"saved"[^}]*"suppliers"/s.test(styles),
   "the Supplies narrow layout must stack every panel in a named track"
 );
+assert(appHtml.includes('id="supplyDemandList"'), "Supplies must expose the recursively expanded base-material plan");
+assert(appHtml.includes('id="addAllMissingSupplyButton"'), "the combined base-material plan must feed a supply draft directly");
 assert(appHtml.includes('id="openCatalogItemDialogButton"'), "the Store tab must expose manager catalog creation");
 assert(appHtml.includes('id="catalogItemTypeInput"'), "manual catalog creation must distinguish products and materials");
 assert(appHtml.includes('<option value="both">Product and material</option>'), "manual catalog creation must support dual-purpose goods");
@@ -157,6 +159,8 @@ assert(appScript.includes('function updateLineQuantity('), "sales order quantity
 assert(appScript.includes('Boolean(productionBatchForOrder(activeOrder.id))'), "sales order quantities must lock after production is linked");
 assert(appScript.includes('function productionBatchForOrder(orderId)'), "orders must link directly to their production batch");
 assert(appScript.includes('function planRecipeStages('), "production and restock plans must expand nested recipes");
+assert(appScript.includes('function renderSupplyDemand('), "Supplies must render aggregated base-material demand");
+assert(appScript.includes('restockDemand: 0, salesDemand: 0'), "procurement demand must retain its storefront and customer-order sources");
 assert(appScript.includes('function productionBatchInventoryState('), "production readiness must net intermediate work in progress");
 assert(appScript.includes('function getProductionAvailableCounts('), "production planning must subtract goods reserved for open customer orders");
 assert(appScript.includes('FRONTIER_PRODUCTION_INVENTORY.productionInventoryState'), "the browser must delegate production consumption to the shared inventory module");

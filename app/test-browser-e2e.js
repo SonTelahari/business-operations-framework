@@ -84,13 +84,17 @@ async function run() {
     await page.screenshot({ path: path.join(RESULTS_DIR, "desktop.png"), fullPage: true });
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await openMenuSection(page, "inventory", "supplies", "#supplySection");
+    await assertSupplyDemandLayout(page, { required: 12, restock: 8, sales: 4 });
+    await assertNoHorizontalViewportOverflow(page);
+    await page.screenshot({ path: path.join(RESULTS_DIR, "supplies-mobile.png"), fullPage: true });
     await openSection(page, "dashboard", "#dashboardSection");
     await assertNoHorizontalViewportOverflow(page);
     await page.screenshot({ path: path.join(RESULTS_DIR, "mobile.png"), fullPage: true });
 
     assert.deepEqual(browserErrors, [], `Browser errors:\n${browserErrors.join("\n")}`);
     assert.deepEqual(failedRequests, [], `Failed requests:\n${failedRequests.join("\n")}`);
-    console.log("Browser end-to-end test passed: hosted sign-in, persistent time clock, navigation, customer, sale, reload, and responsive layout.");
+    console.log("Browser end-to-end test passed: hosted sign-in, persistent time clock, navigation, recursive supply demand, customer, sale, reload, and responsive layout.");
   } catch (error) {
     if (page) {
       await page.screenshot({ path: path.join(RESULTS_DIR, "failure.png"), fullPage: true }).catch(() => {});
@@ -213,6 +217,8 @@ async function exerciseNavigation(page) {
   await openSection(page, "production", "#productionSection");
   await openSection(page, "store", "#storeSection");
   await openMenuSection(page, "inventory", "supplies", "#supplySection");
+  await assertSupplyDemandLayout(page, { required: 8, restock: 8, sales: 0 });
+  await page.screenshot({ path: path.join(RESULTS_DIR, "supplies-desktop.png"), fullPage: true });
   await openMenuSection(page, "management", "operations", "#operationsSection");
   await openMenuSection(page, "owner", "business-settings", "#businessSettingsSection");
   await openSection(page, "dashboard", "#dashboardSection");
@@ -336,6 +342,25 @@ async function assertNoHorizontalViewportOverflow(page) {
     overflow.documentWidth <= overflow.viewport + 2 && overflow.bodyWidth <= overflow.viewport + 2,
     `Mobile layout overflows: ${JSON.stringify(overflow)}`
   );
+}
+
+async function assertSupplyDemandLayout(page, expected) {
+  const demandRow = page.locator("#supplyDemandList .supply-demand-row", { hasText: "Packing Timber" });
+  await demandRow.waitFor({ state: "visible" });
+  const demandText = await demandRow.textContent();
+  assert.match(
+    demandText,
+    new RegExp(`Required\\s+${expected.required}`),
+    `nested demand must show ${expected.required} base units`
+  );
+  assert.match(demandText, new RegExp(`${expected.restock}\\s+for storefront targets`));
+  if (expected.sales) assert.match(demandText, new RegExp(`${expected.sales}\\s+for customer orders`));
+  const layout = await page.evaluate(() => {
+    const demand = document.querySelector(".supply-demand-panel").getBoundingClientRect();
+    const editor = document.querySelector("#supplySection .active-order").getBoundingClientRect();
+    return { demandBottom: demand.bottom, editorTop: editor.top };
+  });
+  assert.ok(layout.editorTop >= layout.demandBottom - 2, `Supply panels overlap: ${JSON.stringify(layout)}`);
 }
 
 async function closeServer() {

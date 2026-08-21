@@ -746,6 +746,12 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.section-help {
+  margin: -4px 0 10px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .replenishment-grid h3 {
   margin: 0 0 10px;
   color: var(--gold-strong);
@@ -1442,9 +1448,58 @@ h2 {
 
 .supply-workspace {
   grid-template-areas:
+    "demand demand"
     "active summary"
     "saved summary"
     "suppliers suppliers";
+}
+
+.supply-demand-panel {
+  grid-area: demand;
+  min-width: 0;
+  padding: 18px;
+}
+
+.supply-demand-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.supply-demand-row {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.supply-demand-row.short {
+  border-color: rgba(146, 49, 43, 0.62);
+}
+
+.supply-demand-row header,
+.supply-demand-metrics {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.supply-demand-row header span,
+.supply-demand-row small,
+.supply-demand-metrics span {
+  color: var(--muted);
+}
+
+.supply-demand-row header span,
+.supply-demand-metrics {
+  font-size: 0.8rem;
+}
+
+.supply-demand-row .metric-short {
+  color: var(--red);
 }
 
 .supply-workspace > * {
@@ -2431,6 +2486,7 @@ tr:last-child td {
 
   .supply-workspace {
     grid-template-areas:
+      "demand"
       "active"
       "summary"
       "saved"

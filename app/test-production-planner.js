@@ -87,6 +87,41 @@ assert.equal(shared.buildLines.filter(line => line.name === "Cigar").length, 1);
 assert.equal(shared.buildLines.find(line => line.name === "Cigar").requestedQuantity, 12);
 assert.equal(shared.buildLines.find(line => line.name === "Cigar").producedQuantity, 15);
 
+const combinedBaseDemand = planProduction({
+  lines: [
+    { itemName: "Cigarettes", requestedQuantity: 200 },
+    { itemName: "Rolling Paper", requestedQuantity: 100 }
+  ],
+  recipes: {
+    Cigarettes: [["Rolling Paper", 1], ["Indian Tobacco", 1]],
+    "Rolling Paper": [["Flax", 1]]
+  },
+  counts: { Storage: {} }
+});
+assert.deepEqual(combinedBaseDemand.materials.map(line => [line.ingredient, line.needed]), [
+  ["Flax", 300],
+  ["Indian Tobacco", 200]
+]);
+assert.equal(combinedBaseDemand.buildLines
+  .filter(line => line.name === "Rolling Paper")
+  .reduce((sum, line) => sum + line.requestedQuantity, 0), 300);
+
+const combinedBaseDemandWithStock = planProduction({
+  lines: [
+    { itemName: "Cigarettes", requestedQuantity: 200 },
+    { itemName: "Rolling Paper", requestedQuantity: 100 }
+  ],
+  recipes: {
+    Cigarettes: [["Rolling Paper", 1], ["Indian Tobacco", 1]],
+    "Rolling Paper": [["Flax", 1]]
+  },
+  counts: { Storage: { "rolling paper": 50, flax: 25, "indian tobacco": 40 } }
+});
+assert.deepEqual(combinedBaseDemandWithStock.materials.map(line => [line.ingredient, line.needed, line.shortage]), [
+  ["Flax", 250, 225],
+  ["Indian Tobacco", 200, 160]
+]);
+
 const cyclic = planProduction({
   lines: [{ itemName: "A", requestedQuantity: 1 }],
   recipes: { A: [["B", 1]], B: [["A", 1]] }
